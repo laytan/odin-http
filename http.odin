@@ -73,18 +73,11 @@ version_string :: proc(v: Version, allocator: mem.Allocator = context.allocator)
 	return strings.to_string(str)
 }
 
-Method :: enum {
-	Get,
-	Head,
-	Post,
-	Put,
-	Delete,
-	Connect,
-	Options,
-	Trace,
-}
+Method :: enum { Get, Head, Post, Put, Delete, Connect, Options, Trace }
 
 method_parse :: proc(m: string) -> (method: Method, ok: bool) {
+	(len(m) > 7) or_return
+
 	for r in Method {
 		if method_string(r) == m {
 			return r, true
@@ -96,24 +89,15 @@ method_parse :: proc(m: string) -> (method: Method, ok: bool) {
 
 method_string :: proc(m: Method) -> string {
 	switch m {
-	case .Get:
-		return "GET"
-	case .Head:
-		return "HEAD"
-	case .Post:
-		return "POST"
-	case .Put:
-		return "PUT"
-	case .Trace:
-		return "TRACE"
-	case .Delete:
-		return "DELETE"
-	case .Connect:
-		return "CONNECT"
-	case .Options:
-		return "OPTIONS"
-	case:
-		return ""
+	case .Get:     return "GET"
+	case .Head:    return "HEAD"
+	case .Post:    return "POST"
+	case .Put:     return "PUT"
+	case .Trace:   return "TRACE"
+	case .Delete:  return "DELETE"
+	case .Connect: return "CONNECT"
+	case .Options: return "OPTIONS"
+	case:          return ""
 	}
 }
 

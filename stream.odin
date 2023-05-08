@@ -2,7 +2,6 @@ package http
 
 import "core:io"
 import "core:net"
-import "core:fmt"
 import "core:log"
 
 // Wraps a tcp socket with a stream.

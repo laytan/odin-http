@@ -17,26 +17,19 @@ Response :: struct {
 	body:    bytes.Buffer,
 }
 
-response_init :: proc(
-	using r: ^Response,
-	s: net.TCP_Socket,
-	allocator: mem.Allocator = context.temp_allocator,
-) {
+response_init :: proc(r: ^Response, s: net.TCP_Socket, allocator: mem.Allocator = context.temp_allocator) {
 	r.status = .NotFound
 	r.headers = make(Headers, 3, allocator)
 	r.headers["Server"] = "Odin"
 	// NOTE: need to be at least 1 capacity so the given allocator gets used.
 	// TODO: report bug in Odin.
-	bytes.buffer_init_allocator(&body, 0, 1, allocator)
+	bytes.buffer_init_allocator(&r.body, 0, 1, allocator)
 }
 
-response_send :: proc(
-	using r: ^Response,
-	conn: ^Connection,
-	allocator: mem.Allocator = context.temp_allocator,
-) -> net.Network_Error {
-
+// Sends the response over the connection.
+response_send :: proc(using r: ^Response, conn: ^Connection, allocator: mem.Allocator = context.temp_allocator) -> net.Network_Error {
 	res: bytes.Buffer
+	// Responses are on average at least 100 bytes, so lets start there, but add the body's length.
 	initial_buf_cap := response_needs_content_length(r, conn) ? 100 + bytes.buffer_length(&body) : 100
 	bytes.buffer_init_allocator(&res, 0, initial_buf_cap, allocator)
 
@@ -116,20 +109,23 @@ response_send :: proc(
 	return err
 }
 
-// Helper method for preparing a response to return HTML.
-response_html :: proc(using r: ^Response, html: string) {
+// Sets the response to one that sends the given HTML.
+respond_html :: proc(using r: ^Response, html: string) {
 	status = .Ok
 	bytes.buffer_write_string(&body, html)
 	headers["Content-Type"] = mime_to_content_type(MimeType.Plain)
 }
 
-response_plain :: proc(using r: ^Response, text: string) {
+// Sets the response to one that sends the given plain text.
+respond_plain :: proc(using r: ^Response, text: string) {
 	status = .Ok
 	bytes.buffer_write_string(&body, text)
 	headers["Content-Type"] = mime_to_content_type(MimeType.Plain)
 }
 
-response_file :: proc(using r: ^Response, path: string, allocator: mem.Allocator = context.temp_allocator) {
+// Sets the response to one that sends the contents of the file at the given path.
+// Content-Type header is set based on the file extension, see the MimeType enum for known file extensions.
+respond_file :: proc(using r: ^Response, path: string, allocator: mem.Allocator = context.temp_allocator) {
 	bs, ok := os.read_entire_file(path, allocator)
 	if !ok {
 		status = .NotFound
@@ -144,7 +140,14 @@ response_file :: proc(using r: ^Response, path: string, allocator: mem.Allocator
 	bytes.buffer_write(&body, bs)
 }
 
-response_dir :: proc(using r: ^Response, base, target, request: string, allocator: mem.Allocator = context.temp_allocator) {
+// Sets the response to one that, based on the request path, returns a file.
+// base:    The base of the request path that should be removed when retrieving the file.
+// target:  The path to the directory to serve.
+// request: The request path.
+//
+// Path traversal is detected and cleaned up.
+// The Content-Type is set based on the file extension, see the MimeType enum for known file extensions.
+respond_dir :: proc(using r: ^Response, base, target, request: string, allocator: mem.Allocator = context.temp_allocator) {
 	if !strings.has_prefix(request, base) {
 		status = .NotFound
 		return
@@ -153,19 +156,17 @@ response_dir :: proc(using r: ^Response, base, target, request: string, allocato
 	// Detect path traversal attacks.
 	req_clean := filepath.clean(request, allocator)
 	base_clean := filepath.clean(base, allocator)
-	fmt.println(req_clean)
-	fmt.println(base_clean)
 	if !strings.has_prefix(req_clean, base_clean) {
 		status = .NotFound
 		return
 	}
 
 	file_path := filepath.join([]string{"./", target, strings.trim_prefix(req_clean, base_clean)}, allocator)
-	fmt.println(file_path)
-	response_file(r, file_path)
+	respond_file(r, file_path)
 }
 
-response_json :: proc(
+// Sets the response to one that returns the JSON representation of the given value.
+respond_json :: proc(
 	using r: ^Response,
 	v: any,
 	opt: json.Marshal_Options = {},
@@ -198,7 +199,8 @@ Cookie :: struct {
 	secure:       bool,
 }
 
-cookie_string :: proc(using c: Cookie, allocator: mem.Allocator = context.allocator) -> string {
+// Builds the Set-Cookie header string representation of the given cookie.
+cookie_string :: proc(using c: Cookie, allocator: mem.Allocator = context.temp_allocator) -> string {
 	b: strings.Builder
 	strings.builder_init(&b, 0, 20, allocator)
 

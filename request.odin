@@ -14,11 +14,7 @@ Request :: struct {
 	_body_err:  Body_Error,
 }
 
-request_init :: proc(
-	r: ^Request,
-	line: Requestline,
-	allocator: mem.Allocator = context.allocator,
-) {
+request_init :: proc(r: ^Request, line: Requestline, allocator: mem.Allocator = context.allocator) {
 	r.line = line
 	r.headers = make(Headers, 3, allocator)
 }
@@ -61,6 +57,7 @@ Body_Error :: enum {
 	InvalidTrailerHeader,
 }
 
+// Returns an appropriate status code for the given body error.
 body_error_status :: proc(e: Body_Error) -> Status {
 	switch e {
 	case .TooLong:                           return .PayloadTooLarge
@@ -72,8 +69,11 @@ body_error_status :: proc(e: Body_Error) -> Status {
 	}
 }
 
+// Retrieves the request's body, can only be called once.
 request_body :: proc(req: ^Request, max_length: int = -1) -> (body: string, err: Body_Error) {
     defer req._body_err = err
+
+	assert(req._body_err == nil)
 
 	if enc_header, ok := req.headers["Transfer-Encoding"]; ok && strings.has_suffix(enc_header, "chunked") {
 		body, err = request_body_chunked(req, max_length)
@@ -84,6 +84,7 @@ request_body :: proc(req: ^Request, max_length: int = -1) -> (body: string, err:
 	return
 }
 
+// "Decodes" a request body based on the content length header.
 @(private)
 request_body_length :: proc(req: ^Request, max_length: int) -> (string, Body_Error) {
 	len, ok := req.headers["Content-Length"]
@@ -111,7 +112,7 @@ request_body_length :: proc(req: ^Request, max_length: int) -> (string, Body_Err
     return bufio.scanner_text(&req._body), .None
 }
 
-// "Decoded" a chunked transfer encoded request.
+// "Decodes" a chunked transfer encoded request body.
 // RFC 7230 4.1.3 pseudo-code:
 //
 // length := 0
@@ -210,11 +211,10 @@ request_body_chunked :: proc(req: ^Request, max_length: int) -> (body: string, e
 	return bytes.buffer_to_string(&body_buff), .None
 }
 
+// A scanner bufio.Split_Proc implementation to scan a given amount of bytes.
+// The amount of bytes should be set in the context.user_index.
 @(private)
-scan_num_bytes :: proc(
-	data: []byte,
-	at_eof: bool,
-) -> (
+scan_num_bytes :: proc(data: []byte, at_eof: bool) -> (
 	advance: int,
 	token: []byte,
 	err: bufio.Scanner_Error,
@@ -266,6 +266,6 @@ hex_digit :: proc(char: byte) -> (u8, bool) {
     case '0' ..= '9': return char - '0', true
     case 'a' ..= 'f': return char - 'a' + 10, true
     case 'A' ..= 'F': return char - 'A' + 10, true
-    case: return 0, false
+    case:             return 0, false
     }
 }

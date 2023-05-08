@@ -295,6 +295,9 @@ conn_handle_reqs :: proc(c: ^Connection) -> net.Network_Error {
 		if rline.method == .Options && rline.target == "*" {
 			res.status = .Ok
 		} else {
+			// Give the handler this request as a GET, since the HTTP spec
+			// says a HEAD is identical to a GET but just without writing the body,
+			// handlers shouldn't have to worry about it.
 			is_head := req.line.method == .Head
 			if is_head && c.server.opts.redirect_head_to_get {
 				req.line.method = .Get

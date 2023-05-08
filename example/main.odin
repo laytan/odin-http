@@ -25,7 +25,6 @@ main :: proc() {
 	}
 
 	serve()
-	time.sleep(time.Second)
 
 	when TRACK_LEAKS {
 		for _, leak in track.allocation_map {
@@ -96,14 +95,14 @@ handle :: proc(req: ^http.Request, res: ^http.Response) {
                 http_only    = true,
                 same_site    = http.SameSite.Lax,
             })
-            http.response_plain(res, "Yo!")
+            http.respond_plain(res, "Yo!")
         case "/api":
-            if err := http.response_json(res, req.line); err != nil {
+            if err := http.respond_json(res, req.line); err != nil {
                 log.errorf("could not respond with JSON: %s", err)
             }
-		case "/ping": http.response_plain(res, "pong")
-		case "/":     http.response_file(res, "example/static/index.html")
-		case:         http.response_dir(res, "/", "example/static", req.line.target)
+		case "/ping": http.respond_plain(res, "pong")
+		case "/":     http.respond_file(res, "example/static/index.html")
+		case:         http.respond_dir(res, "/", "example/static", req.line.target)
         }
     case .Post:
         switch req.line.target {
@@ -119,7 +118,7 @@ handle :: proc(req: ^http.Request, res: ^http.Response) {
                 return
             }
 
-            http.response_plain(res, "pong")
+            http.respond_plain(res, "pong")
         }
     }
 }
