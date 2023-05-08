@@ -37,8 +37,13 @@ Server :: struct {
 }
 
 Default_Endpoint := net.Endpoint {
-	address = net.IP4_Any,
-	port    = 80,
+	address = net.IP4_Loopback,
+	port    = 8080,
+}
+
+listen_and_serve :: proc(s: ^Server, h: ^Handler, endpoint: net.Endpoint = Default_Endpoint, opts: Server_Opts = Default_Server_Opts) -> (err: net.Network_Error) {
+	server_listen(s, endpoint, opts) or_return
+	return server_serve(s, h)
 }
 
 server_listen :: proc(s: ^Server, endpoint: net.Endpoint = Default_Endpoint, opts: Server_Opts = Default_Server_Opts) -> (err: net.Network_Error) {
@@ -47,7 +52,7 @@ server_listen :: proc(s: ^Server, endpoint: net.Endpoint = Default_Endpoint, opt
     return
 }
 
-server_serve :: proc(using s: ^Server, handler: proc(^Request, ^Response)) -> net.Network_Error {
+server_serve :: proc(using s: ^Server, handler: ^Handler) -> net.Network_Error {
 	// Save allocator so we can free connections later.
 	conn_allocator = context.allocator
 

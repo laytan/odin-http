@@ -2,7 +2,7 @@
 
 A HTTP/1.1 server implementation for Odin.
 
-See the example for usage, run the example using: `odin run example`.
+See the example for usage, run the example using: `odin run examples/complete` or `odin run examples/minimal` from the root directory.
 
 **TODO:**
  - max size of request line
@@ -10,10 +10,8 @@ See the example for usage, run the example using: `odin run example`.
  - TLS
  - route parameters
  - parsing of URI
- - Middleware
-  - logging
-  - decompress "Content-Encoding"
-  - rate limit
+ - decompress "Content-Encoding" middleware
+ - rate limit middleware
  - Nicer routing
  - Form Data
  - Close idle connections when thread count gets high

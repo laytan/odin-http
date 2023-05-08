@@ -5,11 +5,8 @@ import "core:log"
 import "core:time"
 import "core:fmt"
 import "core:mem"
-import "core:thread"
-import "core:c/libc"
-import "core:runtime"
 
-import http ".."
+import http "../.."
 
 LoggerOpts :: log.Options{.Level, .Time, .Short_File_Path, .Line, .Terminal_Color}
 
@@ -36,54 +33,24 @@ main :: proc() {
 	}
 }
 
-// In order to shutdown the server on a signal, the signal handler needs
-// access to these variables.
-s:  http.Server
-dc: runtime.Context
-
 serve :: proc() {
-	if err := http.server_listen(&s, net.Endpoint{address = net.IP4_Any, port = 6969});
-	   err != nil {
-		log.errorf("could not start server: %s", err)
-		return
-	}
-	log.infof("Listening on :6969")
+	s: http.Server
+	// Register a graceful shutdown when the program receives a SIGINT signal.
+	http.server_shutdown_on_interrupt(&s)
 
-	dc = context
-	libc.signal(libc.SIGINT, proc "cdecl" (_: i32) {
-		context = dc
-		http.server_shutdown_gracefully(&s)
-	})
+	// Wrap our handle proc into a Handler.
+	handler     := http.handler_proc(handle)
 
-	err := http.server_serve(&s, handle)
+	// Wrap our handler with a logger middleware.
+	with_logger := http.middleware_logger(&handler, &http.Logger_Opts{ log_time = true })
+
+	// Start the server on 127.0.0.1:6969.
+	err := http.listen_and_serve(&s, &with_logger, net.Endpoint{address = net.IP4_Loopback, port = 6969})
 	log.warnf("server stopped: %s", err)
 }
 
 handle :: proc(req: ^http.Request, res: ^http.Response) {
 	rline := req.line.(http.Requestline)
-    start := time.tick_now()
-    defer {
-        dur := time.tick_since(start)
-        durqs := time.duration_microseconds(dur)
-        if res.status < http.Status.Bad_Request {
-            log.infof(
-                "[%i|%.1fqs] %s %s",
-                res.status,
-                durqs,
-                http.method_string(rline.method),
-                rline.target,
-            )
-        } else {
-            log.warnf(
-                "[%i|%.1fqs] %s %s",
-                res.status,
-                durqs,
-                http.method_string(rline.method),
-                rline.target,
-            )
-        }
-    }
-
     #partial switch rline.method {
     case .Get:
         switch rline.target {
@@ -102,8 +69,8 @@ handle :: proc(req: ^http.Request, res: ^http.Response) {
                 log.errorf("could not respond with JSON: %s", err)
             }
 		case "/ping": http.respond_plain(res, "pong")
-		case "/":     http.respond_file(res, "example/static/index.html")
-		case:         http.respond_dir(res, "/", "example/static", rline.target)
+		case "/":     http.respond_file(res, "examples/complete/static/index.html")
+		case:         http.respond_dir(res, "/", "examples/complete/static", rline.target)
         }
     case .Post:
         switch rline.target {
