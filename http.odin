@@ -16,13 +16,7 @@ Requestline :: struct {
 //
 // This allocates a clone of the target, because this is intended to be used with a scanner,
 // which has a buffer that changes every read.
-requestline_parse :: proc(
-	s: string,
-	allocator: mem.Allocator = context.allocator,
-) -> (
-	line: Requestline,
-	ok: bool,
-) {
+requestline_parse :: proc(s: string, allocator: mem.Allocator = context.allocator) -> (line: Requestline, ok: bool) {
 	s := s
 
 	next_space := strings.index_byte(s, ' ')

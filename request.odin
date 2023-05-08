@@ -8,14 +8,15 @@ import "core:fmt"
 import "core:bytes"
 
 Request :: struct {
-	line:       Requestline,
+	// If in a handler, this is always there and never None.
+	line:       Maybe(Requestline),
+
 	headers:    Headers,
 	_body:      bufio.Scanner,
 	_body_err:  Body_Error,
 }
 
-request_init :: proc(r: ^Request, line: Requestline, allocator: mem.Allocator = context.allocator) {
-	r.line = line
+request_init :: proc(r: ^Request, allocator: mem.Allocator = context.allocator) {
 	r.headers = make(Headers, 3, allocator)
 }
 

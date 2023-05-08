@@ -60,6 +60,7 @@ serve :: proc() {
 }
 
 handle :: proc(req: ^http.Request, res: ^http.Response) {
+	rline := req.line.(http.Requestline)
     start := time.tick_now()
     defer {
         dur := time.tick_since(start)
@@ -69,23 +70,23 @@ handle :: proc(req: ^http.Request, res: ^http.Response) {
                 "[%i|%.1fqs] %s %s",
                 res.status,
                 durqs,
-                http.method_string(req.line.method),
-                req.line.target,
+                http.method_string(rline.method),
+                rline.target,
             )
         } else {
             log.warnf(
                 "[%i|%.1fqs] %s %s",
                 res.status,
                 durqs,
-                http.method_string(req.line.method),
-                req.line.target,
+                http.method_string(rline.method),
+                rline.target,
             )
         }
     }
 
-    #partial switch req.line.method {
+    #partial switch rline.method {
     case .Get:
-        switch req.line.target {
+        switch rline.target {
         case "/cookies":
             append(&res.cookies, http.Cookie{
 				name         = "Session",
@@ -102,10 +103,10 @@ handle :: proc(req: ^http.Request, res: ^http.Response) {
             }
 		case "/ping": http.respond_plain(res, "pong")
 		case "/":     http.respond_file(res, "example/static/index.html")
-		case:         http.respond_dir(res, "/", "example/static", req.line.target)
+		case:         http.respond_dir(res, "/", "example/static", rline.target)
         }
     case .Post:
-        switch req.line.target {
+        switch rline.target {
         case "/ping":
             body, err := http.request_body(req, len("ping"))
             if err != nil {

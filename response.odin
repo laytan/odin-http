@@ -261,9 +261,12 @@ response_needs_content_length :: proc(r: ^Response, conn: ^Connection) -> bool {
 		return false
 	}
 
-	method := conn.curr_req.line.method
-	if status_success(r.status) && method == .Connect {
-		return false
+	if rline, ok := conn.curr_req.line.(Requestline); ok {
+		if status_success(r.status) && rline.method == .Connect {
+			return false
+		}
+
+		return true
 	}
 
 	return true
@@ -273,8 +276,11 @@ response_needs_content_length :: proc(r: ^Response, conn: ^Connection) -> bool {
 response_can_have_body :: proc(r: ^Response, conn: ^Connection) -> bool {
 	response_needs_content_length(r, conn) or_return
 
-	method := conn.curr_req.line.method
-	return method != .Head
+	if rline, ok := conn.curr_req.line.(Requestline); ok {
+		return rline.method != .Head
+	}
+
+	return true
 }
 
 // Determines if the connection needs to be closed after sending the response.

@@ -226,6 +226,10 @@ conn_handle_reqs :: proc(c: ^Connection) -> net.Network_Error {
         res: Response
         response_init(&res, c.socket, context.temp_allocator)
 
+        req: Request
+        request_init(&req, context.temp_allocator)
+        c.curr_req = &req
+
 		// In the interest of robustness, a server that is expecting to receive
 		// and parse a request-line SHOULD ignore at least one empty line (CRLF)
 		// received prior to the request-line.
@@ -247,10 +251,7 @@ conn_handle_reqs :: proc(c: ^Connection) -> net.Network_Error {
 			response_send_or_log(&res, c, .Bad_Request)
             break
 		}
-
-        req: Request
-        request_init(&req, rline, context.temp_allocator)
-        c.curr_req = &req
+		req.line = rline
 
         // Might need to support more versions later.
         if rline.version.major != 1 || rline.version.minor < 1 {
@@ -304,15 +305,15 @@ conn_handle_reqs :: proc(c: ^Connection) -> net.Network_Error {
 			// Give the handler this request as a GET, since the HTTP spec
 			// says a HEAD is identical to a GET but just without writing the body,
 			// handlers shouldn't have to worry about it.
-			is_head := req.line.method == .Head
+			is_head := rline.method == .Head
 			if is_head && c.server.opts.redirect_head_to_get {
-				req.line.method = .Get
+				rline.method = .Get
 			}
 
 			c.handler(&req, &res)
 
 			if is_head && c.server.opts.redirect_head_to_get {
-				req.line.method = .Head
+				rline.method = .Head
 			}
 		}
 
