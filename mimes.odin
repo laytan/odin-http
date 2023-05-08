@@ -3,9 +3,9 @@ package http
 import "core:strings"
 import "core:path/filepath"
 
-MimeType :: enum { Plain, Json, Ico, Html }
+Mime_Type :: enum { Plain, Json, Ico, Html }
 
-mime_from_extension :: proc(s: string) -> MimeType {
+mime_from_extension :: proc(s: string) -> Mime_Type {
 	switch filepath.ext(s) {
 	case ".json": return .Json
 	case ".ico":  return .Ico
@@ -14,7 +14,7 @@ mime_from_extension :: proc(s: string) -> MimeType {
 	}
 }
 
-mime_to_content_type :: proc(m: MimeType) -> string {
+mime_to_content_type :: proc(m: Mime_Type) -> string {
 	switch m {
 	case .Html:  return "text/html"
 	case .Ico:   return "application/vnd.microsoft.ico"

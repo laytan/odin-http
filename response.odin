@@ -42,31 +42,31 @@ response_send :: proc(using r: ^Response, conn: ^Connection, allocator: mem.Allo
 	// connection would be misinterpreted as the next request.
 	if !will_close {
 		switch conn.curr_req._body_err {
-		case .ScanFailed, .InvalidLength, .InvalidChunkSize, .TooLong, .InvalidTrailerHeader: // Any read error should close the connection.
+		case .Scan_Failed, .Invalid_Length, .Invalid_Chunk_Size, .Too_Long, .Invalid_Trailer_Header: // Any read error should close the connection.
 			status = body_error_status(conn.curr_req._body_err)
 			headers["Connection"] = "close"
 			will_close = true
-		case .NoLength, .None: // no-op, request had no body or read succeeded.
+		case .No_Length, .None: // no-op, request had no body or read succeeded.
 		case: // No error means the body was not read by a handler.
-			_, err := request_body(conn.curr_req, MaxPostHandlerDiscardBytes)
+			_, err := request_body(conn.curr_req, Max_Post_Handler_Discard_Bytes)
 			switch err {
-			case .ScanFailed, .InvalidLength, .InvalidTrailerHeader, .TooLong, .InvalidChunkSize: // Any read error should close the connection.
+			case .Scan_Failed, .Invalid_Length, .Invalid_Trailer_Header, .Too_Long, .Invalid_Chunk_Size: // Any read error should close the connection.
 				status = body_error_status(conn.curr_req._body_err)
 				headers["Connection"] = "close"
 				will_close = true
-			case .NoLength, .None: // no-op, request had no body or read succeeded.
+			case .No_Length, .None: // no-op, request had no body or read succeeded.
 			case: assert(err != nil, "always expect error from request_body")
 			}
 		}
 	}
 
-	bytes.buffer_write_string(&res, OurVersionString + " ")
+	bytes.buffer_write_string(&res, "HTTP/1.1 ")
 	bytes.buffer_write_string(&res, status_string(status))
 	bytes.buffer_write_string(&res, "\r\n")
 
 
     // Per RFC 9910 6.6.1 a Date header must be added in 2xx, 3xx, 4xx responses.
-    if status >= .Ok && status <= .InternalServerError && "Date" not_in headers {
+    if status >= .Ok && status <= .Internal_Server_Error && "Date" not_in headers {
         bytes.buffer_write_string(&res, "Date: ")
         bytes.buffer_write_string(&res, format_date_header(time.now(), allocator))
         bytes.buffer_write_string(&res, "\r\n")
@@ -113,14 +113,14 @@ response_send :: proc(using r: ^Response, conn: ^Connection, allocator: mem.Allo
 respond_html :: proc(using r: ^Response, html: string) {
 	status = .Ok
 	bytes.buffer_write_string(&body, html)
-	headers["Content-Type"] = mime_to_content_type(MimeType.Plain)
+	headers["Content-Type"] = mime_to_content_type(Mime_Type.Plain)
 }
 
 // Sets the response to one that sends the given plain text.
 respond_plain :: proc(using r: ^Response, text: string) {
 	status = .Ok
 	bytes.buffer_write_string(&body, text)
-	headers["Content-Type"] = mime_to_content_type(MimeType.Plain)
+	headers["Content-Type"] = mime_to_content_type(Mime_Type.Plain)
 }
 
 // Sets the response to one that sends the contents of the file at the given path.
@@ -175,11 +175,11 @@ respond_json :: proc(
 	bs := json.marshal(v, opt, allocator) or_return
 	status = .Ok
 	bytes.buffer_write(&body, bs)
-	headers["Content-Type"] = mime_to_content_type(MimeType.Json)
+	headers["Content-Type"] = mime_to_content_type(Mime_Type.Json)
 	return nil
 }
 
-SameSite :: enum {
+Same_Site :: enum {
 	Unspecified,
 	None,
 	Strict,
@@ -195,7 +195,7 @@ Cookie :: struct {
 	max_age_secs: Maybe(int),
 	partitioned:  bool,
 	path:         Maybe(string),
-	same_site:    SameSite,
+	same_site:    Same_Site,
 	secure:       bool,
 }
 
@@ -230,13 +230,10 @@ cookie_string :: proc(using c: Cookie, allocator: mem.Allocator = context.temp_a
 	}
 
 	switch same_site {
-	case .None:
-		strings.write_string(&b, "; SameSite=None")
-	case .Lax:
-		strings.write_string(&b, "; SameSite=Lax")
-	case .Strict:
-		strings.write_string(&b, "; SameSite=Strict")
-	case .Unspecified: // noop
+	case .None:        strings.write_string(&b, "; SameSite=None")
+	case .Lax:         strings.write_string(&b, "; SameSite=Lax")
+	case .Strict:      strings.write_string(&b, "; SameSite=Strict")
+	case .Unspecified: // no-op.
 	}
 
 	if secure {
@@ -260,7 +257,7 @@ cookie_string :: proc(using c: Cookie, allocator: mem.Allocator = context.temp_a
 // (Successful) response to a CONNECT request.
 @(private)
 response_needs_content_length :: proc(r: ^Response, conn: ^Connection) -> bool {
-	if status_informational(r.status) || r.status == .NoContent {
+	if status_informational(r.status) || r.status == .No_Content {
 		return false
 	}
 

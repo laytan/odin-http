@@ -49,23 +49,23 @@ headers_validate :: proc(using r: Request) -> bool {
 
 Body_Error :: enum {
 	None,
-	NoLength,
-	InvalidLength,
-	TooLong,
-	ScanFailed,
-	InvalidChunkSize,
-	InvalidTrailerHeader,
+	No_Length,
+	Invalid_Length,
+	Too_Long,
+	Scan_Failed,
+	Invalid_Chunk_Size,
+	Invalid_Trailer_Header,
 }
 
 // Returns an appropriate status code for the given body error.
 body_error_status :: proc(e: Body_Error) -> Status {
 	switch e {
-	case .TooLong:                           return .PayloadTooLarge
-	case .ScanFailed, .InvalidTrailerHeader: return .BadRequest
-	case .InvalidLength, .InvalidChunkSize:  return .UnprocessableContent
-	case .NoLength:                          return .LengthRequired
-	case .None:                              return .Ok
-	case:                                    return .Ok
+	case .Too_Long:                             return .Payload_Too_Large
+	case .Scan_Failed, .Invalid_Trailer_Header: return .Bad_Request
+	case .Invalid_Length, .Invalid_Chunk_Size:  return .Unprocessable_Content
+	case .No_Length:                            return .Length_Required
+	case .None:                                 return .Ok
+	case:                                       return .Ok
 	}
 }
 
@@ -89,16 +89,16 @@ request_body :: proc(req: ^Request, max_length: int = -1) -> (body: string, err:
 request_body_length :: proc(req: ^Request, max_length: int) -> (string, Body_Error) {
 	len, ok := req.headers["Content-Length"]
 	if !ok {
-		return "", .NoLength
+		return "", .No_Length
 	}
 
 	ilen, lenok := strconv.parse_int(len, 10)
 	if !lenok {
-		return "", .InvalidLength
+		return "", .Invalid_Length
 	}
 
 	if max_length > -1 && ilen > max_length {
-		return "", .TooLong
+		return "", .Too_Long
 	}
 
 	// user_index is used to set the amount of bytes to scan in scan_num_bytes.
@@ -106,7 +106,7 @@ request_body_length :: proc(req: ^Request, max_length: int) -> (string, Body_Err
 	req._body.split = scan_num_bytes
 
 	if !bufio.scanner_scan(&req._body) {
-		return "", .ScanFailed
+		return "", .Scan_Failed
 	}
 
     return bufio.scanner_text(&req._body), .None
@@ -140,7 +140,7 @@ request_body_chunked :: proc(req: ^Request, max_length: int) -> (body: string, e
 	bytes.buffer_init_allocator(&body_buff, 0, 1, context.temp_allocator)
 	for {
 		if !bufio.scanner_scan(&req._body) {
-			return "", .ScanFailed
+			return "", .Scan_Failed
 		}
 
 		size_line := bufio.scanner_text(&req._body)
@@ -158,26 +158,26 @@ request_body_chunked :: proc(req: ^Request, max_length: int) -> (body: string, e
 		context.user_index = size
 		req._body.split = scan_num_bytes
 		if !bufio.scanner_scan(&req._body) {
-			return "", .ScanFailed
+			return "", .Scan_Failed
 		}
 		req._body.split = bufio.scan_lines
 
 		bytes.buffer_write(&body_buff, bufio.scanner_bytes(&req._body))
 
 		if bytes.buffer_length(&body_buff) > max_length {
-			return "", .TooLong
+			return "", .Too_Long
 		}
 	}
 
 	// Read trailing empty line (after body, before trailing headers).
 	if !bufio.scanner_scan(&req._body) || bufio.scanner_text(&req._body) != "" {
-		return "", .ScanFailed
+		return "", .Scan_Failed
 	}
 
 	// Keep parsing the request as line delimited headers until we get to an empty line.
 	for {
 		if !bufio.scanner_scan(&req._body) {
-			return "", .ScanFailed
+			return "", .Scan_Failed
 		}
 
 		line := bufio.scanner_text(&req._body)
@@ -189,7 +189,7 @@ request_body_chunked :: proc(req: ^Request, max_length: int) -> (body: string, e
 
 		key, ok := header_parse(&req.headers, line)
 		if !ok {
-			return "", .InvalidTrailerHeader
+			return "", .Invalid_Trailer_Header
 		}
 
 		// A recipient MUST ignore (or consider as an error) any fields that are forbidden to be sent in a trailer.
@@ -242,7 +242,7 @@ hex_decode_size :: proc(str: string) -> (int, Body_Error) {
 	str = strings.trim_prefix(str, "0x")
 
 	if len(str) > HEX_SIZE_MAX {
-		return 0, .TooLong
+		return 0, .Too_Long
 	}
 
 	val: int
@@ -251,7 +251,7 @@ hex_decode_size :: proc(str: string) -> (int, Body_Error) {
 
 		hd, ok := hex_digit(u8(c))
 		if !ok {
-			return 0, .InvalidChunkSize
+			return 0, .Invalid_Chunk_Size
 		}
 
 		val += int(hd) << uint(4 * index)

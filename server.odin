@@ -9,7 +9,7 @@ import "core:thread"
 import "core:sync"
 import "core:mem"
 
-ServerOpts :: struct {
+Server_Opts :: struct {
 	// Whether the server should accept every request that sends a "Expect: 100-continue" header automatically.
 	// Defaults to true.
 	auto_expect_continue: bool,
@@ -19,13 +19,13 @@ ServerOpts :: struct {
 	redirect_head_to_get: bool,
 }
 
-DefaultServerOpts :: ServerOpts{
+Default_Server_Opts :: Server_Opts {
 	auto_expect_continue = true,
 	redirect_head_to_get = true,
 }
 
 Server :: struct {
-	opts:           ServerOpts,
+	opts:           Server_Opts,
     tcp_sock:       net.TCP_Socket,
 
 	conn_allocator: mem.Allocator,
@@ -34,12 +34,12 @@ Server :: struct {
 	shutting_down:  bool,
 }
 
-DefaultEndpoint := net.Endpoint {
+Default_Endpoint := net.Endpoint {
 	address = net.IP4_Any,
 	port    = 80,
 }
 
-server_listen :: proc(s: ^Server, endpoint: net.Endpoint = DefaultEndpoint, opts: ServerOpts = DefaultServerOpts) -> (err: net.Network_Error) {
+server_listen :: proc(s: ^Server, endpoint: net.Endpoint = Default_Endpoint, opts: Server_Opts = Default_Server_Opts) -> (err: net.Network_Error) {
 	s.opts = opts
 	s.tcp_sock, err = net.listen_tcp(endpoint)
     return
@@ -50,6 +50,9 @@ server_serve :: proc(using s: ^Server, handler: proc(^Request, ^Response)) -> ne
 	conn_allocator = context.allocator
 
 	for {
+		// Don't accept more connections when we are shutting down,
+		// but we don't want to return yet, this way users can wait for this
+		// proc to return as well as the shutdown proc.
 		if shutting_down {
 			time.sleep(SHUTDOWN_INTERVAL)
 			continue
@@ -150,14 +153,14 @@ server_on_connection_close :: proc(using s: ^Server, c: ^Connection) {
 // The maximum amount of bytes we will read (if handler did not)
 // in order to get the connection ready for the next request.
 @(private)
-MaxPostHandlerDiscardBytes :: 256 << 10
+Max_Post_Handler_Discard_Bytes :: 256 << 10
 
 // How long to wait before actually closing a connection.
 // This is to make sure the client can fully receive the response.
 @(private)
-ConnCloseDelay :: time.Millisecond * 500
+Conn_Close_Delay :: time.Millisecond * 500
 
-ConnectionState :: enum {
+Connection_State :: enum {
     Pending, // Pending a client to attach.
     New,     // Got client, waiting to service first request.
     Active,  // Servicing request.
@@ -172,7 +175,7 @@ Connection :: struct {
 	socket:    net.TCP_Socket,
 	curr_req:  ^Request,
 	handler:   proc(^Request, ^Response),
-	state:     ConnectionState,
+	state:     Connection_State,
 	thread:    ^thread.Thread,
 }
 
@@ -194,7 +197,7 @@ connection_close :: proc(c: ^Connection) {
 
     // This will block the whole thread, but we have one thread per connection anyway,
     // so should not matter as long as this is done after sending everything.
-    time.sleep(ConnCloseDelay)
+    time.sleep(Conn_Close_Delay)
     net.close(c.socket)
 
 	c.state = .Closed
@@ -226,10 +229,10 @@ conn_handle_reqs :: proc(c: ^Connection) -> net.Network_Error {
 		// In the interest of robustness, a server that is expecting to receive
 		// and parse a request-line SHOULD ignore at least one empty line (CRLF)
 		// received prior to the request-line.
-        rline_str, ok := scanner_scan_or_bad_req(&scanner, &res, c, .UriTooLong)
+        rline_str, ok := scanner_scan_or_bad_req(&scanner, &res, c, .URI_Too_Long)
         if !ok do break;
         if rline_str == "" {
-            rline_str, ok = scanner_scan_or_bad_req(&scanner, &res, c, .UriTooLong)
+            rline_str, ok = scanner_scan_or_bad_req(&scanner, &res, c, .URI_Too_Long)
             if !ok do break;
         }
 
@@ -241,7 +244,7 @@ conn_handle_reqs :: proc(c: ^Connection) -> net.Network_Error {
 		rline, lok := requestline_parse(rline_str, context.temp_allocator)
 		if !lok {
             res.headers["Connection"] = "close"
-			response_send_or_log(&res, c, .BadRequest)
+			response_send_or_log(&res, c, .Bad_Request)
             break
 		}
 
@@ -252,12 +255,12 @@ conn_handle_reqs :: proc(c: ^Connection) -> net.Network_Error {
         // Might need to support more versions later.
         if rline.version.major != 1 || rline.version.minor < 1 {
             res.headers["Connection"] = "close"
-            response_send_or_log(&res, c, .HttpVersionNotSupported)
+            response_send_or_log(&res, c, .HTTP_Version_Not_Supported)
             break
         }
 
         // Keep parsing the request as line delimited headers until we get to an empty line.
-		for line in scanner_scan_or_bad_req(&scanner, &res, c, .RequestHeaderFieldsTooLarge) {
+		for line in scanner_scan_or_bad_req(&scanner, &res, c, .Request_Header_Fields_Too_Large) {
 			// The first empty line denotes the end of the headers section.
 			if line == "" {
 				break
@@ -265,19 +268,22 @@ conn_handle_reqs :: proc(c: ^Connection) -> net.Network_Error {
 
 			if _, ok := header_parse(&req.headers, line); !ok {
                 res.headers["Connection"] = "close"
-				response_send_or_log(&res, c, .BadRequest)
+				response_send_or_log(&res, c, .Bad_Request)
 				break Requests
 			}
 		}
 
         if !headers_validate(req) {
             res.headers["Connection"] = "close"
-            response_send_or_log(&res, c, .BadRequest)
+            response_send_or_log(&res, c, .Bad_Request)
             break
         }
 
 		// Automatically respond with a continue status when the client has the Expect: 100-continue header.
-		if expect, ok := req.headers["Expect"]; ok && expect == "100-continue" && c.server.opts.auto_expect_continue {
+		if expect, ok := req.headers["Expect"]; ok &&
+		   expect == "100-continue" &&
+		   c.server.opts.auto_expect_continue {
+
 			res.status = .Continue
 			if err := response_send(&res, c, context.temp_allocator); err != nil {
 				log.warnf("could not send automatic 100 continue: %s", err)
@@ -337,7 +343,7 @@ scanner_scan_or_bad_req :: proc(s: ^bufio.Scanner, res: ^Response, conn: ^Connec
         err := bufio.scanner_error(s)
         log.warnf("request scanner error: %s", err)
 
-        res.status = .BadRequest
+        res.status = .Bad_Request
         #partial switch ex in err {
         case bufio.Scanner_Extra_Error:
             #partial switch ex {

@@ -64,7 +64,7 @@ handle :: proc(req: ^http.Request, res: ^http.Response) {
     defer {
         dur := time.tick_since(start)
         durqs := time.duration_microseconds(dur)
-        if res.status < http.Status.BadRequest {
+        if res.status < http.Status.Bad_Request {
             log.infof(
                 "[%i|%.1fqs] %s %s",
                 res.status,
@@ -93,7 +93,7 @@ handle :: proc(req: ^http.Request, res: ^http.Response) {
                 expires_gmt  = time.now(),
                 max_age_secs = 10,
                 http_only    = true,
-                same_site    = http.SameSite.Lax,
+                same_site    = http.Same_Site.Lax,
             })
             http.respond_plain(res, "Yo!")
         case "/api":
@@ -114,7 +114,7 @@ handle :: proc(req: ^http.Request, res: ^http.Response) {
             }
 
             if body != "ping" {
-                res.status = .UnprocessableContent
+                res.status = .Unprocessable_Content
                 return
             }
 

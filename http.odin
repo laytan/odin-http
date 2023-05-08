@@ -43,8 +43,6 @@ requestline_parse :: proc(
 	return
 }
 
-OurVersionString :: "HTTP/1.1"
-
 Version :: struct {
 	major: u8,
 	minor: u8,
