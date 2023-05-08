@@ -193,7 +193,7 @@ Connection :: struct {
 	socket_mu: sync.Mutex,
 	socket:    net.TCP_Socket,
 	curr_req:  ^Request,
-	handler:   proc(^Request, ^Response),
+	handler:   ^Handler,
 	state:     Connection_State,
 	thread:    ^thread.Thread,
 }
@@ -329,7 +329,7 @@ conn_handle_reqs :: proc(c: ^Connection) -> net.Network_Error {
 				rline.method = .Get
 			}
 
-			c.handler(&req, &res)
+			c.handler.handle(c.handler, &req, &res)
 
 			if is_head && c.server.opts.redirect_head_to_get {
 				rline.method = .Head
