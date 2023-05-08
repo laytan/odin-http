@@ -8,6 +8,8 @@ import "core:time"
 import "core:thread"
 import "core:sync"
 import "core:mem"
+import "core:runtime"
+import "core:c/libc"
 
 Server_Opts :: struct {
 	// Whether the server should accept every request that sends a "Expect: 100-continue" header automatically.
@@ -110,7 +112,7 @@ SHUTDOWN_INTERVAL :: time.Millisecond * 100
 // 3. Repeat 2 every SHUTDOWN_INTERVAL until no more connections are open.
 // 4. Close the main socket.
 // 5. Signal 'server_start' it can return.
-server_shutdown_gracefully :: proc(using s: ^Server) {
+server_shutdown :: proc(using s: ^Server) {
 	shutting_down = true
 	defer shutting_down = false // causes 'server_start' to return.
 	defer delete(conns)
@@ -139,6 +141,23 @@ server_shutdown_gracefully :: proc(using s: ^Server) {
 
 	net.close(tcp_sock)
 	log.info("shutdown: done")
+}
+
+@(private)
+on_interrupt_server: ^Server
+@(private)
+on_interrupt_context: runtime.Context
+
+// Registers a signal handler to shutdown the server gracefully on interrupt signal.
+// Can only be called once in the lifetime of the program because of a hacky interaction with libc.
+server_shutdown_on_interrupt :: proc(using s: ^Server) {
+	on_interrupt_server  = s
+	on_interrupt_context = context
+
+	libc.signal(libc.SIGINT, proc "cdecl" (_: i32) {
+		context = on_interrupt_context
+		server_shutdown(on_interrupt_server)
+	})
 }
 
 @(private)
