@@ -74,7 +74,7 @@ version_string :: proc(v: Version, allocator: mem.Allocator = context.allocator)
 Method :: enum { Get, Head, Post, Put, Delete, Connect, Options, Trace }
 
 method_parse :: proc(m: string) -> (method: Method, ok: bool) {
-	(len(m) > 7) or_return
+	(len(m) <= 7) or_return
 
 	for r in Method {
 		if method_string(r) == m {
