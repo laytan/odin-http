@@ -104,7 +104,12 @@ request_body_length :: proc(req: ^Request, max_length: int) -> (string, Body_Err
 
 	// user_index is used to set the amount of bytes to scan in scan_num_bytes.
 	context.user_index = ilen
+
+	req._body.max_token_size = ilen
+	defer req._body.max_token_size = bufio.DEFAULT_MAX_SCAN_TOKEN_SIZE
+
 	req._body.split = scan_num_bytes
+	defer req._body.split = bufio.scan_lines
 
 	if !bufio.scanner_scan(&req._body) {
 		return "", .Scan_Failed
@@ -155,19 +160,24 @@ request_body_chunked :: proc(req: ^Request, max_length: int) -> (body: string, e
 		size := hex_decode_size(size_line) or_return
 		if size == 0 do break;
 
+		if max_length > -1 && bytes.buffer_length(&body_buff) + size > max_length {
+			return "", .Too_Long
+		}
+
 		// user_index is used to set the amount of bytes to scan in scan_num_bytes.
 		context.user_index = size
+
+		req._body.max_token_size = size
+		defer req._body.max_token_size = bufio.DEFAULT_MAX_SCAN_TOKEN_SIZE
+
 		req._body.split = scan_num_bytes
+		defer req._body.split = bufio.scan_lines
+
 		if !bufio.scanner_scan(&req._body) {
 			return "", .Scan_Failed
 		}
-		req._body.split = bufio.scan_lines
 
 		bytes.buffer_write(&body_buff, bufio.scanner_bytes(&req._body))
-
-		if bytes.buffer_length(&body_buff) > max_length {
-			return "", .Too_Long
-		}
 	}
 
 	// Read trailing empty line (after body, before trailing headers).
