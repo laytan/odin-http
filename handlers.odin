@@ -22,6 +22,13 @@ handler_proc :: proc(handle: proc(^Request, ^Response)) -> Handler {
 	return h
 }
 
+middleware_proc :: proc(next: Maybe(^Handler), handle: proc(^Handler, ^Request, ^Response)) -> Handler {
+	h: Handler
+	h.next = next
+	h.handle = handle
+	return h
+}
+
 Logger_Opts :: struct {
 	log_time: bool,
 }
