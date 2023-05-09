@@ -20,18 +20,24 @@ Server_Opts :: struct {
 	// Defaults to true.
 	redirect_head_to_get: bool,
 	// Limit the maximum number of bytes to read for the request line (first line of request containing the URI).
+	// The HTTP spec does not specify any limits but in practice it is safer.
 	// RFC 7230 3.1.1 says:
 	// Various ad hoc limitations on request-line length are found in
 	// practice.  It is RECOMMENDED that all HTTP senders and recipients
 	// support, at a minimum, request-line lengths of 8000 octets.
 	// defaults to 8000.
 	limit_request_line: int,
+	// Limit the length of the headers.
+	// The HTTP spec does not specify any limits but in practice it is safer.
+	// defaults to 8000.
+	limit_headers:      int,
 }
 
 Default_Server_Opts :: Server_Opts {
 	auto_expect_continue = true,
 	redirect_head_to_get = true,
 	limit_request_line   = 8000,
+	limit_headers        = 8000,
 }
 
 Server :: struct {
@@ -300,10 +306,7 @@ conn_handle_reqs :: proc(c: ^Connection) -> net.Network_Error {
             break
         }
 
-		// TODO: have header max size.
-
-		scanner.max_token_size = bufio.DEFAULT_MAX_SCAN_TOKEN_SIZE
-
+		scanner.max_token_size = c.server.opts.limit_headers
         // Keep parsing the request as line delimited headers until we get to an empty line.
 		for line in scanner_scan_or_bad_req(&scanner, &res, c, .Request_Header_Fields_Too_Large) {
 			// The first empty line denotes the end of the headers section.
@@ -316,6 +319,13 @@ conn_handle_reqs :: proc(c: ^Connection) -> net.Network_Error {
 				response_send_or_log(&res, c, .Bad_Request)
 				break Requests
 			}
+
+			scanner.max_token_size -= len(line)
+			if scanner.max_token_size <= 0 {
+				res.headers["Connection"] = "close"
+				response_send_or_log(&res, c, .Request_Header_Fields_Too_Large)
+				break Requests
+			}
 		}
 
         if !headers_validate(req) {
@@ -323,6 +333,8 @@ conn_handle_reqs :: proc(c: ^Connection) -> net.Network_Error {
             response_send_or_log(&res, c, .Bad_Request)
             break
         }
+
+		scanner.max_token_size = bufio.DEFAULT_MAX_SCAN_TOKEN_SIZE
 
 		// Automatically respond with a continue status when the client has the Expect: 100-continue header.
 		if expect, ok := req.headers["Expect"]; ok &&
