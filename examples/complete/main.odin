@@ -53,7 +53,7 @@ handle :: proc(req: ^http.Request, res: ^http.Response) {
 	rline := req.line.(http.Requestline)
     #partial switch rline.method {
     case .Get:
-        switch rline.target {
+        switch req.url.path {
         case "/cookies":
             append(&res.cookies, http.Cookie{
 				name         = "Session",

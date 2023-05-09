@@ -7,7 +7,6 @@ See the example for usage, run the example using: `odin run examples/complete` o
 **TODO:**
  - TLS
  - route parameters
- - parsing of URI
  - decompress "Content-Encoding" middleware
  - rate limit middleware
  - Nicer routing

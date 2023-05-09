@@ -306,6 +306,8 @@ conn_handle_reqs :: proc(c: ^Connection) -> net.Network_Error {
             break
         }
 
+		req.url = url_parse(rline.target, context.temp_allocator)
+
 		scanner.max_token_size = c.server.opts.limit_headers
         // Keep parsing the request as line delimited headers until we get to an empty line.
 		for line in scanner_scan_or_bad_req(&scanner, &res, c, .Request_Header_Fields_Too_Large) {

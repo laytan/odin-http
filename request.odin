@@ -12,6 +12,8 @@ Request :: struct {
 	line:       Maybe(Requestline),
 
 	headers:    Headers,
+	url:        URL,
+
 	_body:      bufio.Scanner,
 	_body_err:  Body_Error,
 }
