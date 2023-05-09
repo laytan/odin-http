@@ -4,6 +4,13 @@ import "core:strings"
 import "core:mem"
 import "core:time"
 
+Requestline_Error :: enum {
+	None,
+	Method_Not_Implemented,
+	Not_Enough_Fields,
+	Invalid_Version_Format,
+}
+
 Requestline :: struct {
 	method:  Method,
 	target:  string,
@@ -16,24 +23,27 @@ Requestline :: struct {
 //
 // This allocates a clone of the target, because this is intended to be used with a scanner,
 // which has a buffer that changes every read.
-requestline_parse :: proc(s: string, allocator: mem.Allocator = context.allocator) -> (line: Requestline, ok: bool) {
+requestline_parse :: proc(s: string, allocator: mem.Allocator = context.allocator) -> (line: Requestline, err: Requestline_Error) {
 	s := s
 
 	next_space := strings.index_byte(s, ' ')
-	(next_space > -1) or_return
+	if next_space == -1 do return line, .Not_Enough_Fields
 
-	line.method = method_parse(s[:next_space]) or_return
+	ok: bool
+	line.method, ok = method_parse(s[:next_space])
+	if !ok do return line, .Method_Not_Implemented
 	s = s[next_space + 1:]
 
 	next_space = strings.index_byte(s, ' ')
-	(next_space > -1) or_return
+	if next_space == -1 do return line, .Not_Enough_Fields
 
 	// Clone because s (from the scanner) could point to something else later.
 	line.target = strings.clone(s[:next_space], allocator)
 	s = s[len(line.target) + 1:]
 
-	line.version = version_parse(s[:VERSION_LENGTH]) or_return
-	ok = true
+	line.version, ok = version_parse(s[:VERSION_LENGTH])
+	if !ok do return line, .Invalid_Version_Format
+
 	return
 }
 
@@ -65,7 +75,7 @@ version_string :: proc(v: Version, allocator: mem.Allocator = context.allocator)
 	return strings.to_string(str)
 }
 
-Method :: enum { Get, Head, Post, Put, Delete, Connect, Options, Trace }
+Method :: enum { Get, Head, Post, Put, Patch, Delete, Connect, Options, Trace }
 
 method_parse :: proc(m: string) -> (method: Method, ok: bool) {
 	(len(m) <= 7) or_return
@@ -85,6 +95,7 @@ method_string :: proc(m: Method) -> string {
 	case .Head:    return "HEAD"
 	case .Post:    return "POST"
 	case .Put:     return "PUT"
+	case .Patch:   return "PATCH"
 	case .Trace:   return "TRACE"
 	case .Delete:  return "DELETE"
 	case .Connect: return "CONNECT"

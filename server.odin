@@ -19,11 +19,19 @@ Server_Opts :: struct {
 	// Then, when the response is sent, the body is removed from the response.
 	// Defaults to true.
 	redirect_head_to_get: bool,
+	// Limit the maximum number of bytes to read for the request line (first line of request containing the URI).
+	// RFC 7230 3.1.1 says:
+	// Various ad hoc limitations on request-line length are found in
+	// practice.  It is RECOMMENDED that all HTTP senders and recipients
+	// support, at a minimum, request-line lengths of 8000 octets.
+	// defaults to 8000.
+	limit_request_line: int,
 }
 
 Default_Server_Opts :: Server_Opts {
 	auto_expect_continue = true,
 	redirect_head_to_get = true,
+	limit_request_line   = 8000,
 }
 
 Server :: struct {
@@ -246,6 +254,7 @@ conn_handle_reqs :: proc(c: ^Connection) -> net.Network_Error {
         // PERF: we shouldn't create a new scanner everytime.
         scanner: bufio.Scanner
         bufio.scanner_init(&scanner, stream_reader, context.temp_allocator)
+		scanner.max_token_size = c.server.opts.limit_request_line
 
         res: Response
         response_init(&res, c.socket, context.temp_allocator)
@@ -269,13 +278,20 @@ conn_handle_reqs :: proc(c: ^Connection) -> net.Network_Error {
 		// Recipients of an invalid request-line SHOULD respond with either a
 		// 400 (Bad Request) error or a 301 (Moved Permanently) redirect with
 		// the request-target properly encoded.
-		rline, lok := requestline_parse(rline_str, context.temp_allocator)
-		if !lok {
-            res.headers["Connection"] = "close"
-			response_send_or_log(&res, c, .Bad_Request)
-            break
+		rline, err := requestline_parse(rline_str, context.temp_allocator)
+		switch err {
+			case .Method_Not_Implemented:
+				res.headers["Connection"] = "close"
+				response_send_or_log(&res, c, .Not_Implemented)
+				break Requests
+			case .Invalid_Version_Format, .Not_Enough_Fields:
+				res.headers["Connection"] = "close"
+				response_send_or_log(&res, c, .Bad_Request)
+				break Requests
+			case .None:
+				req.line = rline
+
 		}
-		req.line = rline
 
         // Might need to support more versions later.
         if rline.version.major != 1 || rline.version.minor < 1 {
@@ -283,6 +299,10 @@ conn_handle_reqs :: proc(c: ^Connection) -> net.Network_Error {
             response_send_or_log(&res, c, .HTTP_Version_Not_Supported)
             break
         }
+
+		// TODO: have header max size.
+
+		scanner.max_token_size = bufio.DEFAULT_MAX_SCAN_TOKEN_SIZE
 
         // Keep parsing the request as line delimited headers until we get to an empty line.
 		for line in scanner_scan_or_bad_req(&scanner, &res, c, .Request_Header_Fields_Too_Large) {
