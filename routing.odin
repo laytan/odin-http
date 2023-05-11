@@ -40,6 +40,23 @@ router_init :: proc(router: ^Router, allocator := context.allocator) {
 	router.routes = make(map[Method][dynamic]Route, 0, allocator)
 }
 
+router_destroy :: proc(router: ^Router) {
+	for route in router.all {
+		delete(route.pattern)
+	}
+	delete(router.all)
+
+	for _, routes in router.routes {
+		for route in routes {
+			delete(route.pattern)
+		}
+
+		delete(routes)
+	}
+
+	delete(router.routes)
+}
+
 // Returns a handler that matches against the given routes.
 router_handler :: proc(router: ^Router) -> Handler {
 	h: Handler
