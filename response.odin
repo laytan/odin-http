@@ -113,7 +113,7 @@ response_send :: proc(using r: ^Response, conn: ^Connection, allocator: mem.Allo
 respond_html :: proc(using r: ^Response, html: string) {
 	status = .Ok
 	bytes.buffer_write_string(&body, html)
-	headers["Content-Type"] = mime_to_content_type(Mime_Type.Plain)
+	headers["Content-Type"] = mime_to_content_type(Mime_Type.Html)
 }
 
 // Sets the response to one that sends the given plain text.
