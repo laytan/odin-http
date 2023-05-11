@@ -185,8 +185,7 @@ header_allowed_trailer :: proc(key: string) -> bool {
         key != "Content-Encoding" &&
         key != "Content-Type" &&
         key != "Content-Range" &&
-        key != "Trailer"
-    )
+        key != "Trailer")
 }
 
 @(private)

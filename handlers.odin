@@ -3,18 +3,20 @@ package http
 import "core:time"
 import "core:log"
 
+Handler_Proc :: proc(handler: ^Handler, req: ^Request, res: ^Response)
+
 Handler :: struct {
-	data:   rawptr,
-	next:   Maybe(^Handler),
-	handle: proc(^Handler, ^Request, ^Response),
+	user_data: rawptr,
+	next:      Maybe(^Handler),
+	handle:    Handler_Proc,
 }
 
 handler_proc :: proc(handle: proc(^Request, ^Response)) -> Handler {
 	h: Handler
-	h.data = rawptr(handle)
+	h.user_data = rawptr(handle)
 
 	handle := proc(h: ^Handler, req: ^Request, res: ^Response) {
-		p := (proc(^Request, ^Response))(h.data)
+		p := (proc(^Request, ^Response))(h.user_data)
 		p(req, res)
 	}
 
@@ -22,7 +24,7 @@ handler_proc :: proc(handle: proc(^Request, ^Response)) -> Handler {
 	return h
 }
 
-middleware_proc :: proc(next: Maybe(^Handler), handle: proc(^Handler, ^Request, ^Response)) -> Handler {
+middleware_proc :: proc(next: Maybe(^Handler), handle: Handler_Proc) -> Handler {
 	h: Handler
 	h.next = next
 	h.handle = handle
@@ -39,11 +41,11 @@ Default_Logger_Opts := Logger_Opts {
 
 middleware_logger :: proc(next: Maybe(^Handler), opts: ^Logger_Opts = nil) -> Handler {
 	h: Handler
-	h.data = opts != nil ? opts : &Default_Logger_Opts
+	h.user_data = opts != nil ? opts : &Default_Logger_Opts
 	h.next = next
 
 	handle := proc(h: ^Handler, req: ^Request, res: ^Response) {
-		opts := (^Logger_Opts)(h.data)
+		opts := (^Logger_Opts)(h.user_data)
 		rline := req.line.(Requestline)
 
 		start: time.Tick
