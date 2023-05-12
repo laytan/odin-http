@@ -6,6 +6,8 @@ import "core:strconv"
 import "core:strings"
 import "core:fmt"
 import "core:bytes"
+import "core:log"
+import "core:net"
 
 Request :: struct {
 	// If in a handler, this is always there and never None.
@@ -63,6 +65,14 @@ Body_Error :: enum {
 	Invalid_Trailer_Header,
 }
 
+Body_Plain :: string
+Body_Url_Encoded :: map[string]string
+
+Body_Type :: union {
+	Body_Plain,
+	Body_Url_Encoded,
+}
+
 // Returns an appropriate status code for the given body error.
 body_error_status :: proc(e: Body_Error) -> Status {
 	switch e {
@@ -76,17 +86,37 @@ body_error_status :: proc(e: Body_Error) -> Status {
 }
 
 // Retrieves the request's body, can only be called once.
-request_body :: proc(req: ^Request, max_length: int = -1) -> (body: string, err: Body_Error) {
+request_body :: proc(req: ^Request, max_length: int = -1) -> (body: Body_Type, err: Body_Error) {
     defer req._body_err = err
 
 	assert(req._body_err == nil)
 
 	if enc_header, ok := req.headers["Transfer-Encoding"]; ok && strings.has_suffix(enc_header, "chunked") {
-		body, err = request_body_chunked(req, max_length)
-		return
+		body = request_body_chunked(req, max_length) or_return
+	} else {
+		body = request_body_length(req, max_length) or_return
 	}
 
-	body, err = request_body_length(req, max_length)
+	// Automatically decode url encoded bodies.
+	if typ, ok := req.headers["Content-Type"]; ok && typ == "application/x-www-form-urlencoded" {
+		plain := body.(Body_Plain)
+
+		keyvalues := strings.split(plain, "&", req.allocator)
+		queries := make(Body_Url_Encoded, len(keyvalues), req.allocator)
+		for keyvalue in keyvalues {
+			seperator := strings.index(keyvalue, "=")
+			if seperator == -1 { // The keyvalue has no value.
+				queries[keyvalue] = ""
+				continue
+			}
+
+			val, ok := net.percent_decode(keyvalue[seperator+1:], req.allocator)
+			queries[keyvalue[:seperator]] = ok ? val : keyvalue[seperator+1:]
+		}
+
+		body = queries
+	}
+
 	return
 }
 
@@ -107,6 +137,10 @@ request_body_length :: proc(req: ^Request, max_length: int) -> (string, Body_Err
 		return "", .Too_Long
 	}
 
+	if ilen == 0 {
+		return "", nil
+	}
+
 	// user_index is used to set the amount of bytes to scan in scan_num_bytes.
 	context.user_index = ilen
 
@@ -115,6 +149,8 @@ request_body_length :: proc(req: ^Request, max_length: int) -> (string, Body_Err
 
 	req._body.split = scan_num_bytes
 	defer req._body.split = bufio.scan_lines
+
+	log.infof("scanning %i bytes body", ilen)
 
 	if !bufio.scanner_scan(&req._body) {
 		return "", .Scan_Failed
