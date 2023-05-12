@@ -111,7 +111,7 @@ header_parse :: proc(headers: ^Headers, line: string) -> (key: string, ok: bool)
 	(len(line) > 0 && line[0] != ' ') or_return
 
 	colon := strings.index_byte(line, ':')
-	(colon > -1) or_return
+	(colon > 0) or_return
 
 	// There must not be a space before the colon.
 	(line[colon - 1] != ' ') or_return
