@@ -24,26 +24,26 @@ main :: proc() {
     router: http.Router
     http.router_init(&router)
 
-    http.route_get(&router, "/", proc(req: ^http.Request, res: ^http.Response, _: []string) {
+    http.route_get(&router, "/", http.handler(proc(req: ^http.Request, res: ^http.Response) {
         http.respond_html(res, `
         <html>
             <body>
                 <h1>Welcome to the front page!</h1>
             </body>
         </html>`)
-    })
+    }))
 
     // Route matching is implemented using an implementation of Lua patterns, see the docs on them here:
     // https://www.lua.org/pil/20.2.html
     // They are very similar to regex patterns but a bit more limited, which makes them much easier to implement since Odin does not have a regex implementation.
 
-    http.route_get(&router, "/hello/(%w+)", proc(req: ^http.Request, res: ^http.Response, params: []string) {
+    http.route_get(&router, "/hello/(%w+)", http.handler(proc(req: ^http.Request, res: ^http.Response) {
         http.respond_plain(res, "Hello, ")
-        bytes.buffer_write_string(&res.body, params[0])
-    })
+        bytes.buffer_write_string(&res.body, req.url_params[0])
+    }))
 
     // JSON/body example.
-    http.route_post(&router, "/ping", proc(req: ^http.Request, res: ^http.Response, _: []string) {
+    http.route_post(&router, "/ping", http.handler(proc(req: ^http.Request, res: ^http.Response) {
         body, err := http.request_body(req)
         if err != nil {
             log.infof("invalid ping payload %q: %s", body, err)
@@ -59,13 +59,13 @@ main :: proc() {
         }
 
         http.respond_json(res, Hello_Res_Payload{message = fmt.tprintf("Hello %s!", p.name)})
-    })
+    }))
 
     // Custom 404 page.
-    http.route_all(&router, "(.*)", proc(_: ^http.Request, res: ^http.Response, params: []string) {
-        http.respond_plain(res, fmt.tprintf("Welcome, could not find the path %q", params[0]))
+    http.route_all(&router, "(.*)", http.handler(proc(req: ^http.Request, res: ^http.Response) {
+        http.respond_plain(res, fmt.tprintf("Welcome, could not find the path %q", req.url_params[0]))
         res.status = .NotFound
-    })
+    }))
 
     handler := http.router_handler(&router)
 	fmt.printf("Server stopped: %s", http.listen_and_serve(&s, &handler))

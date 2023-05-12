@@ -22,10 +22,8 @@ url_parse :: proc(raw: string, allocator := context.allocator) -> URL {
 	return url
 }
 
-Route_Handler_Proc :: proc(req: ^Request, res: ^Response, params: []string)
-
 Route :: struct {
-	handler: Route_Handler_Proc,
+	handler: Handler,
 	pattern: string,
 }
 
@@ -81,14 +79,14 @@ router_handler :: proc(router: ^Router) -> Handler {
 	return h
 }
 
-route_get :: proc(router: ^Router, pattern: string, handler: Route_Handler_Proc) {
+route_get :: proc(router: ^Router, pattern: string, handler: Handler) {
 	route_add(router, .Get, Route{
 		handler = handler,
 		pattern = strings.concatenate([]string{"^", pattern, "$"}, router.allocator),
 	})
 }
 
-route_post :: proc(router: ^Router, pattern: string, handler: Route_Handler_Proc) {
+route_post :: proc(router: ^Router, pattern: string, handler: Handler) {
 	route_add(router, .Post, Route{
 		handler = handler,
 		pattern = strings.concatenate([]string{"^", pattern, "$"}, router.allocator),
@@ -96,49 +94,49 @@ route_post :: proc(router: ^Router, pattern: string, handler: Route_Handler_Proc
 }
 
 // NOTE: this does not get called when `Server_Opts.redirect_head_to_get` is set to true.
-route_head :: proc(router: ^Router, pattern: string, handler: Route_Handler_Proc) {
+route_head :: proc(router: ^Router, pattern: string, handler: Handler) {
 	route_add(router, .Head, Route{
 		handler = handler,
 		pattern = strings.concatenate([]string{"^", pattern, "$"}, router.allocator),
 	})
 }
 
-route_put :: proc(router: ^Router, pattern: string, handler: Route_Handler_Proc) {
+route_put :: proc(router: ^Router, pattern: string, handler: Handler) {
 	route_add(router, .Put, Route{
 		handler = handler,
 		pattern = strings.concatenate([]string{"^", pattern, "$"}, router.allocator),
 	})
 }
 
-route_patch :: proc(router: ^Router, pattern: string, handler: Route_Handler_Proc) {
+route_patch :: proc(router: ^Router, pattern: string, handler: Handler) {
 	route_add(router, .Patch, Route{
 		handler = handler,
 		pattern = strings.concatenate([]string{"^", pattern, "$"}, router.allocator),
 	})
 }
 
-route_trace :: proc(router: ^Router, pattern: string, handler: Route_Handler_Proc) {
+route_trace :: proc(router: ^Router, pattern: string, handler: Handler) {
 	route_add(router, .Trace, Route{
 		handler = handler,
 		pattern = strings.concatenate([]string{"^", pattern, "$"}, router.allocator),
 	})
 }
 
-route_delete :: proc(router: ^Router, pattern: string, handler: Route_Handler_Proc) {
+route_delete :: proc(router: ^Router, pattern: string, handler: Handler) {
 	route_add(router, .Delete, Route{
 		handler = handler,
 		pattern = strings.concatenate([]string{"^", pattern, "$"}, router.allocator),
 	})
 }
 
-route_connect :: proc(router: ^Router, pattern: string, handler: Route_Handler_Proc) {
+route_connect :: proc(router: ^Router, pattern: string, handler: Handler) {
 	route_add(router, .Connect, Route{
 		handler = handler,
 		pattern = strings.concatenate([]string{"^", pattern, "$"}, router.allocator),
 	})
 }
 
-route_options :: proc(router: ^Router, pattern: string, handler: Route_Handler_Proc) {
+route_options :: proc(router: ^Router, pattern: string, handler: Handler) {
 	route_add(router, .Options, Route{
 		handler = handler,
 		pattern = strings.concatenate([]string{"^", pattern, "$"}, router.allocator),
@@ -146,7 +144,7 @@ route_options :: proc(router: ^Router, pattern: string, handler: Route_Handler_P
 }
 
 // Adds a catch-all fallback route (all methods, ran if no other routes match).
-route_all :: proc(router: ^Router, pattern: string, handler: Route_Handler_Proc) {
+route_all :: proc(router: ^Router, pattern: string, handler: Handler) {
 	if router.all == nil {
 		router.all = make([dynamic]Route, 0, 1, router.allocator)
 	}
@@ -176,7 +174,9 @@ routes_try :: proc(routes: [dynamic]Route, req: ^Request, res: ^Response) -> boo
 		}
 
 		if ok {
-			route.handler(req, res, captures)
+			req.url_params = captures
+			rh := route.handler
+			rh.handle(&rh, req, res)
 			return true
 		}
 	}

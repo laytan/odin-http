@@ -4,6 +4,7 @@ import "core:time"
 import "core:log"
 
 Handler_Proc :: proc(handler: ^Handler, req: ^Request, res: ^Response)
+Handle_Proc  :: proc(req: ^Request, res: ^Response)
 
 Handler :: struct {
 	user_data: rawptr,
@@ -11,12 +12,12 @@ Handler :: struct {
 	handle:    Handler_Proc,
 }
 
-handler_proc :: proc(handle: proc(^Request, ^Response)) -> Handler {
+handler :: proc(handle: Handle_Proc) -> Handler {
 	h: Handler
 	h.user_data = rawptr(handle)
 
 	handle := proc(h: ^Handler, req: ^Request, res: ^Response) {
-		p := (proc(^Request, ^Response))(h.user_data)
+		p := (Handle_Proc)(h.user_data)
 		p(req, res)
 	}
 

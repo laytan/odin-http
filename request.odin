@@ -14,6 +14,9 @@ Request :: struct {
 	headers:    Headers,
 	url:        URL,
 
+	// Route params/captures.
+	url_params: []string,
+
 	_body:      bufio.Scanner,
 	_body_err:  Body_Error,
 }

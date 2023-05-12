@@ -9,7 +9,7 @@ import http "../.."
 main :: proc() {
 	s: http.Server
 
-	handler := http.handler_proc(proc(req: ^http.Request, res: ^http.Response) {
+	handler := http.handler(proc(req: ^http.Request, res: ^http.Response) {
 		http.respond_plain(res, "Hello, Odin!")
 	})
 
