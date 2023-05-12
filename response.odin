@@ -17,7 +17,7 @@ Response :: struct {
 	body:    bytes.Buffer,
 }
 
-response_init :: proc(r: ^Response, s: net.TCP_Socket, allocator: mem.Allocator = context.temp_allocator) {
+response_init :: proc(r: ^Response, s: net.TCP_Socket, allocator: mem.Allocator = context.allocator) {
 	r.status = .NotFound
 	r.headers = make(Headers, 3, allocator)
 	r.headers["Server"] = "Odin"
@@ -27,7 +27,7 @@ response_init :: proc(r: ^Response, s: net.TCP_Socket, allocator: mem.Allocator 
 }
 
 // Sends the response over the connection.
-response_send :: proc(using r: ^Response, conn: ^Connection, allocator: mem.Allocator = context.temp_allocator) -> net.Network_Error {
+response_send :: proc(using r: ^Response, conn: ^Connection, allocator: mem.Allocator = context.allocator) -> net.Network_Error {
 	res: bytes.Buffer
 	// Responses are on average at least 100 bytes, so lets start there, but add the body's length.
 	initial_buf_cap := response_needs_content_length(r, conn) ? 100 + bytes.buffer_length(&body) : 100
@@ -90,7 +90,7 @@ response_send :: proc(using r: ^Response, conn: ^Connection, allocator: mem.Allo
 	}
 
 	// Write the status code as the body, if there is no body set by the handlers.
-	if response_can_have_body(r, conn) && bytes.buffer_length(&body) == 0 {
+	if response_can_have_body(r, conn) && !status_success(status) && bytes.buffer_length(&body) == 0 {
 		bytes.buffer_write_string(&body, status_string(status))
 	}
 
@@ -125,7 +125,7 @@ respond_plain :: proc(using r: ^Response, text: string) {
 
 // Sets the response to one that sends the contents of the file at the given path.
 // Content-Type header is set based on the file extension, see the MimeType enum for known file extensions.
-respond_file :: proc(using r: ^Response, path: string, allocator: mem.Allocator = context.temp_allocator) {
+respond_file :: proc(using r: ^Response, path: string, allocator: mem.Allocator = context.allocator) {
 	bs, ok := os.read_entire_file(path, allocator)
 	if !ok {
 		status = .NotFound
@@ -147,7 +147,7 @@ respond_file :: proc(using r: ^Response, path: string, allocator: mem.Allocator 
 //
 // Path traversal is detected and cleaned up.
 // The Content-Type is set based on the file extension, see the MimeType enum for known file extensions.
-respond_dir :: proc(using r: ^Response, base, target, request: string, allocator: mem.Allocator = context.temp_allocator) {
+respond_dir :: proc(using r: ^Response, base, target, request: string, allocator: mem.Allocator = context.allocator) {
 	if !strings.has_prefix(request, base) {
 		status = .NotFound
 		return
@@ -169,8 +169,8 @@ respond_dir :: proc(using r: ^Response, base, target, request: string, allocator
 respond_json :: proc(
 	using r: ^Response,
 	v: any,
+	allocator: mem.Allocator = context.allocator,
 	opt: json.Marshal_Options = {},
-	allocator: mem.Allocator = context.temp_allocator,
 ) -> json.Marshal_Error {
 	bs := json.marshal(v, opt, allocator) or_return
 	status = .Ok
@@ -200,7 +200,7 @@ Cookie :: struct {
 }
 
 // Builds the Set-Cookie header string representation of the given cookie.
-cookie_string :: proc(using c: Cookie, allocator: mem.Allocator = context.temp_allocator) -> string {
+cookie_string :: proc(using c: Cookie, allocator: mem.Allocator = context.allocator) -> string {
 	b: strings.Builder
 	strings.builder_init(&b, 0, 20, allocator)
 

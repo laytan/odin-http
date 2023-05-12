@@ -8,6 +8,7 @@ import "core:time"
 import "core:thread"
 import "core:sync"
 import "core:mem"
+import "core:mem/virtual"
 import "core:runtime"
 import "core:c/libc"
 
@@ -261,7 +262,7 @@ connection_close :: proc(c: ^Connection) {
 }
 
 // Calls handler for each of the requests coming in.
-// Everything is allocated in the temp_allocator, and freed at the end of the request.
+// Everything is allocated in a memory arena for that request, and freed at the end of the request.
 // If you need to keep data from either the Request or Response, you need to clone it.
 conn_handle_reqs :: proc(c: ^Connection) -> net.Network_Error {
     // Make sure the connection is closed when we are returning.
@@ -272,27 +273,32 @@ conn_handle_reqs :: proc(c: ^Connection) -> net.Network_Error {
     stream := tcp_stream(c.socket)
     stream_reader := io.to_reader(stream)
     Requests: for {
-        defer free_all(context.temp_allocator)
+		arena: virtual.Arena
+		if err := virtual.arena_init_growing(&arena); err != nil {
+			panic("could not create memory arena")
+		}
+		allocator := virtual.arena_allocator(&arena)
+        defer free_all(allocator)
 
         // PERF: we shouldn't create a new scanner everytime.
         scanner: bufio.Scanner
-        bufio.scanner_init(&scanner, stream_reader, context.temp_allocator)
+        bufio.scanner_init(&scanner, stream_reader, allocator)
 		scanner.max_token_size = c.server.opts.limit_request_line
 
         res: Response
-        response_init(&res, c.socket, context.temp_allocator)
+        response_init(&res, c.socket, allocator)
 
         req: Request
-        request_init(&req, context.temp_allocator)
+        request_init(&req, allocator)
         c.curr_req = &req
 
 		// In the interest of robustness, a server that is expecting to receive
 		// and parse a request-line SHOULD ignore at least one empty line (CRLF)
 		// received prior to the request-line.
-        rline_str, ok := scanner_scan_or_bad_req(&scanner, &res, c, .URI_Too_Long)
+        rline_str, ok := scanner_scan_or_bad_req(&scanner, &res, c, .URI_Too_Long, allocator)
         if !ok do break;
         if rline_str == "" {
-            rline_str, ok = scanner_scan_or_bad_req(&scanner, &res, c, .URI_Too_Long)
+            rline_str, ok = scanner_scan_or_bad_req(&scanner, &res, c, .URI_Too_Long, allocator)
             if !ok do break;
         }
 
@@ -301,15 +307,15 @@ conn_handle_reqs :: proc(c: ^Connection) -> net.Network_Error {
 		// Recipients of an invalid request-line SHOULD respond with either a
 		// 400 (Bad Request) error or a 301 (Moved Permanently) redirect with
 		// the request-target properly encoded.
-		rline, err := requestline_parse(rline_str, context.temp_allocator)
+		rline, err := requestline_parse(rline_str, allocator)
 		switch err {
 			case .Method_Not_Implemented:
 				res.headers["Connection"] = "close"
-				response_send_or_log(&res, c, .Not_Implemented)
+				response_send_or_log(&res, c, .Not_Implemented, allocator)
 				break Requests
 			case .Invalid_Version_Format, .Not_Enough_Fields:
 				res.headers["Connection"] = "close"
-				response_send_or_log(&res, c, .Bad_Request)
+				response_send_or_log(&res, c, .Bad_Request, allocator)
 				break Requests
 			case .None:
 				req.line = rline
@@ -319,15 +325,15 @@ conn_handle_reqs :: proc(c: ^Connection) -> net.Network_Error {
         // Might need to support more versions later.
         if rline.version.major != 1 || rline.version.minor < 1 {
             res.headers["Connection"] = "close"
-            response_send_or_log(&res, c, .HTTP_Version_Not_Supported)
+            response_send_or_log(&res, c, .HTTP_Version_Not_Supported, allocator)
             break
         }
 
-		req.url = url_parse(rline.target, context.temp_allocator)
+		req.url = url_parse(rline.target, allocator)
 
 		scanner.max_token_size = c.server.opts.limit_headers
         // Keep parsing the request as line delimited headers until we get to an empty line.
-		for line in scanner_scan_or_bad_req(&scanner, &res, c, .Request_Header_Fields_Too_Large) {
+		for line in scanner_scan_or_bad_req(&scanner, &res, c, .Request_Header_Fields_Too_Large, allocator) {
 			// The first empty line denotes the end of the headers section.
 			if line == "" {
 				break
@@ -335,21 +341,21 @@ conn_handle_reqs :: proc(c: ^Connection) -> net.Network_Error {
 
 			if _, ok := header_parse(&req.headers, line); !ok {
                 res.headers["Connection"] = "close"
-				response_send_or_log(&res, c, .Bad_Request)
+				response_send_or_log(&res, c, .Bad_Request, allocator)
 				break Requests
 			}
 
 			scanner.max_token_size -= len(line)
 			if scanner.max_token_size <= 0 {
 				res.headers["Connection"] = "close"
-				response_send_or_log(&res, c, .Request_Header_Fields_Too_Large)
+				response_send_or_log(&res, c, .Request_Header_Fields_Too_Large, allocator)
 				break Requests
 			}
 		}
 
         if !headers_validate(req) {
             res.headers["Connection"] = "close"
-            response_send_or_log(&res, c, .Bad_Request)
+            response_send_or_log(&res, c, .Bad_Request, allocator)
             break
         }
 
@@ -361,7 +367,7 @@ conn_handle_reqs :: proc(c: ^Connection) -> net.Network_Error {
 		   c.server.opts.auto_expect_continue {
 
 			res.status = .Continue
-			if err := response_send(&res, c, context.temp_allocator); err != nil {
+			if err := response_send(&res, c, allocator); err != nil {
 				log.warnf("could not send automatic 100 continue: %s", err)
 			}
 
@@ -392,7 +398,7 @@ conn_handle_reqs :: proc(c: ^Connection) -> net.Network_Error {
 			}
 		}
 
-        if err := response_send(&res, c, context.temp_allocator); err != nil {
+        if err := response_send(&res, c, allocator); err != nil {
             log.warnf("could not send response: %s", err)
         }
 
@@ -406,15 +412,15 @@ conn_handle_reqs :: proc(c: ^Connection) -> net.Network_Error {
 }
 
 @(private)
-response_send_or_log :: proc(res: ^Response, conn: ^Connection, status: Status) {
+response_send_or_log :: proc(res: ^Response, conn: ^Connection, status: Status, allocator := context.allocator) {
     res.status = status
-    if err := response_send(res, conn, context.temp_allocator); err != nil {
+    if err := response_send(res, conn, allocator); err != nil {
         log.warnf("could not send request response bcs error: %s", err)
     }
 }
 
 @(private)
-scanner_scan_or_bad_req :: proc(s: ^bufio.Scanner, res: ^Response, conn: ^Connection, to_much: Status) -> (string, bool) {
+scanner_scan_or_bad_req :: proc(s: ^bufio.Scanner, res: ^Response, conn: ^Connection, to_much: Status, allocator := context.allocator) -> (string, bool) {
     if !bufio.scanner_scan(s) {
         err := bufio.scanner_error(s)
         log.warnf("request scanner error: %s", err)
@@ -429,7 +435,7 @@ scanner_scan_or_bad_req :: proc(s: ^bufio.Scanner, res: ^Response, conn: ^Connec
         }
 
         res.headers["Connection"] = "close"
-        response_send_or_log(res, conn, res.status)
+        response_send_or_log(res, conn, res.status, allocator)
         return "", false
     }
 

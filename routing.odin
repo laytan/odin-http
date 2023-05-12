@@ -167,7 +167,7 @@ route_add :: proc(router: ^Router, method: Method, route: Route) {
 @(private)
 routes_try :: proc(routes: [dynamic]Route, req: ^Request, res: ^Response) -> bool {
 	for route in routes {
-		ok, start, end, captures, err := pattern.find(req.url.path, route.pattern, context.temp_allocator)
+		ok, start, end, captures, err := pattern.find(req.url.path, route.pattern, req.allocator)
 		if err != nil {
 			log.errorf("pattern %q is invalid, reason: %s", route.pattern, err)
 			continue

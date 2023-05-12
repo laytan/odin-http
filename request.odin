@@ -19,12 +19,16 @@ Request :: struct {
 	// Route params/captures.
 	url_params: []string,
 
+    // Allocator that is freed after the request.
+    allocator: mem.Allocator,
+
 	_body:      bufio.Scanner,
 	_body_err:  Body_Error,
 }
 
 request_init :: proc(r: ^Request, allocator: mem.Allocator = context.allocator) {
 	r.headers = make(Headers, 3, allocator)
+    r.allocator = allocator
 }
 
 headers_validate :: proc(using r: Request) -> bool {
@@ -184,7 +188,7 @@ request_body_length :: proc(req: ^Request, max_length: int) -> (string, Body_Err
 request_body_chunked :: proc(req: ^Request, max_length: int) -> (body: string, err: Body_Error) {
 	body_buff: bytes.Buffer
 	// Needs to be 1 cap because 0 would not use the allocator provided.
-	bytes.buffer_init_allocator(&body_buff, 0, 1, context.temp_allocator)
+	bytes.buffer_init_allocator(&body_buff, 0, 1, req.allocator)
 	for {
 		if !bufio.scanner_scan(&req._body) {
 			return "", .Scan_Failed

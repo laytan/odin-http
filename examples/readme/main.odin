@@ -71,7 +71,7 @@ cookies :: proc(req: ^http.Request, res: ^http.Response) {
 }
 
 api :: proc(req: ^http.Request, res: ^http.Response) {
-	if err := http.respond_json(res, req.line); err != nil {
+	if err := http.respond_json(res, req.line, req.allocator); err != nil {
 		log.errorf("could not respond with JSON: %s", err)
 	}
 }
@@ -81,7 +81,7 @@ ping :: proc(req: ^http.Request, res: ^http.Response) {
 }
 
 index :: proc(req: ^http.Request, res: ^http.Response) {
-	http.respond_file(res, "examples/complete/static/index.html")
+	http.respond_file(res, "examples/complete/static/index.html", req.allocator)
 }
 
 static :: proc(req: ^http.Request, res: ^http.Response) {
@@ -95,7 +95,7 @@ post_ping :: proc(req: ^http.Request, res: ^http.Response) {
 		return
 	}
 
-	if body != "ping" {
+	if (body.(http.Body_Plain) or_else "") != "ping" {
 		res.status = .Unprocessable_Content
 		return
 	}

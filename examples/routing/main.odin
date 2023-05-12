@@ -52,7 +52,7 @@ main :: proc() {
         }
 
         p: Hello_Req_Payload
-        if err := json.unmarshal_string(body, &p); err != nil {
+        if err := json.unmarshal_string(body.(http.Body_Plain) or_else "", &p); err != nil {
             log.infof("invalid ping payload %q: %s", body, err)
             res.status = http.Status.Unprocessable_Content
             return
