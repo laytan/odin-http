@@ -162,6 +162,17 @@ server_shutdown :: proc(using s: ^Server) {
 	log.info("shutdown: done")
 }
 
+// If called after server_shutdown, will force the shutdown to go through open connections.
+server_shutdown_force :: proc(s: ^Server) {
+	log.info("forcing shutdown")
+
+	for sock, conn in s.conns {
+		thread.run_with_poly_data(conn, connection_close, context)
+	}
+
+	log.info("forced shutdown")
+}
+
 @(private)
 on_interrupt_server: ^Server
 @(private)
@@ -175,6 +186,12 @@ server_shutdown_on_interrupt :: proc(using s: ^Server) {
 
 	libc.signal(libc.SIGINT, proc "cdecl" (_: i32) {
 		context = on_interrupt_context
+
+		if on_interrupt_server.shutting_down {
+			server_shutdown_force(on_interrupt_server)
+			return
+		}
+
 		server_shutdown(on_interrupt_server)
 	})
 }
