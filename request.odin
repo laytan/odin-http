@@ -16,6 +16,8 @@ Request :: struct {
 	headers:    Headers,
 	url:        URL,
 
+	client:     net.Endpoint,
+
 	// Route params/captures.
 	url_params: []string,
 

@@ -54,7 +54,17 @@ serve :: proc() {
 		http.respond_plain(res, fmt.tprintf("user %s, comment: %s", req.url_params[0], req.url_params[1]))
 	}))
 
-	http.route_get(&router,  "/cookies", http.handler(cookies))
+	// You can apply a rate limit just like any other middleware,
+	// this one only applies to the /cookies route, but moving it higher up would match others too:
+	cookies := http.handler(cookies)
+	limit_msg := "Only one cookie is allowed per second, slow down!"
+	limited_cookies := http.middleware_rate_limit(&cookies, &http.Rate_Limit_Opts{
+		window   = time.Second,
+		max      = 1,
+		on_limit = http.on_limit_message(&limit_msg),
+	})
+	http.route_get(&router,  "/cookies", limited_cookies)
+
 	http.route_get(&router,  "/api",     http.handler(api))
 	http.route_get(&router,  "/ping",    http.handler(ping))
 

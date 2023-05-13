@@ -103,16 +103,19 @@ server_serve :: proc(using s: ^Server, handler: ^Handler) -> net.Network_Error {
 			}
 		}, context)
 
-        client, _, err := net.accept_tcp(s.tcp_sock)
+        socket, client, err := net.accept_tcp(s.tcp_sock)
 		if err != nil {
 			free(c.thread)
 			free(c)
 			return err
 		}
 
-		c.socket = client
+		c.socket = socket
+		c.client = client
 
-		conns[client] = c
+		log.debug("new connection with %s", client.address)
+
+		conns[socket] = c
 
 		sync.mutex_unlock(&c.socket_mu)
 	}
@@ -229,6 +232,7 @@ Connection :: struct {
 	server:    ^Server,
 	socket_mu: sync.Mutex,
 	socket:    net.TCP_Socket,
+	client:    net.Endpoint,
 	curr_req:  ^Request,
 	handler:   ^Handler,
 	state:     Connection_State,
@@ -294,6 +298,7 @@ conn_handle_reqs :: proc(c: ^Connection) -> net.Network_Error {
         req: Request
         request_init(&req, allocator)
         c.curr_req = &req
+		req.client = c.client
 
 		// In the interest of robustness, a server that is expecting to receive
 		// and parse a request-line SHOULD ignore at least one empty line (CRLF)
