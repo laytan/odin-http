@@ -27,13 +27,12 @@ main :: proc() {
 	// Matches /users followed by any word (alphanumeric) followed by /comments and then / with any number.
 	// The word is available as req.url_params[0], and the number as req.url_params[1].
 	http.route_get(&router, "/users/(%w+)/comments/(%d+)", http.handler(proc(req: ^http.Request, res: ^http.Response) {
-		http.respond_plain(res, fmt.tprintf("user %s, comment: %s", req.url_params[0], req.url_params[1]))
+		http.respond_plain( res, fmt.tprintf("user %s, comment: %s", req.url_params[0], req.url_params[1]))
 	}))
-
 	http.route_get(&router, "/cookies", http.handler(cookies))
-	http.route_get(&router, "/api",     http.handler(api))
-	http.route_get(&router, "/ping",    http.handler(ping))
-	http.route_get(&router, "/index",   http.handler(index))
+	http.route_get(&router, "/api", http.handler(api))
+	http.route_get(&router, "/ping", http.handler(ping))
+	http.route_get(&router, "/index", http.handler(index))
 
 	// Matches every get request that did not match another route.
 	http.route_get(&router, "(.*)", http.handler(static))

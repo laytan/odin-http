@@ -136,11 +136,11 @@ status_string :: proc(s: Status) -> string {
 }
 
 status_informational :: proc(s: Status) -> bool {
-    return s < .Ok
+	return s < .Ok
 }
 
 status_success :: proc(s: Status) -> bool {
-    return s >= .Ok && s < .Multiple_Choices
+	return s >= .Ok && s < .Multiple_Choices
 }
 
 status_redirect :: proc(s: Status) -> bool {

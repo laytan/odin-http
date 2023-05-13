@@ -34,7 +34,7 @@ response_send :: proc(using r: ^Response, conn: ^Connection, allocator: mem.Allo
 	bytes.buffer_init_allocator(&res, 0, initial_buf_cap, allocator)
 
 	will_close := response_must_close(conn.curr_req, r)
-	defer if will_close do connection_close(conn);
+	defer if will_close do connection_close(conn)
 
 	// RFC 7230 6.3: A server MUST read
 	// the entire request message body or close the connection after sending
@@ -42,20 +42,24 @@ response_send :: proc(using r: ^Response, conn: ^Connection, allocator: mem.Allo
 	// connection would be misinterpreted as the next request.
 	if !will_close {
 		switch conn.curr_req._body_err {
-		case .Scan_Failed, .Invalid_Length, .Invalid_Chunk_Size, .Too_Long, .Invalid_Trailer_Header: // Any read error should close the connection.
+		case .Scan_Failed, .Invalid_Length, .Invalid_Chunk_Size, .Too_Long, .Invalid_Trailer_Header:
+			// Any read error should close the connection.
 			status = body_error_status(conn.curr_req._body_err)
 			headers["Connection"] = "close"
 			will_close = true
 		case .No_Length, .None: // no-op, request had no body or read succeeded.
-		case: // No error means the body was not read by a handler.
+		case:
+			// No error means the body was not read by a handler.
 			_, err := request_body(conn.curr_req, Max_Post_Handler_Discard_Bytes)
 			switch err {
-			case .Scan_Failed, .Invalid_Length, .Invalid_Trailer_Header, .Too_Long, .Invalid_Chunk_Size: // Any read error should close the connection.
+			case .Scan_Failed, .Invalid_Length, .Invalid_Trailer_Header, .Too_Long, .Invalid_Chunk_Size:
+				// Any read error should close the connection.
 				status = body_error_status(conn.curr_req._body_err)
 				headers["Connection"] = "close"
 				will_close = true
 			case .No_Length, .None: // no-op, request had no body or read succeeded.
-			case: assert(err != nil, "always expect error from request_body")
+			case:
+				assert(err != nil, "always expect error from request_body")
 			}
 		}
 	}
@@ -65,12 +69,12 @@ response_send :: proc(using r: ^Response, conn: ^Connection, allocator: mem.Allo
 	bytes.buffer_write_string(&res, "\r\n")
 
 
-    // Per RFC 9910 6.6.1 a Date header must be added in 2xx, 3xx, 4xx responses.
-    if status >= .Ok && status <= .Internal_Server_Error && "Date" not_in headers {
-        bytes.buffer_write_string(&res, "Date: ")
-        bytes.buffer_write_string(&res, format_date_header(time.now(), allocator))
-        bytes.buffer_write_string(&res, "\r\n")
-    }
+	// Per RFC 9910 6.6.1 a Date header must be added in 2xx, 3xx, 4xx responses.
+	if status >= .Ok && status <= .Internal_Server_Error && "Date" not_in headers {
+		bytes.buffer_write_string(&res, "Date: ")
+		bytes.buffer_write_string(&res, format_date_header(time.now(), allocator))
+		bytes.buffer_write_string(&res, "\r\n")
+	}
 
 	for header, value in headers {
 		bytes.buffer_write_string(&res, header)
@@ -90,7 +94,9 @@ response_send :: proc(using r: ^Response, conn: ^Connection, allocator: mem.Allo
 	}
 
 	// Write the status code as the body, if there is no body set by the handlers.
-	if response_can_have_body(r, conn) && !status_success(status) && bytes.buffer_length(&body) == 0 {
+	if response_can_have_body(r, conn) &&
+	   !status_success(status) &&
+	   bytes.buffer_length(&body) == 0 {
 		bytes.buffer_write_string(&body, status_string(status))
 	}
 
@@ -102,7 +108,7 @@ response_send :: proc(using r: ^Response, conn: ^Connection, allocator: mem.Allo
 	// Empty line denotes end of headers and start of body.
 	bytes.buffer_write_string(&res, "\r\n")
 
-	if response_can_have_body(r, conn) do bytes.buffer_write(&res, bytes.buffer_to_bytes(&body));
+	if response_can_have_body(r, conn) do bytes.buffer_write(&res, bytes.buffer_to_bytes(&body))
 
 	_, err := net.send_tcp(conn.socket, bytes.buffer_to_bytes(&res))
 
@@ -230,9 +236,9 @@ cookie_string :: proc(using c: Cookie, allocator: mem.Allocator = context.alloca
 	}
 
 	switch same_site {
-	case .None:        strings.write_string(&b, "; SameSite=None")
-	case .Lax:         strings.write_string(&b, "; SameSite=Lax")
-	case .Strict:      strings.write_string(&b, "; SameSite=Strict")
+	case .None:   strings.write_string(&b, "; SameSite=None")
+	case .Lax:    strings.write_string(&b, "; SameSite=Lax")
+	case .Strict: strings.write_string(&b, "; SameSite=Strict")
 	case .Unspecified: // no-op.
 	}
 
@@ -289,12 +295,11 @@ response_can_have_body :: proc(r: ^Response, conn: ^Connection) -> bool {
 // If we are responding with a close connection header, make sure we close.
 @(private)
 response_must_close :: proc(req: ^Request, res: ^Response) -> bool {
-	if conn_header, ok := req.headers["Connection"]; ok && conn_header == "close" {
+	if req, req_has := req.headers["Connection"]; req_has && req == "close" {
 		return true
-	} else if conn_header, ok := res.headers["Connection"]; ok && conn_header == "close" {
+	} else if res, res_has := res.headers["Connection"]; res_has && res == "close" {
 		return true
 	}
 
 	return false
 }
-

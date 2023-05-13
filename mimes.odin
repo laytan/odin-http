@@ -1,6 +1,5 @@
 package http
 
-import "core:strings"
 import "core:path/filepath"
 
 Mime_Type :: enum { Plain, Json, Ico, Html }

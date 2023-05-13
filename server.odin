@@ -27,11 +27,11 @@ Server_Opts :: struct {
 	// practice.  It is RECOMMENDED that all HTTP senders and recipients
 	// support, at a minimum, request-line lengths of 8000 octets.
 	// defaults to 8000.
-	limit_request_line: int,
+	limit_request_line:   int,
 	// Limit the length of the headers.
 	// The HTTP spec does not specify any limits but in practice it is safer.
 	// defaults to 8000.
-	limit_headers:      int,
+	limit_headers:        int,
 }
 
 Default_Server_Opts :: Server_Opts {
@@ -43,11 +43,9 @@ Default_Server_Opts :: Server_Opts {
 
 Server :: struct {
 	opts:           Server_Opts,
-    tcp_sock:       net.TCP_Socket,
-
+	tcp_sock:       net.TCP_Socket,
 	conn_allocator: mem.Allocator,
 	conns:          map[net.TCP_Socket]^Connection,
-
 	shutting_down:  bool,
 }
 
@@ -56,15 +54,24 @@ Default_Endpoint := net.Endpoint {
 	port    = 8080,
 }
 
-listen_and_serve :: proc(s: ^Server, h: ^Handler, endpoint: net.Endpoint = Default_Endpoint, opts: Server_Opts = Default_Server_Opts) -> (err: net.Network_Error) {
+listen_and_serve :: proc(
+	s: ^Server,
+	h: ^Handler,
+	endpoint: net.Endpoint = Default_Endpoint,
+	opts: Server_Opts = Default_Server_Opts,
+) -> ( err: net.Network_Error) {
 	server_listen(s, endpoint, opts) or_return
 	return server_serve(s, h)
 }
 
-server_listen :: proc(s: ^Server, endpoint: net.Endpoint = Default_Endpoint, opts: Server_Opts = Default_Server_Opts) -> (err: net.Network_Error) {
+server_listen :: proc(
+	s: ^Server,
+	endpoint: net.Endpoint = Default_Endpoint,
+	opts: Server_Opts = Default_Server_Opts,
+) -> (err: net.Network_Error) {
 	s.opts = opts
 	s.tcp_sock, err = net.listen_tcp(endpoint)
-    return
+	return
 }
 
 server_serve :: proc(using s: ^Server, handler: ^Handler) -> net.Network_Error {
@@ -81,9 +88,9 @@ server_serve :: proc(using s: ^Server, handler: ^Handler) -> net.Network_Error {
 		}
 
 		c := new(Connection, conn_allocator)
-		c.state     = .Pending
-		c.server    = s
-		c.handler   = handler
+		c.state = .Pending
+		c.server = s
+		c.handler = handler
 		c.socket_mu = sync.Mutex{}
 		sync.mutex_lock(&c.socket_mu)
 
@@ -93,17 +100,21 @@ server_serve :: proc(using s: ^Server, handler: ^Handler) -> net.Network_Error {
 		// We use the mutex so we can start a thread before accepting the connection,
 		// this way, the first request of a connection does not have to wait for
 		// the thread to spin up.
-        c.thread = thread.create_and_start_with_poly_data(c, proc(c: ^Connection) {
-			// Will block until main thread unlocks the mutex, indicating a connection is ready.
-			sync.mutex_lock(&c.socket_mu)
+		c.thread = thread.create_and_start_with_poly_data(
+			c,
+			proc(c: ^Connection) {
+				// Will block until main thread unlocks the mutex, indicating a connection is ready.
+				sync.mutex_lock(&c.socket_mu)
 
-			c.state = .New
-			if err := conn_handle_reqs(c); err != nil {
-				log.errorf("connection error: %s", err)
-			}
-		}, context)
+				c.state = .New
+				if err := conn_handle_reqs(c); err != nil {
+					log.errorf("connection error: %s", err)
+				}
+			},
+			context,
+		)
 
-        socket, client, err := net.accept_tcp(s.tcp_sock)
+		socket, client, err := net.accept_tcp(s.tcp_sock)
 		if err != nil {
 			free(c.thread)
 			free(c)
@@ -143,15 +154,15 @@ server_shutdown :: proc(using s: ^Server) {
 	for {
 		for sock, conn in conns {
 			#partial switch conn.state {
-				case .Active:
-					log.infof("shutdown: connection %i still active", sock)
-				case .New, .Idle, .Pending:
-					log.infof("shutdown: closing connection %i", sock)
-					thread.run_with_poly_data(conn, connection_close, context)
-				case .Closing:
-					log.debugf("shutdown: connection %i is closing", sock)
-				case .Closed:
-					assert(false, "closed connections are not in this map")
+			case .Active:
+				log.infof("shutdown: connection %i still active", sock)
+			case .New, .Idle, .Pending:
+				log.infof("shutdown: closing connection %i", sock)
+				thread.run_with_poly_data(conn, connection_close, context)
+			case .Closing:
+				log.debugf("shutdown: connection %i is closing", sock)
+			case .Closed:
+				assert(false, "closed connections are not in this map")
 			}
 		}
 
@@ -170,7 +181,7 @@ server_shutdown :: proc(using s: ^Server) {
 server_shutdown_force :: proc(s: ^Server) {
 	log.info("forcing shutdown")
 
-	for sock, conn in s.conns {
+	for _, conn in s.conns {
 		thread.run_with_poly_data(conn, connection_close, context)
 	}
 
@@ -185,7 +196,7 @@ on_interrupt_context: runtime.Context
 // Registers a signal handler to shutdown the server gracefully on interrupt signal.
 // Can only be called once in the lifetime of the program because of a hacky interaction with libc.
 server_shutdown_on_interrupt :: proc(using s: ^Server) {
-	on_interrupt_server  = s
+	on_interrupt_server = s
 	on_interrupt_context = context
 
 	libc.signal(libc.SIGINT, proc "cdecl" (_: i32) {
@@ -220,12 +231,12 @@ Max_Post_Handler_Discard_Bytes :: 256 << 10
 Conn_Close_Delay :: time.Millisecond * 500
 
 Connection_State :: enum {
-    Pending, // Pending a client to attach.
-    New,     // Got client, waiting to service first request.
-    Active,  // Servicing request.
-    Idle,    // Waiting for next request.
+	Pending, // Pending a client to attach.
+	New,     // Got client, waiting to service first request.
+	Active,  // Servicing request.
+	Idle,    // Waiting for next request.
 	Closing, // Going to close, cleaning up.
-    Closed,  // Fully closed.
+	Closed,  // Fully closed.
 }
 
 Connection :: struct {
@@ -246,19 +257,19 @@ connection_close :: proc(c: ^Connection) {
 		return
 	}
 
-    log.infof("closing connection: %i", c.socket)
-    defer log.infof("closed connection: %i", c.socket)
+	log.infof("closing connection: %i", c.socket)
+	defer log.infof("closed connection: %i", c.socket)
 
-    c.state = .Closing
+	c.state = .Closing
 
-    // Close read side of the connection, then wait a little bit, allowing the client
-    // to process the closing and receive any remaining data.
-    net.shutdown(c.socket, net.Shutdown_Manner.Send)
+	// Close read side of the connection, then wait a little bit, allowing the client
+	// to process the closing and receive any remaining data.
+	net.shutdown(c.socket, net.Shutdown_Manner.Send)
 
-    // This will block the whole thread, but we have one thread per connection anyway,
-    // so should not matter as long as this is done after sending everything.
-    time.sleep(Conn_Close_Delay)
-    net.close(c.socket)
+	// This will block the whole thread, but we have one thread per connection anyway,
+	// so should not matter as long as this is done after sending everything.
+	time.sleep(Conn_Close_Delay)
+	net.close(c.socket)
 
 	c.state = .Closed
 
@@ -269,13 +280,13 @@ connection_close :: proc(c: ^Connection) {
 // Everything is allocated in a memory arena for that request, and freed at the end of the request.
 // If you need to keep data from either the Request or Response, you need to clone it.
 conn_handle_reqs :: proc(c: ^Connection) -> net.Network_Error {
-    // Make sure the connection is closed when we are returning.
-    defer if c.state != .Closing && c.state != .Closed {
-        connection_close(c)
-    }
+	// Make sure the connection is closed when we are returning.
+	defer if c.state != .Closing && c.state != .Closed {
+		connection_close(c)
+	}
 
-    stream := tcp_stream(c.socket)
-    stream_reader := io.to_reader(stream)
+	stream := tcp_stream(c.socket)
+	stream_reader := io.to_reader(stream)
 
 	arena: virtual.Arena
 	if err := virtual.arena_init_growing(&arena); err != nil {
@@ -284,31 +295,31 @@ conn_handle_reqs :: proc(c: ^Connection) -> net.Network_Error {
 	allocator := virtual.arena_allocator(&arena)
 	context.temp_allocator = allocator
 
-    Requests: for {
-        defer free_all(allocator)
+	Requests: for {
+		defer free_all(allocator)
 
-        // PERF: we shouldn't create a new scanner everytime.
-        scanner: bufio.Scanner
-        bufio.scanner_init(&scanner, stream_reader, allocator)
+		// PERF: we shouldn't create a new scanner everytime.
+		scanner: bufio.Scanner
+		bufio.scanner_init(&scanner, stream_reader, allocator)
 		scanner.max_token_size = c.server.opts.limit_request_line
 
-        res: Response
-        response_init(&res, c.socket, allocator)
+		res: Response
+		response_init(&res, c.socket, allocator)
 
-        req: Request
-        request_init(&req, allocator)
-        c.curr_req = &req
+		req: Request
+		request_init(&req, allocator)
+		c.curr_req = &req
 		req.client = c.client
 
 		// In the interest of robustness, a server that is expecting to receive
 		// and parse a request-line SHOULD ignore at least one empty line (CRLF)
 		// received prior to the request-line.
-        rline_str, ok := scanner_scan_or_bad_req(&scanner, &res, c, .URI_Too_Long, allocator)
-        if !ok do break;
-        if rline_str == "" {
-            rline_str, ok = scanner_scan_or_bad_req(&scanner, &res, c, .URI_Too_Long, allocator)
-            if !ok do break;
-        }
+		rline_str, ok := scanner_scan_or_bad_req(&scanner, &res, c, .URI_Too_Long, allocator)
+		if !ok do break
+		if rline_str == "" {
+			rline_str, ok = scanner_scan_or_bad_req(&scanner, &res, c, .URI_Too_Long, allocator)
+			if !ok do break
+		}
 
 		c.state = .Active
 
@@ -317,38 +328,44 @@ conn_handle_reqs :: proc(c: ^Connection) -> net.Network_Error {
 		// the request-target properly encoded.
 		rline, err := requestline_parse(rline_str, allocator)
 		switch err {
-			case .Method_Not_Implemented:
-				res.headers["Connection"] = "close"
-				response_send_or_log(&res, c, .Not_Implemented, allocator)
-				break Requests
-			case .Invalid_Version_Format, .Not_Enough_Fields:
-				res.headers["Connection"] = "close"
-				response_send_or_log(&res, c, .Bad_Request, allocator)
-				break Requests
-			case .None:
-				req.line = rline
+		case .Method_Not_Implemented:
+			res.headers["Connection"] = "close"
+			response_send_or_log(&res, c, .Not_Implemented, allocator)
+			break Requests
+		case .Invalid_Version_Format, .Not_Enough_Fields:
+			res.headers["Connection"] = "close"
+			response_send_or_log(&res, c, .Bad_Request, allocator)
+			break Requests
+		case .None:
+			req.line = rline
 
 		}
 
-        // Might need to support more versions later.
-        if rline.version.major != 1 || rline.version.minor < 1 {
-            res.headers["Connection"] = "close"
-            response_send_or_log(&res, c, .HTTP_Version_Not_Supported, allocator)
-            break
-        }
+		// Might need to support more versions later.
+		if rline.version.major != 1 || rline.version.minor < 1 {
+			res.headers["Connection"] = "close"
+			response_send_or_log(&res, c, .HTTP_Version_Not_Supported, allocator)
+			break
+		}
 
 		req.url = url_parse(rline.target, allocator)
 
 		scanner.max_token_size = c.server.opts.limit_headers
-        // Keep parsing the request as line delimited headers until we get to an empty line.
-		for line in scanner_scan_or_bad_req(&scanner, &res, c, .Request_Header_Fields_Too_Large, allocator) {
+		// Keep parsing the request as line delimited headers until we get to an empty line.
+		for line in scanner_scan_or_bad_req(
+			&scanner,
+			&res,
+			c,
+			.Request_Header_Fields_Too_Large,
+			allocator,
+		) {
 			// The first empty line denotes the end of the headers section.
 			if line == "" {
 				break
 			}
 
 			if _, ok := header_parse(&req.headers, line); !ok {
-                res.headers["Connection"] = "close"
+				res.headers["Connection"] = "close"
 				response_send_or_log(&res, c, .Bad_Request, allocator)
 				break Requests
 			}
@@ -361,18 +378,17 @@ conn_handle_reqs :: proc(c: ^Connection) -> net.Network_Error {
 			}
 		}
 
-        if !headers_validate(req) {
-            res.headers["Connection"] = "close"
-            response_send_or_log(&res, c, .Bad_Request, allocator)
-            break
-        }
+		if !headers_validate(req) {
+			res.headers["Connection"] = "close"
+			response_send_or_log(&res, c, .Bad_Request, allocator)
+			break
+		}
 
 		scanner.max_token_size = bufio.DEFAULT_MAX_SCAN_TOKEN_SIZE
 
 		// Automatically respond with a continue status when the client has the Expect: 100-continue header.
-		if expect, ok := req.headers["Expect"]; ok &&
-		   expect == "100-continue" &&
-		   c.server.opts.auto_expect_continue {
+		if expect, ok := req.headers["Expect"];
+		   ok && expect == "100-continue" && c.server.opts.auto_expect_continue {
 
 			res.status = .Continue
 			if err := response_send(&res, c, allocator); err != nil {
@@ -406,47 +422,52 @@ conn_handle_reqs :: proc(c: ^Connection) -> net.Network_Error {
 			}
 		}
 
-        if err := response_send(&res, c, allocator); err != nil {
-            log.warnf("could not send response: %s", err)
-        }
+		if err := response_send(&res, c, allocator); err != nil {
+			log.warnf("could not send response: %s", err)
+		}
 
-        if c.state == .Closing || c.state == .Closed {
-            break
-        }
+		if c.state == .Closing || c.state == .Closed {
+			break
+		}
 
 		c.state = .Idle
-    }
-    return nil
+	}
+	return nil
 }
 
 @(private)
 response_send_or_log :: proc(res: ^Response, conn: ^Connection, status: Status, allocator := context.allocator) {
-    res.status = status
-    if err := response_send(res, conn, allocator); err != nil {
-        log.warnf("could not send request response bcs error: %s", err)
-    }
+	res.status = status
+	if err := response_send(res, conn, allocator); err != nil {
+		log.warnf("could not send request response bcs error: %s", err)
+	}
 }
 
 @(private)
-scanner_scan_or_bad_req :: proc(s: ^bufio.Scanner, res: ^Response, conn: ^Connection, to_much: Status, allocator := context.allocator) -> (string, bool) {
-    if !bufio.scanner_scan(s) {
-        err := bufio.scanner_error(s)
-        log.warnf("request scanner error: %s", err)
+scanner_scan_or_bad_req :: proc(
+	s: ^bufio.Scanner,
+	res: ^Response,
+	conn: ^Connection,
+	to_much: Status,
+	allocator := context.allocator,
+) -> (string, bool) {
+	if !bufio.scanner_scan(s) {
+		err := bufio.scanner_error(s)
+		log.warnf("request scanner error: %s", err)
 
-        res.status = .Bad_Request
-        #partial switch ex in err {
-        case bufio.Scanner_Extra_Error:
-            #partial switch ex {
-            case .Advanced_Too_Far, .Too_Long:
-                res.status = to_much
-            }
-        }
+		res.status = .Bad_Request
+		#partial switch ex in err {
+		case bufio.Scanner_Extra_Error:
+			#partial switch ex {
+			case .Advanced_Too_Far, .Too_Long:
+				res.status = to_much
+			}
+		}
 
-        res.headers["Connection"] = "close"
-        response_send_or_log(res, conn, res.status, allocator)
-        return "", false
-    }
+		res.headers["Connection"] = "close"
+		response_send_or_log(res, conn, res.status, allocator)
+		return "", false
+	}
 
-    return bufio.scanner_text(s), true
+	return bufio.scanner_text(s), true
 }
-

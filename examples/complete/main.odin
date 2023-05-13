@@ -44,9 +44,9 @@ serve :: proc() {
 	defer http.router_destroy(&router)
 
 	// Routes are tried in order.
-    // Route matching is implemented using an implementation of Lua patterns, see the docs on them here:
-    // https://www.lua.org/pil/20.2.html
-    // They are very similar to regex patterns but a bit more limited, which makes them much easier to implement since Odin does not have a regex implementation.
+	// Route matching is implemented using an implementation of Lua patterns, see the docs on them here:
+	// https://www.lua.org/pil/20.2.html
+	// They are very similar to regex patterns but a bit more limited, which makes them much easier to implement since Odin does not have a regex implementation.
 
 	// Matches /users followed by any word (alphanumeric) followed by /comments and then / with any number.
 	// The word is available as params[0], and the number as params[1].
@@ -59,14 +59,14 @@ serve :: proc() {
 	cookies := http.handler(cookies)
 	limit_msg := "Only one cookie is allowed per second, slow down!"
 	limited_cookies := http.middleware_rate_limit(&cookies, &http.Rate_Limit_Opts{
-		window   = time.Second,
-		max      = 1,
+		window = time.Second,
+		max = 1,
 		on_limit = http.on_limit_message(&limit_msg),
 	})
-	http.route_get(&router,  "/cookies", limited_cookies)
+	http.route_get(&router, "/cookies", limited_cookies)
 
-	http.route_get(&router,  "/api",     http.handler(api))
-	http.route_get(&router,  "/ping",    http.handler(ping))
+	http.route_get(&router, "/api", http.handler(api))
+	http.route_get(&router, "/ping", http.handler(ping))
 
 	// Can also have specific middleware for each route:
 	index_handler := http.handler(index)
@@ -81,10 +81,10 @@ serve :: proc() {
 		// The next handler has finished, we can now do things with the response.
 		log.infof("index handler returned status code: %s", res.status)
 	})
-	http.route_get(&router,  "/", index_with_middleware)
+	http.route_get(&router, "/", index_with_middleware)
 
 	// Matches every get request that did not match another route.
-	http.route_get(&router,  "(.*)", http.handler(static))
+	http.route_get(&router, "(.*)", http.handler(static))
 
 	http.route_post(&router, "/ping", http.handler(post_ping))
 

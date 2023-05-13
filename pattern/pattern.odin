@@ -7,7 +7,6 @@ package pattern
 import "core:mem"
 import "core:strings"
 import "core:bytes"
-import "core:fmt"
 
 // Find matches the pattern against source.
 //
@@ -18,11 +17,11 @@ import "core:fmt"
 // The captures array is allocated using the given allocator, there is also
 // some state allocated while matching which is freed at the end.
 find :: proc(src, pattern: string, allocator := context.allocator) -> (
-	ok:       bool,          // Did it match?
-	start:    int,           // Where the match starts.
-	end:      int,           // Where the match ends.
-	captures: []string,      // Any captures.
-	err:      Pattern_Error, // An error with the pattern.
+	ok: bool,           // Did it match?
+	start: int,         // Where the match starts.
+	end: int,           // Where the match ends.
+	captures: []string, // Any captures.
+	err: Pattern_Error, // An error with the pattern.
 ) {
 	pattern := pattern
 	if len(pattern) == 0 {
@@ -31,36 +30,36 @@ find :: proc(src, pattern: string, allocator := context.allocator) -> (
 	}
 
 	anchor := pattern[0] == '^'
-	if anchor do pattern = pattern[1:];
+	if anchor do pattern = pattern[1:]
 
 	{
-		suffix_anchor := pattern[len(pattern)-1] == '$'
-		pat_no_suffix := pattern[:len(pattern)-1]
+		suffix_anchor := pattern[len(pattern) - 1] == '$'
+		pat_no_suffix := pattern[:len(pattern) - 1]
 
 		// For simple patterns, (no special chars, but can start with ^ or end with $).
 		// We shortcut the check by using simple string comparison.
-		if !contains_specials(pat_no_suffix) && (suffix_anchor || !contains_specials(pattern[len(pattern)-1:])) {
+		if !contains_specials(pat_no_suffix) && (suffix_anchor || !contains_specials(pattern[len(pattern) - 1:])) {
 			switch {
 			// Both ^ and $, should check full equality.
 			case anchor && suffix_anchor:
-				if src != pat_no_suffix do return;
+				if src != pat_no_suffix do return
 				end = len(src)
 			// Just $, should check suffix.
 			case suffix_anchor:
-				if !strings.has_suffix(src, pat_no_suffix) do return;
-				start = len(src)-len(pattern)+1
-				end   = len(src)
+				if !strings.has_suffix(src, pat_no_suffix) do return
+				start = len(src) - len(pattern) + 1
+				end = len(src)
 			// Just ^, should check prefix.
 			case anchor:
-				if !strings.has_prefix(src, pattern) do return;
-				end = len(pattern)+1
+				if !strings.has_prefix(src, pattern) do return
+				end = len(pattern) + 1
 			// If we get here, there are no special characters at all, so check substring.
 			case:
 				i := strings.index(src, pattern)
 				if i == -1 do return
 
 				start = i
-				end   = i+len(pattern)
+				end = i + len(pattern)
 			}
 
 			ok = true
@@ -72,11 +71,11 @@ find :: proc(src, pattern: string, allocator := context.allocator) -> (
 	state_init(&ms, allocator)
 	defer state_destroy(&ms)
 
-	for i := 0; len(src)-i >= 0; i+=1 {
+	for i := 0; len(src) - i >= 0; i += 1 {
 		res := match(&ms, src[i:], pattern) or_return
 		if res == nil {
-			if anchor do break;
-			continue;
+			if anchor do break
+			continue
 		}
 		matched := res.(string)
 
@@ -84,7 +83,7 @@ find :: proc(src, pattern: string, allocator := context.allocator) -> (
 		e := len(src) - len(matched)
 
 		captures = make([]string, ms.level, allocator)
-		for j := 0; j < ms.level; j+=1 {
+		for j := 0; j < ms.level; j += 1 {
 			captures[j] = (get_one_capture(&ms, j, src, matched) or_return)
 		}
 
@@ -100,11 +99,11 @@ gmatch :: proc(src, pattern: string, allocator := context.allocator) -> (matches
 	start: int
 	for {
 		ok, s, e, captures := find(src[start:], pattern, allocator) or_return
-		if !ok do break;
+		if !ok do break
 
-		mcaps := make([dynamic]string, len(captures)+1, allocator)
+		mcaps := make([dynamic]string, len(captures) + 1, allocator)
 		mcaps[0] = src[s:e]
-		for cap, i in captures do mcaps[i+1] = cap;
+		for cap, i in captures do mcaps[i + 1] = cap
 		delete(captures)
 		append(&matches, mcaps)
 		start += e
@@ -129,33 +128,30 @@ escape :: proc(val: string, allocator := context.allocator) -> (res: string, was
 //
 // One "advanced" example to quote values in a key = value string, maintaining spacing:
 //   pattern.replace("key =   value", "=(%s*)(%w+)", "=%1\"%2\"")
-replace :: proc(src, pattern, replacement: string, allocator := context.allocator) -> (
-	result: string,
-	err:    Pattern_Error,
-) {
+replace :: proc(src, pattern, replacement: string, allocator := context.allocator) -> (result: string, err: Pattern_Error) {
 	result, _, err = replace_n(src, pattern, replacement, 1, allocator)
 	return
 }
 
 // Same as replace but replaces all matches instead of one.
-replace_all :: proc(src, pattern, replacement: string, allocator := context.allocator) -> (
+replace_all :: proc( src, pattern, replacement: string, allocator := context.allocator) -> (
 	result: string,
 	replaced: int,
-	err:    Pattern_Error,
+	err: Pattern_Error,
 ) {
 	return replace_n(src, pattern, replacement, -1, allocator)
 }
 
 // Same as replace but replaces up to max matches instead of one.
 replace_n :: proc(src, pattern, replacement: string, max: int, allocator := context.allocator) -> (
-	result:   string,
+	result: string,
 	replaced: int,
-	err:      Pattern_Error,
+	err: Pattern_Error,
 ) {
 	pattern, src := pattern, src
 
 	anchor := pattern[0] == '^'
-	if anchor do pattern = pattern[1:];
+	if anchor do pattern = pattern[1:]
 
 	ms: Match_State
 	state_init(&ms, allocator)
@@ -170,7 +166,7 @@ replace_n :: proc(src, pattern, replacement: string, max: int, allocator := cont
 		matched := match(&ms, src, pattern) or_return
 
 		if matched != nil {
-			n+=1
+			n += 1
 			add_replacement(&ms, &buf, src, matched.(string), replacement) or_return
 
 			if len(src) > 0 {
@@ -183,7 +179,7 @@ replace_n :: proc(src, pattern, replacement: string, max: int, allocator := cont
 			break
 		}
 
-		if anchor do break;
+		if anchor do break
 	}
 
 	bytes.buffer_write_string(&buf, src)
@@ -209,21 +205,21 @@ CAPTURE_UNFINISHED :: -1
 
 @(private)
 Match_State :: struct {
-	src:      string,
-	level:    int,
-	captures: [dynamic]^Capture,
+	src:       string,
+	level:     int,
+	captures:  [dynamic]^Capture,
 	allocator: mem.Allocator,
 }
 
 @(private)
 state_init :: proc(ms: ^Match_State, allocator := context.allocator) {
 	ms.allocator = allocator
-	ms.captures  = make([dynamic]^Capture, allocator)
+	ms.captures = make([dynamic]^Capture, allocator)
 }
 
 @(private)
 state_destroy :: proc(ms: ^Match_State) {
-	for c in ms.captures do free(c, ms.allocator);
+	for c in ms.captures do free(c, ms.allocator)
 	delete(ms.captures)
 }
 
@@ -239,8 +235,8 @@ contains_specials :: proc(s: string) -> bool {
 }
 
 @(private)
-match :: proc(ms: ^Match_State, src, pattern: string) -> (matched: Maybe(string), err: Pattern_Error) {
-	if len(pattern) == 0 do return src, nil;
+match :: proc(ms: ^Match_State, src, pattern: string,) -> (matched: Maybe(string), err: Pattern_Error) {
+	if len(pattern) == 0 do return src, nil
 
 	switch pattern[0] {
 	case '(':
@@ -267,7 +263,7 @@ match :: proc(ms: ^Match_State, src, pattern: string) -> (matched: Maybe(string)
 	}
 
 	rest_pattern := class_end(ms, pattern) or_return
-	matches      := len(src) > 0 && single_match(src[0], pattern, rest_pattern)
+	matches := len(src) > 0 && single_match(src[0], pattern, rest_pattern)
 
 	if len(rest_pattern) == 0 {
 		if !matches do return nil, nil
@@ -280,17 +276,17 @@ match :: proc(ms: ^Match_State, src, pattern: string) -> (matched: Maybe(string)
 		if len(src) == 0 do return "", nil
 
 		res := match(ms, src[1:], rest_pattern[1:]) or_return
-		if matches && res != nil do return res, nil;
+		if matches && res != nil do return res, nil
 		return match(ms, src, rest_pattern[1:])
 	case '*':
 		return max_expand(ms, src, pattern, rest_pattern)
 	case '+':
-		if matches do return max_expand(ms, src[1:], pattern, rest_pattern);
+		if matches do return max_expand(ms, src[1:], pattern, rest_pattern)
 		return nil, nil
 	case '-':
 		return min_expand(ms, src, pattern, rest_pattern)
 	case:
-		if !matches do return nil, nil;
+		if !matches do return nil, nil
 		return match(ms, src[1:], rest_pattern)
 	}
 
@@ -314,7 +310,7 @@ add_replacement :: proc(ms: ^Match_State, buf: ^bytes.Buffer, src, match, replac
 		case !is_digit(c):
 			bytes.buffer_write_byte(buf, c)
 		case c == '0':
-			bytes.buffer_write_string(buf, src[0:len(src)-len(match)])
+			bytes.buffer_write_string(buf, src[0:len(src) - len(match)])
 		case:
 			id := int(c - '1')
 			bytes.buffer_write_string(buf, get_one_capture(ms, id, src, match) or_return)
@@ -331,7 +327,7 @@ get_one_capture :: proc(ms: ^Match_State, i: int, src, match: string) -> (string
 			return "", .InvalidCapture
 		}
 
-		return src[0:len(src)-len(match)], nil
+		return src[0:len(src) - len(match)], nil
 	}
 
 	len := ms.captures[i].len
@@ -346,7 +342,7 @@ get_one_capture :: proc(ms: ^Match_State, i: int, src, match: string) -> (string
 // with that capture in place. If the further match fails, the capture is
 // undone, otherwise the match is returned.
 @(private)
-start_capture :: proc(ms: ^Match_State, src, pattern: string, what: int) -> (matched: Maybe(string), err: Pattern_Error) {
+start_capture :: proc(ms: ^Match_State, src, pattern: string, what: int,) -> (matched: Maybe(string), err: Pattern_Error) {
 	if len(ms.captures) <= ms.level {
 		cap := new(Capture, ms.allocator)
 		append(&ms.captures, cap)
@@ -358,7 +354,7 @@ start_capture :: proc(ms: ^Match_State, src, pattern: string, what: int) -> (mat
 	ms.level += 1
 
 	mat := match(ms, src, pattern) or_return
-	if mat == nil do ms.level -= 1;
+	if mat == nil do ms.level -= 1
 
 	return mat, err
 }
@@ -366,7 +362,7 @@ start_capture :: proc(ms: ^Match_State, src, pattern: string, what: int) -> (mat
 // Ends the current capture and tries to match the rest of the pattern.
 // If the match fails, the capture is undone.
 @(private)
-end_capture :: proc(ms: ^Match_State, src, pattern: string) -> (matched: Maybe(string), err: Pattern_Error) {
+end_capture :: proc(ms: ^Match_State, src, pattern: string,) -> (matched: Maybe(string), err: Pattern_Error) {
 	level := capture_to_close(ms)
 	if level == -1 do return nil, nil
 
@@ -393,12 +389,13 @@ capture_to_close :: proc(ms: ^Match_State) -> int {
 // Matches a previous capture by checking if it exists and then skipping over the length of it.
 // Returns the src with the capture removed.
 @(private)
-match_capture :: proc(ms: ^Match_State, src: string, level: int) -> (rest: Maybe(string), err: Pattern_Error) {
+match_capture :: proc(ms: ^Match_State, src: string, level: int,) -> (rest: Maybe(string), err: Pattern_Error) {
 	target_level := check_capture(ms, level) or_return
 	target_len := ms.captures[target_level].len
 
 	// Ensure there is enough space to accommodate the match.
-	if len(src) - target_len >= 0 && ms.captures[target_level].src[0:target_len] == src[0:target_len] {
+	if len(src) - target_len >= 0 &&
+	   ms.captures[target_level].src[0:target_len] == src[0:target_len] {
 		return src[target_len:], nil
 	}
 
@@ -408,7 +405,7 @@ match_capture :: proc(ms: ^Match_State, src: string, level: int) -> (rest: Maybe
 // Checks if a capture exists with the given capture index.
 @(private)
 check_capture :: proc(ms: ^Match_State, level: int) -> (int, Pattern_Error) {
-	l := level-1
+	l := level - 1
 	if l < 0 || l >= ms.level || ms.captures[l].len == CAPTURE_UNFINISHED {
 		return -1, .InvalidCapture
 	}
@@ -420,11 +417,11 @@ check_capture :: proc(ms: ^Match_State, level: int) -> (int, Pattern_Error) {
 @(private)
 max_expand :: proc(ms: ^Match_State, src, pattern, rest_pattern: string) -> (matched: Maybe(string), err: Pattern_Error) {
 	i: int
-	for ; i < len(src) && single_match(src[i], pattern, rest_pattern); i+=1 {}
+	for ; i < len(src) && single_match(src[i], pattern, rest_pattern); i += 1 {}
 
-	for ; i >= 0; i-=1 {
+	for ; i >= 0; i -= 1 {
 		mat := match(ms, src[i:], rest_pattern[1:]) or_return
-		if mat != nil do return mat, nil;
+		if mat != nil do return mat, nil
 	}
 
 	return nil, nil
@@ -432,7 +429,7 @@ max_expand :: proc(ms: ^Match_State, src, pattern, rest_pattern: string) -> (mat
 
 // Returns the minimum portion of the source string that matches the given pattern (equates to the '-' operator).
 @(private)
-min_expand :: proc(ms: ^Match_State, src, pattern, rest_pattern: string) -> (matched: Maybe(string), err: Pattern_Error) {
+min_expand :: proc(ms: ^Match_State, src, pattern, rest_pattern: string,) -> (matched: Maybe(string), err: Pattern_Error) {
 	src := src
 	for {
 		mat := match(ms, src, rest_pattern[1:]) or_return
@@ -470,7 +467,7 @@ class_end :: proc(ms: ^Match_State, pattern: string) -> (matched: string, err: P
 
 		return pattern[1:], nil
 	case '[':
-		if pattern[0] == '^' do pattern = pattern[1:];
+		if pattern[0] == '^' do pattern = pattern[1:]
 
 		// Look for closing ']'
 		for {
@@ -482,15 +479,16 @@ class_end :: proc(ms: ^Match_State, pattern: string) -> (matched: string, err: P
 			pattern = pattern[1:]
 
 			// Skip escaped '%]'
-			if pch == '%' && len(pattern) > 0 do pattern = pattern[1:];
+			if pch == '%' && len(pattern) > 0 do pattern = pattern[1:]
 
 			// Found closing ']'
-			if len(pattern) > 0 && pattern[0] == ']' do break;
+			if len(pattern) > 0 && pattern[0] == ']' do break
 		}
 
 		return pattern[1:], nil
 
-	case: return pattern, nil
+	case:
+		return pattern, nil
 	}
 }
 
@@ -500,7 +498,7 @@ single_match :: proc(ch: byte, pattern, rest_pattern: string) -> bool {
 	switch pattern[0] {
 	case '.': return true
 	case '%': return match_class(ch, pattern[1])
-	case '[': return match_bracket_class(ch, pattern, pattern[len(pattern)-len(rest_pattern)-1:])
+	case '[': return match_bracket_class(ch, pattern, pattern[len(pattern) - len(rest_pattern) - 1:])
 	case:     return pattern[0] == ch
 	}
 }
@@ -525,10 +523,11 @@ match_bracket_class :: proc(ch: byte, pattern, rest_pattern: string) -> bool {
 			pattern = pattern[1:]
 			if match_class(ch, pattern[0]) do return compliment
 		// Match a character range eg. A-Z
-		case pattern[1] == '-' && (len(pattern)-2 > len(rest_pattern)):
-			if pattern[0] <= ch && ch <= pattern[2] do return compliment;
+		case pattern[1] == '-' && (len(pattern) - 2 > len(rest_pattern)):
+			if pattern[0] <= ch && ch <= pattern[2] do return compliment
 		// Match the literal character.
-		case pattern[0] == ch: return compliment
+		case pattern[0] == ch:
+			return compliment
 		}
 	}
 
@@ -540,57 +539,83 @@ match_bracket_class :: proc(ch: byte, pattern, rest_pattern: string) -> bool {
 match_class :: proc(ch: byte, class: byte) -> (res: bool) {
 	class_lower := to_lower(class)
 	switch class_lower {
-		case 'a': res = is_alpha(ch)
-		case 'c': res = is_cntrl(ch) // Carriage returns, newlines, tabs...
-		case 'd': res = is_digit(ch)
-		case 'l': res = is_lower(ch)
-		case 'p': res = is_punct(ch)
-		case 's': res = is_space(ch)
-		case 'u': res = is_upper(ch)
-		case 'w': res = is_alnum(ch)
-		case 'x': res = is_x_digit(ch) // hexadecimal.
-		case 'z': res = ch == 0
-		case:     return class == ch
+	case 'a': res = is_alpha(ch)
+	case 'c': res = is_cntrl(ch) // Carriage returns, newlines, tabs...
+	case 'd': res = is_digit(ch)
+	case 'l': res = is_lower(ch)
+	case 'p': res = is_punct(ch)
+	case 's': res = is_space(ch)
+	case 'u': res = is_upper(ch)
+	case 'w': res = is_alnum(ch)
+	case 'x': res = is_x_digit(ch) // hexadecimal.
+	case 'z': res = ch == 0
+	case:
+		return class == ch
 	}
 
 	return is_lower(class) ? res : !res
 }
 
 @(private)
-is_lower :: proc(b: byte) -> bool { return b >= 'a' && b <= 'z' }
+is_lower :: proc(b: byte) -> bool {return b >= 'a' && b <= 'z'}
 
 @(private)
-is_upper :: proc(b: byte) -> bool { return b >= 'A' && b <= 'Z' }
+is_upper :: proc(b: byte) -> bool {return b >= 'A' && b <= 'Z'}
 
 @(private)
 to_lower :: proc(b: byte) -> byte {
-	if is_upper(b) do return b + 32;
+	if is_upper(b) do return b + 32
 	return b
 }
 
 @(private)
-is_alpha :: proc(b: byte) -> bool { return is_lower(b) || is_upper(b) }
+is_alpha :: proc(b: byte) -> bool {return is_lower(b) || is_upper(b)}
 
 // Carriage returns, newlines, tabs...
 @(private)
 is_cntrl :: proc(b: byte) -> bool {
-	return b <= '\007' || (b >= '\010' && b <= '\017') || (b >= '\020' && b <= '\027') || (b >= '\030' && b <= '\037') || b == '\177'
+	return(
+		b <= '\007' ||
+		(b >= '\010' && b <= '\017') ||
+		(b >= '\020' && b <= '\027') ||
+		(b >= '\030' && b <= '\037') ||
+		b == '\177' \
+	)
 }
 
 @(private)
-is_digit :: proc(b: byte) -> bool { return b >= 48 && b <= 57 }
+is_digit :: proc(b: byte) -> bool {return b >= 48 && b <= 57}
 
 @(private)
 is_punct :: proc(b: byte) -> bool {
-	return (b >= '{' && b <= '~') || (b == '`') || (b >= '[' && b <= '_') || (b == '@') || (b >= ':' && b <= '?') || (b >= '(' && b <= '/') || (b >= '!' && b <= '\'')
+	return(
+		(b >= '{' && b <= '~') ||
+		(b == '`') ||
+		(b >= '[' && b <= '_') ||
+		(b == '@') ||
+		(b >= ':' && b <= '?') ||
+		(b >= '(' && b <= '/') ||
+		(b >= '!' && b <= '\'') \
+	)
 }
 
 @(private)
-is_space :: proc(b: byte) -> bool { return b == '\t' || b == '\n' || b == '\v' || b == '\f' || b == '\r' || b == ' ' }
+is_space :: proc(b: byte) -> bool {return(
+		b == '\t' ||
+		b == '\n' ||
+		b == '\v' ||
+		b == '\f' ||
+		b == '\r' ||
+		b == ' ' \
+	)}
 
 @(private)
-is_alnum :: proc(b: byte) -> bool { return is_alpha(b) || is_digit(b) }
+is_alnum :: proc(b: byte) -> bool {return is_alpha(b) || is_digit(b)}
 
 // Hexadecimal digit.
 @(private)
-is_x_digit :: proc(b: byte) -> bool { return is_digit(b) || (b >= 'a' && b <= 'f') || (b >= 'A' && b <= 'F') }
+is_x_digit :: proc(b: byte) -> bool {return(
+		is_digit(b) ||
+		(b >= 'a' && b <= 'f') ||
+		(b >= 'A' && b <= 'F') \
+	)}

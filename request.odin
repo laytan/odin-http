@@ -12,25 +12,22 @@ import "core:net"
 Request :: struct {
 	// If in a handler, this is always there and never None.
 	line:       Maybe(Requestline),
-
 	headers:    Headers,
 	url:        URL,
-
 	client:     net.Endpoint,
 
 	// Route params/captures.
 	url_params: []string,
 
-    // Allocator that is freed after the request.
-    allocator: mem.Allocator,
-
+	// Allocator that is freed after the request.
+	allocator:  mem.Allocator,
 	_body:      bufio.Scanner,
 	_body_err:  Body_Error,
 }
 
 request_init :: proc(r: ^Request, allocator: mem.Allocator = context.allocator) {
 	r.headers = make(Headers, 3, allocator)
-    r.allocator = allocator
+	r.allocator = allocator
 }
 
 headers_validate :: proc(using r: Request) -> bool {
@@ -39,10 +36,10 @@ headers_validate :: proc(using r: Request) -> bool {
 	("Host" in headers) or_return
 
 	// RFC 7230 3.3.3: If a Transfer-Encoding header field
-    // is present in a request and the chunked transfer coding is not
-    // the final encoding, the message body length cannot be determined
-    // reliably; the server MUST respond with the 400 (Bad Request)
-    // status code and then close the connection.
+	// is present in a request and the chunked transfer coding is not
+	// the final encoding, the message body length cannot be determined
+	// reliably; the server MUST respond with the 400 (Bad Request)
+	// status code and then close the connection.
 	if enc_header, ok := headers["Transfer-Encoding"]; ok {
 		strings.has_suffix(enc_header, "chunked") or_return
 	}
@@ -93,7 +90,7 @@ body_error_status :: proc(e: Body_Error) -> Status {
 
 // Retrieves the request's body, can only be called once.
 request_body :: proc(req: ^Request, max_length: int = -1) -> (body: Body_Type, err: Body_Error) {
-    defer req._body_err = err
+	defer req._body_err = err
 
 	assert(req._body_err == nil)
 
@@ -111,13 +108,13 @@ request_body :: proc(req: ^Request, max_length: int = -1) -> (body: Body_Type, e
 		queries := make(Body_Url_Encoded, len(keyvalues), req.allocator)
 		for keyvalue in keyvalues {
 			seperator := strings.index(keyvalue, "=")
-			if seperator == -1 { // The keyvalue has no value.
+			if seperator == -1 { 	// The keyvalue has no value.
 				queries[keyvalue] = ""
 				continue
 			}
 
-			val, ok := net.percent_decode(keyvalue[seperator+1:], req.allocator)
-			queries[keyvalue[:seperator]] = ok ? val : keyvalue[seperator+1:]
+			val, decoded_ok := net.percent_decode(keyvalue[seperator + 1:], req.allocator)
+			queries[keyvalue[:seperator]] = decoded_ok ? val : keyvalue[seperator + 1:]
 		}
 
 		body = queries
@@ -162,7 +159,7 @@ request_body_length :: proc(req: ^Request, max_length: int) -> (string, Body_Err
 		return "", .Scan_Failed
 	}
 
-    return bufio.scanner_text(&req._body), .None
+	return bufio.scanner_text(&req._body), .None
 }
 
 // "Decodes" a chunked transfer encoded request body.
@@ -205,7 +202,7 @@ request_body_chunked :: proc(req: ^Request, max_length: int) -> (body: string, e
 		}
 
 		size := hex_decode_size(size_line) or_return
-		if size == 0 do break;
+		if size == 0 do break
 
 		if max_length > -1 && bytes.buffer_length(&body_buff) + size > max_length {
 			return "", .Too_Long

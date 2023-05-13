@@ -9,11 +9,11 @@ import "core:encoding/json"
 import http "../.."
 
 Hello_Req_Payload :: struct {
-    name: string,
+	name: string,
 }
 
 Hello_Res_Payload :: struct {
-    message: string,
+	message: string,
 }
 
 main :: proc() {
@@ -21,52 +21,58 @@ main :: proc() {
 
 	s: http.Server
 
-    router: http.Router
-    http.router_init(&router)
+	router: http.Router
+	http.router_init(&router)
 
-    http.route_get(&router, "/", http.handler(proc(req: ^http.Request, res: ^http.Response) {
-        http.respond_html(res, `
+	http.route_get(&router, "/", http.handler(proc(req: ^http.Request, res: ^http.Response) {
+			http.respond_html(
+				res,
+				`
         <html>
             <body>
                 <h1>Welcome to the front page!</h1>
             </body>
-        </html>`)
-    }))
+        </html>`,
+			)
+		}))
 
-    // Route matching is implemented using an implementation of Lua patterns, see the docs on them here:
-    // https://www.lua.org/pil/20.2.html
-    // They are very similar to regex patterns but a bit more limited, which makes them much easier to implement since Odin does not have a regex implementation.
+	// Route matching is implemented using an implementation of Lua patterns, see the docs on them here:
+	// https://www.lua.org/pil/20.2.html
+	// They are very similar to regex patterns but a bit more limited, which makes them much easier to implement since Odin does not have a regex implementation.
 
-    http.route_get(&router, "/hello/(%w+)", http.handler(proc(req: ^http.Request, res: ^http.Response) {
-        http.respond_plain(res, "Hello, ")
-        bytes.buffer_write_string(&res.body, req.url_params[0])
-    }))
+	http.route_get(&router, "/hello/(%w+)", http.handler(proc(req: ^http.Request, res: ^http.Response) {
+		http.respond_plain(res, "Hello, ")
+		bytes.buffer_write_string(&res.body, req.url_params[0])
+	}))
 
-    // JSON/body example.
-    http.route_post(&router, "/ping", http.handler(proc(req: ^http.Request, res: ^http.Response) {
-        body, err := http.request_body(req)
-        if err != nil {
-            log.infof("invalid ping payload %q: %s", body, err)
-            res.status = http.Status.Unprocessable_Content
-            return
-        }
+	// JSON/body example.
+	http.route_post(&router, "/ping", http.handler(proc(req: ^http.Request, res: ^http.Response) {
+			body, err := http.request_body(req)
+			if err != nil {
+				log.infof("invalid ping payload %q: %s", body, err)
+				res.status = http.Status.Unprocessable_Content
+				return
+			}
 
-        p: Hello_Req_Payload
-        if err := json.unmarshal_string(body.(http.Body_Plain) or_else "", &p); err != nil {
-            log.infof("invalid ping payload %q: %s", body, err)
-            res.status = http.Status.Unprocessable_Content
-            return
-        }
+			p: Hello_Req_Payload
+			if err := json.unmarshal_string(body.(http.Body_Plain) or_else "", &p); err != nil {
+				log.infof("invalid ping payload %q: %s", body, err)
+				res.status = http.Status.Unprocessable_Content
+				return
+			}
 
-        http.respond_json(res, Hello_Res_Payload{message = fmt.tprintf("Hello %s!", p.name)})
-    }))
+			http.respond_json(res, Hello_Res_Payload{message = fmt.tprintf("Hello %s!", p.name)})
+		}))
 
-    // Custom 404 page.
-    http.route_all(&router, "(.*)", http.handler(proc(req: ^http.Request, res: ^http.Response) {
-        http.respond_plain(res, fmt.tprintf("Welcome, could not find the path %q", req.url_params[0]))
-        res.status = .NotFound
-    }))
+	// Custom 404 page.
+	http.route_all(&router, "(.*)", http.handler(proc(req: ^http.Request, res: ^http.Response) {
+			http.respond_plain(
+				res,
+				fmt.tprintf("Welcome, could not find the path %q", req.url_params[0]),
+			)
+			res.status = .NotFound
+		}))
 
-    handler := http.router_handler(&router)
+	handler := http.router_handler(&router)
 	fmt.printf("Server stopped: %s", http.listen_and_serve(&s, &handler))
 }

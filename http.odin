@@ -23,7 +23,10 @@ Requestline :: struct {
 //
 // This allocates a clone of the target, because this is intended to be used with a scanner,
 // which has a buffer that changes every read.
-requestline_parse :: proc(s: string, allocator: mem.Allocator = context.allocator) -> (line: Requestline, err: Requestline_Error) {
+requestline_parse :: proc(s: string, allocator: mem.Allocator = context.allocator) -> (
+	line: Requestline,
+	err: Requestline_Error,
+) {
 	s := s
 
 	next_space := strings.index_byte(s, ' ')
@@ -60,7 +63,7 @@ version_parse :: proc(s: string) -> (version: Version, ok: bool) {
 	(len(s) == VERSION_LENGTH) or_return
 	(s[:5] == "HTTP/") or_return
 	version.major = u8(int(rune(s[5])) - '0')
-    (s[6] == '.') or_return
+	(s[6] == '.') or_return
 	version.minor = u8(int(rune(s[7])) - '0')
 	ok = true
 	return
@@ -120,25 +123,25 @@ header_parse :: proc(headers: ^Headers, line: string) -> (key: string, ok: bool)
 	value := strings.trim_space(line[colon + 1:])
 	(len(value) > 0) or_return
 
-    // RFC 7230 5.4: Server MUST respond with 400 to any request
-    // with multiple "Host" header fields.
-    if key == "Host" && key in headers {
-        return
-    }
+	// RFC 7230 5.4: Server MUST respond with 400 to any request
+	// with multiple "Host" header fields.
+	if key == "Host" && key in headers {
+		return
+	}
 
-    // RFC 7230 3.3.3: If a message is received without Transfer-Encoding and with
-    // either multiple Content-Length header fields having differing
-    // field-values or a single Content-Length header field having an
-    // invalid value, then the message framing is invalid and the
-    // recipient MUST treat it as an unrecoverable error.
-    if key == "Content-Length" {
-        if curr_length, ok := headers[key]; ok {
-            (curr_length == value) or_return
-        }
-    }
+	// RFC 7230 3.3.3: If a message is received without Transfer-Encoding and with
+	// either multiple Content-Length header fields having differing
+	// field-values or a single Content-Length header field having an
+	// invalid value, then the message framing is invalid and the
+	// recipient MUST treat it as an unrecoverable error.
+	if key == "Content-Length" {
+		if curr_length, has_length_header := headers[key]; has_length_header {
+			(curr_length == value) or_return
+		}
+	}
 
 	headers[key] = value
-    ok = true
+	ok = true
 	return
 }
 
@@ -195,7 +198,7 @@ DATE_LENGTH := len("Fri, 5 Feb 2023 09:01:10 GMT")
 // <day-name>, <day> <month> <year> <hour>:<minute>:<second> GMT
 format_date_header :: proc(t: time.Time, allocator: mem.Allocator = context.allocator) -> string {
 	b: strings.Builder
-    // Init with enough capacity to hold the whole string.
+	// Init with enough capacity to hold the whole string.
 	strings.builder_init(&b, 0, DATE_LENGTH, allocator)
 
 	year, month, day := time.date(t)
@@ -236,8 +239,16 @@ DAYS := [7]string{"Sun, ", "Mon, ", "Tue, ", "Wed, ", "Thu, ", "Fri, ", "Sat, "}
 @(private)
 MONTHS := [13]string {
 	" ", // Jan is 1, so 0 should never be accessed.
-	" Jan ", " Feb ", " Mar ",
-    " Apr ", " May ", " Jun ",
-    " Jul ", " Aug ", " Sep ",
-    " Oct ", " Nov ", " Dec ",
+	" Jan ",
+	" Feb ",
+	" Mar ",
+	" Apr ",
+	" May ",
+	" Jun ",
+	" Jul ",
+	" Aug ",
+	" Sep ",
+	" Oct ",
+	" Nov ",
+	" Dec ",
 }
