@@ -272,12 +272,15 @@ conn_handle_reqs :: proc(c: ^Connection) -> net.Network_Error {
 
     stream := tcp_stream(c.socket)
     stream_reader := io.to_reader(stream)
+
+	arena: virtual.Arena
+	if err := virtual.arena_init_growing(&arena); err != nil {
+		panic("could not create memory arena")
+	}
+	allocator := virtual.arena_allocator(&arena)
+	context.temp_allocator = allocator
+
     Requests: for {
-		arena: virtual.Arena
-		if err := virtual.arena_init_growing(&arena); err != nil {
-			panic("could not create memory arena")
-		}
-		allocator := virtual.arena_allocator(&arena)
         defer free_all(allocator)
 
         // PERF: we shouldn't create a new scanner everytime.
