@@ -138,12 +138,16 @@ respond_file :: proc(using r: ^Response, path: string, allocator: mem.Allocator 
 		return
 	}
 
+	respond_file_content(r, path, bs)
+}
+
+respond_file_content :: proc(using r: ^Response, path: string, content: []byte) {
 	mime := mime_from_extension(path)
 	content_type := mime_to_content_type(mime)
 
 	status = .Ok
 	headers["Content-Type"] = content_type
-	bytes.buffer_write(&body, bs)
+	bytes.buffer_write(&body, content)
 }
 
 // Sets the response to one that, based on the request path, returns a file.
