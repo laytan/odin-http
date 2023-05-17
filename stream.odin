@@ -19,13 +19,14 @@ _socket_stream_vtable := io.Stream_VTable {
 		n = read
 		#partial switch ex in e {
 		case net.TCP_Recv_Error:
-			switch ex {
+			#partial switch ex {
 			case .None:
 				err = .None
-			case .Shutdown, .Not_Connected, .Connection_Broken, .Aborted, .Connection_Closed, .Offline, .Host_Unreachable, .Interrupted, .Timeout:
+			case .Shutdown, .Not_Connected, .Aborted, .Connection_Closed, .Host_Unreachable, .Timeout:
 				log.errorf("unexpected error reading tcp: %s", ex)
 				err = .Unexpected_EOF
-			case .Not_Socket:
+			case:
+				log.errorf("unexpected error reading tcp: %s", ex)
 				err = .Unknown
 			}
 		case nil:
