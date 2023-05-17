@@ -1,13 +1,14 @@
 package http
 
 import "core:bufio"
+import "core:bytes"
+import "core:encoding/hex"
+import "core:fmt"
+import "core:log"
 import "core:mem"
+import "core:net"
 import "core:strconv"
 import "core:strings"
-import "core:fmt"
-import "core:bytes"
-import "core:log"
-import "core:net"
 
 Request :: struct {
 	// If in a handler, this is always there and never None.
@@ -193,11 +194,11 @@ request_body_chunked :: proc(req: ^Request, max_length: int) -> (body: string, e
 			return "", .Scan_Failed
 		}
 
-		size_line := bufio.scanner_text(&req._body)
+		size_line := bufio.scanner_bytes(&req._body)
 
 		// If there is a semicolon, discard everything after it,
 		// that would be chunk extensions which we currently have no interest in.
-		if semi := strings.index(size_line, ";"); semi > -1 {
+		if semi := bytes.index_byte(size_line, ';'); semi > -1 {
 			size_line = size_line[:semi]
 		}
 
@@ -292,35 +293,18 @@ scan_num_bytes :: proc(data: []byte, at_eof: bool) -> (
 HEX_SIZE_MAX :: len("FFFFFFFF")
 
 @(private)
-hex_decode_size :: proc(str: string) -> (int, Body_Error) {
+hex_decode_size :: proc(str: []byte) -> (int, Body_Error) {
 	str := str
-	str = strings.trim_prefix(str, "0x")
+	if string(str[:2]) == "0x" || string(str[:2]) == "0X" {
+		str = str[2:]
+	}
 
 	if len(str) > HEX_SIZE_MAX {
 		return 0, .Too_Long
 	}
 
-	val: int
-	for c, i in str {
-		index := (len(str) - 1) - i // reverse the loop.
+	base10, ok := hex.decode(str)
+	if !ok do return 0, .Invalid_Chunk_Size
 
-		hd, ok := hex_digit(u8(c))
-		if !ok {
-			return 0, .Invalid_Chunk_Size
-		}
-
-		val += int(hd) << uint(4 * index)
-	}
-
-	return val, nil
-}
-
-@(private)
-hex_digit :: proc(char: byte) -> (u8, bool) {
-    switch char {
-    case '0' ..= '9': return char - '0', true
-    case 'a' ..= 'f': return char - 'a' + 10, true
-    case 'A' ..= 'F': return char - 'A' + 10, true
-    case:             return 0, false
-    }
+	return strconv.atoi(string(base10)), nil
 }
