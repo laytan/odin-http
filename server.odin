@@ -11,6 +11,7 @@ import "core:mem"
 import "core:mem/virtual"
 import "core:runtime"
 import "core:c/libc"
+import "core:os"
 
 Server_Opts :: struct {
 	// Whether the server should accept every request that sends a "Expect: 100-continue" header automatically.
@@ -59,7 +60,7 @@ listen_and_serve :: proc(
 	h: ^Handler,
 	endpoint: net.Endpoint = Default_Endpoint,
 	opts: Server_Opts = Default_Server_Opts,
-) -> ( err: net.Network_Error) {
+) -> (err: net.Network_Error) {
 	server_listen(s, endpoint, opts) or_return
 	return server_serve(s, h)
 }
@@ -182,10 +183,12 @@ server_shutdown_force :: proc(s: ^Server) {
 	log.info("forcing shutdown")
 
 	for _, conn in s.conns {
-		thread.run_with_poly_data(conn, connection_close, context)
+		net.close(conn.socket)
 	}
 
-	log.info("forced shutdown")
+	time.sleep(SHUTDOWN_INTERVAL)
+
+	os.exit(1)
 }
 
 @(private)
