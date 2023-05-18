@@ -88,7 +88,6 @@ on_limit_message :: proc(message: ^string) -> Rate_Limit_On_Limit {
         user_data = message,
         on_limit = proc(_: ^Request, res: ^Response, user_data: rawptr) {
             message := (^string)(user_data)
-            log.debug("raw", message)
             bytes.buffer_write_string(&res.body, message^)
         },
     }
@@ -124,7 +123,6 @@ middleware_rate_limit :: proc(next: ^Handler, opts: ^Rate_Limit_Opts, allocator 
 
 	h.handle = proc(h: ^Handler, req: ^Request, res: ^Response) {
 		data := (^Rate_Limit_Data)(h.user_data)
-		log.debug(data^)
 
 		sync.lock(&data.mu)
 
@@ -137,7 +135,6 @@ middleware_rate_limit :: proc(next: ^Handler, opts: ^Rate_Limit_Opts, allocator 
 		hits := data.hits[req.client.address]
 		data.hits[req.client.address] = hits + 1
 		sync.unlock(&data.mu)
-		log.debug(data.opts.max)
 
 		if hits > data.opts.max {
 			res.status = .Too_Many_Requests

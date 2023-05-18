@@ -125,7 +125,7 @@ server_serve :: proc(using s: ^Server, handler: ^Handler) -> net.Network_Error {
 		c.socket = socket
 		c.client = client
 
-		log.debug("new connection with %s", client.address)
+		log.debugf("new connection with %v", client.address)
 
 		conns[socket] = c
 
