@@ -135,6 +135,17 @@ status_string :: proc(s: Status) -> string {
 	}
 }
 
+status_from_string :: proc(s: string) -> (Status, bool) {
+	for status in Status {
+		ss := status_string(status)
+		if s[:3] == ss[:3] {
+			return status, true
+		}
+	}
+
+	return .Method_Not_Allowed, false
+}
+
 status_informational :: proc(s: Status) -> bool {
 	return s < .Ok
 }

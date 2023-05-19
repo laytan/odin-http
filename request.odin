@@ -2,7 +2,6 @@ package http
 
 import "core:bufio"
 import "core:bytes"
-import "core:encoding/hex"
 import "core:fmt"
 import "core:log"
 import "core:mem"
@@ -31,17 +30,21 @@ request_init :: proc(r: ^Request, allocator: mem.Allocator = context.allocator) 
 	r.allocator = allocator
 }
 
-headers_validate :: proc(using r: Request) -> bool {
+server_headers_validate :: proc(headers: ^Headers) -> bool {
 	// RFC 7230 5.4: A server MUST respond with a 400 (Bad Request) status code to any
 	// HTTP/1.1 request message that lacks a Host header field.
-	("Host" in headers) or_return
+	("host" in headers) or_return
 
+    return headers_validate(headers)
+}
+
+headers_validate :: proc(headers: ^Headers) -> bool {
 	// RFC 7230 3.3.3: If a Transfer-Encoding header field
 	// is present in a request and the chunked transfer coding is not
 	// the final encoding, the message body length cannot be determined
 	// reliably; the server MUST respond with the 400 (Bad Request)
 	// status code and then close the connection.
-	if enc_header, ok := headers["Transfer-Encoding"]; ok {
+	if enc_header, ok := headers["transfer-encoding"]; ok {
 		strings.has_suffix(enc_header, "chunked") or_return
 	}
 
@@ -50,10 +53,9 @@ headers_validate :: proc(using r: Request) -> bool {
 	// Content-Length.  Such a message might indicate an attempt to
 	// perform request smuggling (Section 9.5) or response splitting
 	// (Section 9.4) and ought to be handled as an error.
-	if "Transfer-Encoding" in headers && "Content-Length" in headers {
-		delete(headers["Content-Length"])
-		hdrs := headers
-		delete_key(&hdrs, "Content-Length")
+	if "transfer-encoding" in headers && "content-length" in headers {
+		delete(headers["content-length"])
+		delete_key(headers, "content-length")
 	}
 
 	return true
@@ -92,21 +94,24 @@ body_error_status :: proc(e: Body_Error) -> Status {
 // Retrieves the request's body, can only be called once.
 request_body :: proc(req: ^Request, max_length: int = -1) -> (body: Body_Type, err: Body_Error) {
 	defer req._body_err = err
-
 	assert(req._body_err == nil)
+    return parse_body(&req.headers, &req._body, max_length, req.allocator)
+}
 
-	if enc_header, ok := req.headers["Transfer-Encoding"]; ok && strings.has_suffix(enc_header, "chunked") {
-		body = request_body_chunked(req, max_length) or_return
+// Meant for internal use, you should use `http.request_body`.
+parse_body :: proc(headers: ^Headers, _body: ^bufio.Scanner, max_length := -1, allocator := context.allocator) -> (body: Body_Type, err: Body_Error) {
+	if enc_header, ok := headers["transfer-encoding"]; ok && strings.has_suffix(enc_header, "chunked") {
+		body = request_body_chunked(headers, _body, max_length, allocator) or_return
 	} else {
-		body = request_body_length(req, max_length) or_return
+		body = request_body_length(headers, _body, max_length) or_return
 	}
 
 	// Automatically decode url encoded bodies.
-	if typ, ok := req.headers["Content-Type"]; ok && typ == "application/x-www-form-urlencoded" {
+	if typ, ok := headers["content-type"]; ok && typ == "application/x-www-form-urlencoded" {
 		plain := body.(Body_Plain)
 
-		keyvalues := strings.split(plain, "&", req.allocator)
-		queries := make(Body_Url_Encoded, len(keyvalues), req.allocator)
+		keyvalues := strings.split(plain, "&", allocator)
+		queries := make(Body_Url_Encoded, len(keyvalues), allocator)
 		for keyvalue in keyvalues {
 			seperator := strings.index(keyvalue, "=")
 			if seperator == -1 { 	// The keyvalue has no value.
@@ -114,7 +119,7 @@ request_body :: proc(req: ^Request, max_length: int = -1) -> (body: Body_Type, e
 				continue
 			}
 
-			val, decoded_ok := net.percent_decode(keyvalue[seperator + 1:], req.allocator)
+			val, decoded_ok := net.percent_decode(keyvalue[seperator + 1:], allocator)
 			queries[keyvalue[:seperator]] = decoded_ok ? val : keyvalue[seperator + 1:]
 		}
 
@@ -125,9 +130,9 @@ request_body :: proc(req: ^Request, max_length: int = -1) -> (body: Body_Type, e
 }
 
 // "Decodes" a request body based on the content length header.
-@(private)
-request_body_length :: proc(req: ^Request, max_length: int) -> (string, Body_Error) {
-	len, ok := req.headers["Content-Length"]
+// Meant for internal usage, you should use `http.request_body`.
+request_body_length :: proc(headers: ^Headers, _body: ^bufio.Scanner, max_length: int) -> (string, Body_Error) {
+	len, ok := headers["content-length"]
 	if !ok {
 		return "", .No_Length
 	}
@@ -148,22 +153,24 @@ request_body_length :: proc(req: ^Request, max_length: int) -> (string, Body_Err
 	// user_index is used to set the amount of bytes to scan in scan_num_bytes.
 	context.user_index = ilen
 
-	req._body.max_token_size = ilen
-	defer req._body.max_token_size = bufio.DEFAULT_MAX_SCAN_TOKEN_SIZE
+	_body.max_token_size = ilen
+	defer _body.max_token_size = bufio.DEFAULT_MAX_SCAN_TOKEN_SIZE
 
-	req._body.split = scan_num_bytes
-	defer req._body.split = bufio.scan_lines
+	_body.split = scan_num_bytes
+	defer _body.split = bufio.scan_lines
 
 	log.infof("scanning %i bytes body", ilen)
 
-	if !bufio.scanner_scan(&req._body) {
+	if !bufio.scanner_scan(_body) {
 		return "", .Scan_Failed
 	}
 
-	return bufio.scanner_text(&req._body), .None
+	return bufio.scanner_text(_body), .None
 }
 
 // "Decodes" a chunked transfer encoded request body.
+// Meant for internal usage, you should use `http.request_body`.
+//
 // RFC 7230 4.1.3 pseudo-code:
 //
 // length := 0
@@ -184,17 +191,16 @@ request_body_length :: proc(req: ^Request, max_length: int) -> (string, Body_Err
 // Content-Length := length
 // Remove "chunked" from Transfer-Encoding
 // Remove Trailer from existing header fields
-@(private)
-request_body_chunked :: proc(req: ^Request, max_length: int) -> (body: string, err: Body_Error) {
+request_body_chunked :: proc(headers: ^Headers, _body: ^bufio.Scanner, max_length: int, allocator := context.allocator) -> (body: string, err: Body_Error) {
 	body_buff: bytes.Buffer
 	// Needs to be 1 cap because 0 would not use the allocator provided.
-	bytes.buffer_init_allocator(&body_buff, 0, 1, req.allocator)
+	bytes.buffer_init_allocator(&body_buff, 0, 1, allocator)
 	for {
-		if !bufio.scanner_scan(&req._body) {
+		if !bufio.scanner_scan(_body) {
 			return "", .Scan_Failed
 		}
 
-		size_line := bufio.scanner_bytes(&req._body)
+		size_line := bufio.scanner_bytes(_body)
 
 		// If there is a semicolon, discard everything after it,
 		// that would be chunk extensions which we currently have no interest in.
@@ -202,7 +208,11 @@ request_body_chunked :: proc(req: ^Request, max_length: int) -> (body: string, e
 			size_line = size_line[:semi]
 		}
 
-		size := hex_decode_size(size_line) or_return
+		size, ok := strconv.parse_int(string(size_line), 16)
+        if !ok {
+            err = .Invalid_Chunk_Size
+            return
+        }
 		if size == 0 do break
 
 		if max_length > -1 && bytes.buffer_length(&body_buff) + size > max_length {
@@ -212,57 +222,64 @@ request_body_chunked :: proc(req: ^Request, max_length: int) -> (body: string, e
 		// user_index is used to set the amount of bytes to scan in scan_num_bytes.
 		context.user_index = size
 
-		req._body.max_token_size = size
-		defer req._body.max_token_size = bufio.DEFAULT_MAX_SCAN_TOKEN_SIZE
+		_body.max_token_size = size
+		_body.split = scan_num_bytes
 
-		req._body.split = scan_num_bytes
-		defer req._body.split = bufio.scan_lines
-
-		if !bufio.scanner_scan(&req._body) {
+		if !bufio.scanner_scan(_body) {
 			return "", .Scan_Failed
 		}
 
-		bytes.buffer_write(&body_buff, bufio.scanner_bytes(&req._body))
+		_body.max_token_size = bufio.DEFAULT_MAX_SCAN_TOKEN_SIZE
+		_body.split = bufio.scan_lines
+
+		bytes.buffer_write(&body_buff, bufio.scanner_bytes(_body))
+
+        // Read empty line after chunk.
+        if !bufio.scanner_scan(_body) {
+            return "", .Scan_Failed
+        }
+        assert(bufio.scanner_text(_body) == "")
 	}
 
 	// Read trailing empty line (after body, before trailing headers).
-	if !bufio.scanner_scan(&req._body) || bufio.scanner_text(&req._body) != "" {
+	if !bufio.scanner_scan(_body) || bufio.scanner_text(_body) != "" {
 		return "", .Scan_Failed
 	}
 
 	// Keep parsing the request as line delimited headers until we get to an empty line.
 	for {
-		if !bufio.scanner_scan(&req._body) {
-			return "", .Scan_Failed
+        // If there are no trailing headers, this case is hit.
+		if !bufio.scanner_scan(_body) {
+            break
 		}
 
-		line := bufio.scanner_text(&req._body)
+		line := bufio.scanner_text(_body)
 
 		// The first empty line denotes the end of the headers section.
 		if line == "" {
 			break
 		}
 
-		key, ok := header_parse(&req.headers, line)
+		key, ok := header_parse(headers, line)
 		if !ok {
 			return "", .Invalid_Trailer_Header
 		}
 
 		// A recipient MUST ignore (or consider as an error) any fields that are forbidden to be sent in a trailer.
 		if !header_allowed_trailer(key) {
-			delete(req.headers[key])
-			delete_key(&req.headers, key)
+			delete(headers[key])
+			delete_key(headers, key)
 		}
 	}
 
-	req.headers["Content-Length"] = fmt.tprintf("%i", bytes.buffer_length(&body_buff))
+	headers["content-length"] = fmt.tprintf("%i", bytes.buffer_length(&body_buff))
 
-	if "Trailer" in req.headers {
-		delete(req.headers["Trailer"])
-		delete_key(&req.headers, "Trailer")
+	if "trailer" in headers {
+		delete(headers["trailer"])
+		delete_key(headers, "trailer")
 	}
 
-	req.headers["Transfer-Encoding"] = strings.trim_suffix(req.headers["Transfer-Encoding"], "chunked")
+	headers["transfer-encoding"] = strings.trim_suffix(headers["transfer-encoding"], "chunked")
 
 	return bytes.buffer_to_string(&body_buff), .None
 }
@@ -282,29 +299,8 @@ scan_num_bytes :: proc(data: []byte, at_eof: bool) -> (
 	}
 
 	if len(data) < n {
-		return 0, data, nil, false
+        return
 	}
 
-	return n, data[:n], nil, true
-}
-
-// This is equivalent to around 4GB, I think that is a sane max.
-@(private)
-HEX_SIZE_MAX :: len("FFFFFFFF")
-
-@(private)
-hex_decode_size :: proc(str: []byte) -> (int, Body_Error) {
-	str := str
-	if string(str[:2]) == "0x" || string(str[:2]) == "0X" {
-		str = str[2:]
-	}
-
-	if len(str) > HEX_SIZE_MAX {
-		return 0, .Too_Long
-	}
-
-	base10, ok := hex.decode(str)
-	if !ok do return 0, .Invalid_Chunk_Size
-
-	return strconv.atoi(string(base10)), nil
+	return n, data[:n], nil, false
 }

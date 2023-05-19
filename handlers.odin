@@ -142,7 +142,7 @@ middleware_rate_limit :: proc(next: ^Handler, opts: ^Rate_Limit_Opts, allocator 
 			retry_dur := int(time.diff(time.now(), data.next_sweep) / time.Second)
 			buf := make([]byte, 32, context.temp_allocator)
 			retry_str := strconv.itoa(buf, retry_dur)
-			res.headers["Retry-After"] = retry_str
+			res.headers["retry-after"] = retry_str
 
 			if on, ok := data.opts.on_limit.(Rate_Limit_On_Limit); ok {
 				on.on_limit(req, res, on.user_data)

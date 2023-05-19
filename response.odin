@@ -2,13 +2,12 @@ package http
 
 import "core:bytes"
 import "core:net"
-import "core:mem"
-import "core:fmt"
 import "core:os"
 import "core:path/filepath"
 import "core:strings"
 import "core:encoding/json"
 import "core:time"
+import "core:strconv"
 
 Response :: struct {
 	status:  Status,
@@ -17,17 +16,17 @@ Response :: struct {
 	body:    bytes.Buffer,
 }
 
-response_init :: proc(r: ^Response, s: net.TCP_Socket, allocator: mem.Allocator = context.allocator) {
+response_init :: proc(r: ^Response, allocator := context.allocator) {
 	r.status = .NotFound
 	r.headers = make(Headers, 3, allocator)
-	r.headers["Server"] = "Odin"
+	r.headers["server"] = "Odin"
 	// NOTE: need to be at least 1 capacity so the given allocator gets used.
 	// TODO: report bug in Odin.
 	bytes.buffer_init_allocator(&r.body, 0, 1, allocator)
 }
 
 // Sends the response over the connection.
-response_send :: proc(using r: ^Response, conn: ^Connection, allocator: mem.Allocator = context.allocator) -> net.Network_Error {
+response_send :: proc(using r: ^Response, conn: ^Connection, allocator := context.allocator) -> net.Network_Error {
 	res: bytes.Buffer
 	// Responses are on average at least 100 bytes, so lets start there, but add the body's length.
 	initial_buf_cap := response_needs_content_length(r, conn) ? 100 + bytes.buffer_length(&body) : 100
@@ -45,7 +44,7 @@ response_send :: proc(using r: ^Response, conn: ^Connection, allocator: mem.Allo
 		case .Scan_Failed, .Invalid_Length, .Invalid_Chunk_Size, .Too_Long, .Invalid_Trailer_Header:
 			// Any read error should close the connection.
 			status = body_error_status(conn.curr_req._body_err)
-			headers["Connection"] = "close"
+			headers["connection"] = "close"
 			will_close = true
 		case .No_Length, .None: // no-op, request had no body or read succeeded.
 		case:
@@ -55,7 +54,7 @@ response_send :: proc(using r: ^Response, conn: ^Connection, allocator: mem.Allo
 			case .Scan_Failed, .Invalid_Length, .Invalid_Trailer_Header, .Too_Long, .Invalid_Chunk_Size:
 				// Any read error should close the connection.
 				status = body_error_status(conn.curr_req._body_err)
-				headers["Connection"] = "close"
+				headers["connection"] = "close"
 				will_close = true
 			case .No_Length, .None: // no-op, request had no body or read succeeded.
 			case:
@@ -68,12 +67,14 @@ response_send :: proc(using r: ^Response, conn: ^Connection, allocator: mem.Allo
 	bytes.buffer_write_string(&res, status_string(status))
 	bytes.buffer_write_string(&res, "\r\n")
 
+	if "content-length" not_in headers && response_needs_content_length(r, conn) {
+		buf := make([]byte, 32, allocator)
+		headers["content-length"] = strconv.itoa(buf, bytes.buffer_length(&res))
+	}
 
 	// Per RFC 9910 6.6.1 a Date header must be added in 2xx, 3xx, 4xx responses.
-	if status >= .Ok && status <= .Internal_Server_Error && "Date" not_in headers {
-		bytes.buffer_write_string(&res, "Date: ")
-		bytes.buffer_write_string(&res, format_date_header(time.now(), allocator))
-		bytes.buffer_write_string(&res, "\r\n")
+	if status >= .Ok && status <= .Internal_Server_Error && "date" not_in headers {
+		headers["date"] = format_date_header(time.now(), allocator)
 	}
 
 	for header, value in headers {
@@ -100,11 +101,6 @@ response_send :: proc(using r: ^Response, conn: ^Connection, allocator: mem.Allo
 		bytes.buffer_write_string(&body, status_string(status))
 	}
 
-	if response_needs_content_length(r, conn) {
-		bytes.buffer_write_string(&res, fmt.tprintf("Content-Length: %i", bytes.buffer_length(&body)))
-		bytes.buffer_write_string(&res, "\r\n")
-	}
-
 	// Empty line denotes end of headers and start of body.
 	bytes.buffer_write_string(&res, "\r\n")
 
@@ -119,19 +115,19 @@ response_send :: proc(using r: ^Response, conn: ^Connection, allocator: mem.Allo
 respond_html :: proc(using r: ^Response, html: string) {
 	status = .Ok
 	bytes.buffer_write_string(&body, html)
-	headers["Content-Type"] = mime_to_content_type(Mime_Type.Html)
+	headers["content-type"] = mime_to_content_type(Mime_Type.Html)
 }
 
 // Sets the response to one that sends the given plain text.
 respond_plain :: proc(using r: ^Response, text: string) {
 	status = .Ok
 	bytes.buffer_write_string(&body, text)
-	headers["Content-Type"] = mime_to_content_type(Mime_Type.Plain)
+	headers["content-type"] = mime_to_content_type(Mime_Type.Plain)
 }
 
 // Sets the response to one that sends the contents of the file at the given path.
 // Content-Type header is set based on the file extension, see the MimeType enum for known file extensions.
-respond_file :: proc(using r: ^Response, path: string, allocator: mem.Allocator = context.allocator) {
+respond_file :: proc(using r: ^Response, path: string, allocator := context.allocator) {
 	bs, ok := os.read_entire_file(path, allocator)
 	if !ok {
 		status = .NotFound
@@ -146,7 +142,7 @@ respond_file_content :: proc(using r: ^Response, path: string, content: []byte) 
 	content_type := mime_to_content_type(mime)
 
 	status = .Ok
-	headers["Content-Type"] = content_type
+	headers["content-type"] = content_type
 	bytes.buffer_write(&body, content)
 }
 
@@ -157,7 +153,7 @@ respond_file_content :: proc(using r: ^Response, path: string, content: []byte) 
 //
 // Path traversal is detected and cleaned up.
 // The Content-Type is set based on the file extension, see the MimeType enum for known file extensions.
-respond_dir :: proc(using r: ^Response, base, target, request: string, allocator: mem.Allocator = context.allocator) {
+respond_dir :: proc(using r: ^Response, base, target, request: string, allocator := context.allocator) {
 	if !strings.has_prefix(request, base) {
 		status = .NotFound
 		return
@@ -179,13 +175,13 @@ respond_dir :: proc(using r: ^Response, base, target, request: string, allocator
 respond_json :: proc(
 	using r: ^Response,
 	v: any,
-	allocator: mem.Allocator = context.allocator,
+	allocator := context.allocator,
 	opt: json.Marshal_Options = {},
 ) -> json.Marshal_Error {
 	bs := json.marshal(v, opt, allocator) or_return
 	status = .Ok
 	bytes.buffer_write(&body, bs)
-	headers["Content-Type"] = mime_to_content_type(Mime_Type.Json)
+	headers["content-type"] = mime_to_content_type(Mime_Type.Json)
 	return nil
 }
 
@@ -210,11 +206,11 @@ Cookie :: struct {
 }
 
 // Builds the Set-Cookie header string representation of the given cookie.
-cookie_string :: proc(using c: Cookie, allocator: mem.Allocator = context.allocator) -> string {
+cookie_string :: proc(using c: Cookie, allocator := context.allocator) -> string {
 	b: strings.Builder
 	strings.builder_init(&b, 0, 20, allocator)
 
-	strings.write_string(&b, "Set-Cookie: ")
+	strings.write_string(&b, "set-cookie: ")
 	strings.write_string(&b, name)
 	strings.write_byte(&b, '=')
 	strings.write_string(&b, value)
@@ -261,6 +257,90 @@ cookie_string :: proc(using c: Cookie, allocator: mem.Allocator = context.alloca
 	return strings.to_string(b)
 }
 
+// TODO: check specific whitespace requirements in RFC.
+cookie_parse :: proc(value: string, allocator := context.allocator) -> (cookie: Cookie, ok: bool) {
+	value := value
+
+	eq := strings.index_byte(value, '=')
+	if eq < 1 do return
+
+	cookie.name = value[:eq]
+	value = value[eq+1:]
+
+	semi := strings.index_byte(value, ';')
+	switch semi {
+	case -1:
+		cookie.value = value
+		ok = true
+		return
+	case 0: return
+	case:
+		cookie.value = value[:semi]
+		value = value[semi+1:]
+	}
+
+	parse_part :: proc(cookie: ^Cookie, part: string, allocator := context.allocator) -> (ok: bool) {
+		eq := strings.index_byte(part, '=')
+		switch eq {
+		case -1:
+			key := strings.to_lower(part, allocator)
+			defer delete(key)
+
+			switch key {
+			case "httponly":    cookie.http_only = true
+			case "partitioned": cookie.partitioned = true
+			case "secure":      cookie.secure = true
+			case: return
+			}
+		case 0: return
+		case:
+			key := strings.to_lower(part[:eq], allocator)
+			defer delete(key)
+
+			value := part[eq+1:]
+
+			switch key {
+			case "domain":
+				cookie.domain = value
+			case "expires":
+				cookie.expires_gmt = parse_date_header(value) or_return
+			case "max-age":
+				cookie.max_age_secs = strconv.parse_int(value, 10) or_return
+			case "path":
+				cookie.path = value
+			case "samesite":
+				val := strings.to_lower(value, allocator)
+				defer delete(val)
+
+				switch value {
+				case "lax":    cookie.same_site = .Lax
+				case "none":   cookie.same_site = .None
+				case "strict": cookie.same_site = .Strict
+				case: return
+				}
+			case: return
+			}
+		}
+		return true
+	}
+
+	for semi := strings.index_byte(value, ';'); semi != -1; semi = strings.index_byte(value, ';') {
+		part := strings.trim_left_space(value[:semi])
+		value = value[semi+1:]
+		parse_part(&cookie, part, allocator) or_return
+	}
+
+	part := strings.trim_left_space(value)
+	if part == "" {
+		ok = true
+		return
+	}
+
+	parse_part(&cookie, part, allocator) or_return
+	ok = true
+	return
+}
+
 // A server MUST NOT send a Content-Length header field in any response
 // with a status code of 1xx (Informational) or 204 (No Content).  A
 // server MUST NOT send a Content-Length header field in any 2xx
@@ -299,9 +379,9 @@ response_can_have_body :: proc(r: ^Response, conn: ^Connection) -> bool {
 // If we are responding with a close connection header, make sure we close.
 @(private)
 response_must_close :: proc(req: ^Request, res: ^Response) -> bool {
-	if req, req_has := req.headers["Connection"]; req_has && req == "close" {
+	if req, req_has := req.headers["connection"]; req_has && req == "close" {
 		return true
-	} else if res, res_has := res.headers["Connection"]; res_has && res == "close" {
+	} else if res, res_has := res.headers["connection"]; res_has && res == "close" {
 		return true
 	}
 

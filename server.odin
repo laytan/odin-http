@@ -307,7 +307,7 @@ conn_handle_reqs :: proc(c: ^Connection) -> net.Network_Error {
 		scanner.max_token_size = c.server.opts.limit_request_line
 
 		res: Response
-		response_init(&res, c.socket, allocator)
+		response_init(&res, allocator)
 
 		req: Request
 		request_init(&req, allocator)
@@ -332,11 +332,11 @@ conn_handle_reqs :: proc(c: ^Connection) -> net.Network_Error {
 		rline, err := requestline_parse(rline_str, allocator)
 		switch err {
 		case .Method_Not_Implemented:
-			res.headers["Connection"] = "close"
+			res.headers["connection"] = "close"
 			response_send_or_log(&res, c, .Not_Implemented, allocator)
 			break Requests
 		case .Invalid_Version_Format, .Not_Enough_Fields:
-			res.headers["Connection"] = "close"
+			res.headers["connection"] = "close"
 			response_send_or_log(&res, c, .Bad_Request, allocator)
 			break Requests
 		case .None:
@@ -346,7 +346,7 @@ conn_handle_reqs :: proc(c: ^Connection) -> net.Network_Error {
 
 		// Might need to support more versions later.
 		if rline.version.major != 1 || rline.version.minor < 1 {
-			res.headers["Connection"] = "close"
+			res.headers["connection"] = "close"
 			response_send_or_log(&res, c, .HTTP_Version_Not_Supported, allocator)
 			break
 		}
@@ -368,21 +368,21 @@ conn_handle_reqs :: proc(c: ^Connection) -> net.Network_Error {
 			}
 
 			if _, ok := header_parse(&req.headers, line); !ok {
-				res.headers["Connection"] = "close"
+				res.headers["connection"] = "close"
 				response_send_or_log(&res, c, .Bad_Request, allocator)
 				break Requests
 			}
 
 			scanner.max_token_size -= len(line)
 			if scanner.max_token_size <= 0 {
-				res.headers["Connection"] = "close"
+				res.headers["connection"] = "close"
 				response_send_or_log(&res, c, .Request_Header_Fields_Too_Large, allocator)
 				break Requests
 			}
 		}
 
-		if !headers_validate(req) {
-			res.headers["Connection"] = "close"
+		if !server_headers_validate(&req.headers) {
+			res.headers["connection"] = "close"
 			response_send_or_log(&res, c, .Bad_Request, allocator)
 			break
 		}
@@ -390,7 +390,7 @@ conn_handle_reqs :: proc(c: ^Connection) -> net.Network_Error {
 		scanner.max_token_size = bufio.DEFAULT_MAX_SCAN_TOKEN_SIZE
 
 		// Automatically respond with a continue status when the client has the Expect: 100-continue header.
-		if expect, ok := req.headers["Expect"];
+		if expect, ok := req.headers["expect"];
 		   ok && expect == "100-continue" && c.server.opts.auto_expect_continue {
 
 			res.status = .Continue
@@ -467,7 +467,7 @@ scanner_scan_or_bad_req :: proc(
 			}
 		}
 
-		res.headers["Connection"] = "close"
+		res.headers["connection"] = "close"
 		response_send_or_log(res, conn, res.status, allocator)
 		return "", false
 	}

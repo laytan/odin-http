@@ -1,7 +1,8 @@
 package http
 
+import "core:bytes"
+import "core:strconv"
 import "core:strings"
-import "core:mem"
 import "core:time"
 
 Requestline_Error :: enum {
@@ -23,7 +24,7 @@ Requestline :: struct {
 //
 // This allocates a clone of the target, because this is intended to be used with a scanner,
 // which has a buffer that changes every read.
-requestline_parse :: proc(s: string, allocator: mem.Allocator = context.allocator) -> (
+requestline_parse :: proc(s: string, allocator := context.allocator) -> (
 	line: Requestline,
 	err: Requestline_Error,
 ) {
@@ -44,10 +45,19 @@ requestline_parse :: proc(s: string, allocator: mem.Allocator = context.allocato
 	line.target = strings.clone(s[:next_space], allocator)
 	s = s[len(line.target) + 1:]
 
-	line.version, ok = version_parse(s[:VERSION_LENGTH])
+	line.version, ok = version_parse(s)
 	if !ok do return line, .Invalid_Version_Format
 
 	return
+}
+
+requestline_write :: proc(rline: Requestline, buf: ^bytes.Buffer, allocator := context.allocator) {
+	bytes.buffer_write_string(buf, method_string(rline.method))              // <METHOD>
+	bytes.buffer_write_byte(buf, ' ')                                        // <METHOD> <SP>
+	bytes.buffer_write_string(buf, rline.target)                             // <METHOD> <SP> <TARGET>
+	bytes.buffer_write_byte(buf, ' ')                                        // <METHOD> <SP> <TARGET> <SP>
+	bytes.buffer_write_string(buf, version_string(rline.version, allocator)) // <METHOD> <SP> <TARGET> <SP> <VERSION>
+	bytes.buffer_write_string(buf, "\r\n")                                   // <METHOD> <SP> <TARGET> <SP> <VERSION> <CRLF>
 }
 
 Version :: struct {
@@ -55,26 +65,26 @@ Version :: struct {
 	minor: u8,
 }
 
-@(private)
-VERSION_LENGTH :: 8
-
 // Parses an HTTP version string according to RFC 7230, section 2.6.
 version_parse :: proc(s: string) -> (version: Version, ok: bool) {
-	(len(s) == VERSION_LENGTH) or_return
 	(s[:5] == "HTTP/") or_return
 	version.major = u8(int(rune(s[5])) - '0')
-	(s[6] == '.') or_return
-	version.minor = u8(int(rune(s[7])) - '0')
+	if len(s) > 6 {
+		(s[6] == '.') or_return
+		version.minor = u8(int(rune(s[7])) - '0')
+	}
 	ok = true
 	return
 }
 
-version_string :: proc(v: Version, allocator: mem.Allocator = context.allocator) -> string {
-	str := strings.builder_make(VERSION_LENGTH, VERSION_LENGTH, allocator)
+version_string :: proc(v: Version, allocator := context.allocator) -> string {
+	str := strings.builder_make(0, 8, allocator)
 	strings.write_string(&str, "HTTP/")
 	strings.write_rune(&str, '0' + rune(v.major))
-	strings.write_rune(&str, '.')
-	strings.write_rune(&str, '0' + rune(v.minor))
+	if v.minor > 0 {
+		strings.write_rune(&str, '.')
+		strings.write_rune(&str, '0' + rune(v.minor))
+	}
 	return strings.to_string(str)
 }
 
@@ -107,9 +117,16 @@ method_string :: proc(m: Method) -> string {
 	}
 }
 
+// Headers are request or response headers.
+//
+// They are always parsed to lowercase because they are case-insensitive,
+// This allows you to just check the lowercase variant for existence/value.
+//
+// Thus, you should always add keys in lowercase.
 Headers :: map[string]string
 
-header_parse :: proc(headers: ^Headers, line: string) -> (key: string, ok: bool) {
+// TODO: shoudn't this copy the strings, we are using a scanner which overwrites its buffer right?
+header_parse :: proc(headers: ^Headers, line: string, allocator := context.allocator) -> (key: string, ok: bool) {
 	// Preceding spaces should not be allowed.
 	(len(line) > 0 && line[0] != ' ') or_return
 
@@ -119,13 +136,14 @@ header_parse :: proc(headers: ^Headers, line: string) -> (key: string, ok: bool)
 	// There must not be a space before the colon.
 	(line[colon - 1] != ' ') or_return
 
-	key = line[:colon]
+	// Header field names are case-insensitive, so lets represent them all in lowercase.
+	key = strings.to_lower(line[:colon], allocator)
 	value := strings.trim_space(line[colon + 1:])
 	(len(value) > 0) or_return
 
 	// RFC 7230 5.4: Server MUST respond with 400 to any request
 	// with multiple "Host" header fields.
-	if key == "Host" && key in headers {
+	if key == "host" && key in headers {
 		return
 	}
 
@@ -134,7 +152,7 @@ header_parse :: proc(headers: ^Headers, line: string) -> (key: string, ok: bool)
 	// field-values or a single Content-Length header field having an
 	// invalid value, then the message framing is invalid and the
 	// recipient MUST treat it as an unrecoverable error.
-	if key == "Content-Length" {
+	if key == "content-length" {
 		if curr_length, has_length_header := headers[key]; has_length_header {
 			(curr_length == value) or_return
 		}
@@ -158,45 +176,45 @@ header_parse :: proc(headers: ^Headers, line: string) -> (key: string, ok: bool)
 header_allowed_trailer :: proc(key: string) -> bool {
     return (
         // Message framing:
-        key != "Transfer-Encoding" &&
-        key != "Content-Length" &&
+        key != "transfer-encoding" &&
+        key != "content-length" &&
         // Routing:
-        key != "Host" &&
+        key != "host" &&
         // Request modifiers:
-        key != "If-Match" &&
-        key != "If-None-Match" &&
-        key != "If-Modified-Since" &&
-        key != "If-Unmodified-Since" &&
-        key != "If-Range" &&
+        key != "if-match" &&
+        key != "if-none-match" &&
+        key != "if-modified-since" &&
+        key != "if-unmodified-since" &&
+        key != "if-range" &&
         // Authentication:
-        key != "WWW-Authenticate" &&
-        key != "Authorization" &&
-        key != "Proxy-Authenticate" &&
-        key != "Proxy-Authorization" &&
-        key != "Cookie" &&
-        key != "Set-Cookie" &&
+        key != "www-authenticate" &&
+        key != "authorization" &&
+        key != "proxy-authenticate" &&
+        key != "proxy-authorization" &&
+        key != "cookie" &&
+        key != "set-cookie" &&
         // Control data:
-        key != "Age" &&
-        key != "Cache-Control" &&
-        key != "Expires" &&
-        key != "Date" &&
-        key != "Location" &&
-        key != "Retry-After" &&
-        key != "Vary" &&
-        key != "Warning" &&
+        key != "age" &&
+        key != "cache-control" &&
+        key != "expires" &&
+        key != "date" &&
+        key != "location" &&
+        key != "retry-after" &&
+        key != "vary" &&
+        key != "warning" &&
         // How to process:
-        key != "Content-Encoding" &&
-        key != "Content-Type" &&
-        key != "Content-Range" &&
-        key != "Trailer")
+        key != "content-encoding" &&
+        key != "content-type" &&
+        key != "content-range" &&
+        key != "trailer")
 }
 
 @(private)
-DATE_LENGTH := len("Fri, 5 Feb 2023 09:01:10 GMT")
+DATE_LENGTH := len("Fri, 05 Feb 2023 09:01:10 GMT")
 
 // Formats a time in the HTTP header format (no timezone conversion is done, GMT expected):
 // <day-name>, <day> <month> <year> <hour>:<minute>:<second> GMT
-format_date_header :: proc(t: time.Time, allocator: mem.Allocator = context.allocator) -> string {
+format_date_header :: proc(t: time.Time, allocator := context.allocator) -> string {
 	b: strings.Builder
 	// Init with enough capacity to hold the whole string.
 	strings.builder_init(&b, 0, DATE_LENGTH, allocator)
@@ -206,18 +224,62 @@ format_date_header :: proc(t: time.Time, allocator: mem.Allocator = context.allo
 	wday := time.weekday(t)
 
 	strings.write_string(&b, DAYS[wday])    // 'Fri, '
-	write_padded_int(&b, day)               // 'Fri, 5'
-	strings.write_string(&b, MONTHS[month]) // 'Fri, 5 Feb '
-	strings.write_int(&b, year)             // 'Fri, 5 Feb 2023'
-	strings.write_byte(&b, ' ')             // 'Fri, 5 Feb 2023 '
-	write_padded_int(&b, hour)              // 'Fri, 5 Feb 2023 09'
-	strings.write_byte(&b, ':')             // 'Fri, 5 Feb 2023 09:'
-	write_padded_int(&b, minute)            // 'Fri, 5 Feb 2023 09:01'
-	strings.write_byte(&b, ':')             // 'Fri, 5 Feb 2023 09:01:'
-	write_padded_int(&b, second)            // 'Fri, 5 Feb 2023 09:01:10'
-	strings.write_string(&b, " GMT")        // 'Fri, 5 Feb 2023 09:01:10 GMT'
+	write_padded_int(&b, day)               // 'Fri, 05'
+	strings.write_string(&b, MONTHS[month]) // 'Fri, 05 Feb '
+	strings.write_int(&b, year)             // 'Fri, 05 Feb 2023'
+	strings.write_byte(&b, ' ')             // 'Fri, 05 Feb 2023 '
+	write_padded_int(&b, hour)              // 'Fri, 05 Feb 2023 09'
+	strings.write_byte(&b, ':')             // 'Fri, 05 Feb 2023 09:'
+	write_padded_int(&b, minute)            // 'Fri, 05 Feb 2023 09:01'
+	strings.write_byte(&b, ':')             // 'Fri, 05 Feb 2023 09:01:'
+	write_padded_int(&b, second)            // 'Fri, 05 Feb 2023 09:01:10'
+	strings.write_string(&b, " GMT")        // 'Fri, 05 Feb 2023 09:01:10 GMT'
 
 	return strings.to_string(b)
+}
+
+parse_date_header :: proc(value: string) -> (t: time.Time, ok: bool) #no_bounds_check {
+	if len(value) != DATE_LENGTH do return
+
+	// Remove 'Fri, '
+	value := value
+	value = value[5:]
+
+	// Parse '05'
+	day := strconv.atoi(value[:2])
+	value = value[2:]
+
+	// Parse ' Feb ' or '-Feb-' (latter is a deprecated format but should still be parsed).
+	month_index := -1
+	month_str := value[1:4]
+	value = value[5:]
+	for month, i in MONTHS[1:] {
+		if month_str == month[1:4] {
+			month_index = i
+			break
+		}
+	}
+	month_index += 1
+	if month_index <= 0 do return
+
+	year := strconv.parse_int(value[:4], 10) or_return
+	value = value[4:]
+
+	hour := strconv.parse_int(value[1:3], 10) or_return
+	value = value[4:]
+
+	minute := strconv.parse_int(value[:2], 10) or_return
+	value = value[3:]
+
+	seconds := strconv.parse_int(value[:2], 10) or_return
+	value = value[3:]
+
+	// Should have only 'GMT' left now.
+	if value != "GMT" do return
+
+	t = time.datetime_to_time(year, month_index, day, hour, minute, seconds) or_return
+	ok = true
+	return
 }
 
 @(private)
