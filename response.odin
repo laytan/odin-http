@@ -69,7 +69,7 @@ response_send :: proc(using r: ^Response, conn: ^Connection, allocator := contex
 
 	if "content-length" not_in headers && response_needs_content_length(r, conn) {
 		buf := make([]byte, 32, allocator)
-		headers["content-length"] = strconv.itoa(buf, bytes.buffer_length(&res))
+		headers["content-length"] = strconv.itoa(buf, bytes.buffer_length(&body))
 	}
 
 	// Per RFC 9910 6.6.1 a Date header must be added in 2xx, 3xx, 4xx responses.
