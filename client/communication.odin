@@ -10,12 +10,10 @@ import "core:strings"
 
 import http ".."
 
-parse_endpoint :: proc(target: string, allocator := context.allocator) -> (url: http.URL, endpoint: net.Endpoint, err: net.Network_Error) {
+parse_endpoint :: proc(target: string) -> (url: http.URL, endpoint: net.Endpoint, err: net.Network_Error) {
 	url = http.url_parse(target)
-
 	host_or_endpoint := net.parse_hostname_or_endpoint(url.host) or_return
 
-	socket: net.TCP_Socket
 	switch t in host_or_endpoint {
 	case net.Endpoint:
 		endpoint = t
@@ -61,11 +59,14 @@ request_path :: proc(target: http.URL, allocator := context.allocator) -> (rq_pa
 
 format_request :: proc(target: http.URL, request: ^Request, allocator := context.allocator) -> (buf: bytes.Buffer) {
 	// Responses are on average at least 100 bytes, so lets start there, but add the body's length.
-	bytes.buffer_init_allocator(&buf, 0, bytes.buffer_length(&buf) + 100, allocator)
+	bytes.buffer_init_allocator(&buf, 0, bytes.buffer_length(&request.body) + 100, allocator)
+
+	rp := request_path(target)
+	defer delete(rp)
 
 	http.requestline_write(http.Requestline{
 		method  = request.method,
-		target  = request_path(target),
+		target  = rp,
 		version = http.Version{1, 1},
 	}, &buf, allocator)
 
@@ -74,8 +75,12 @@ format_request :: proc(target: http.URL, request: ^Request, allocator := context
 		if buf_len == 0 {
 			request.headers["content-length"] = "0"
 		} else {
-			buf := make([]byte, 32, allocator)
-			request.headers["content-length"] = strconv.itoa(buf, buf_len)
+			buf: [32]byte
+			request.headers["content-length"] = strconv.itoa(buf[:], buf_len)
+
+			// Delete the header so it is not pointing to invalid memory after we return.
+			// It is only needed here to write into the buf.
+			defer delete_key(&request.headers, "content-length")
 		}
 	}
 
@@ -97,9 +102,10 @@ format_request :: proc(target: http.URL, request: ^Request, allocator := context
 
 		// Escape newlines in headers, if we don't, an attacker can find an endpoint
 		// that returns a header with user input, and inject headers into the response.
-		esc_value, _ := strings.replace_all(value, "\n", "\\n", allocator)
-		bytes.buffer_write_string(&buf, esc_value)
+		esc_value, was_allocation := strings.replace_all(value, "\n", "\\n", allocator)
+		defer if was_allocation do delete(esc_value)
 
+		bytes.buffer_write_string(&buf, esc_value)
 		bytes.buffer_write_string(&buf, "\r\n")
 	}
 
@@ -172,7 +178,7 @@ parse_response :: proc(socket: net.TCP_Socket, allocator := context.allocator) -
 		// Empty line means end of headers.
 		if line == "" do break
 
-		key, ok := http.header_parse(&res.headers, line)
+		key, ok := http.header_parse(&res.headers, line, allocator)
 		if !ok {
 			err = Request_Error.Invalid_Response_Header
 			return
@@ -180,9 +186,10 @@ parse_response :: proc(socket: net.TCP_Socket, allocator := context.allocator) -
 
 		if key == "set-cookie" {
 			cookie_str := res.headers["set-cookie"]
-			delete_key(&res.headers, "set-cookie")
+			delete_key(&res.headers, key)
+			delete(key)
 
-			cookie, ok := http.cookie_parse(cookie_str)
+			cookie, ok := http.cookie_parse(cookie_str, allocator)
 			if !ok {
 				err = Request_Error.Invalid_Response_Cookie
 				return

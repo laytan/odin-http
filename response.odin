@@ -49,7 +49,7 @@ response_send :: proc(using r: ^Response, conn: ^Connection, allocator := contex
 		case .No_Length, .None: // no-op, request had no body or read succeeded.
 		case:
 			// No error means the body was not read by a handler.
-			_, err := request_body(conn.curr_req, Max_Post_Handler_Discard_Bytes)
+			_, _, err := request_body(conn.curr_req, Max_Post_Handler_Discard_Bytes)
 			switch err {
 			case .Scan_Failed, .Invalid_Length, .Invalid_Trailer_Header, .Too_Long, .Invalid_Chunk_Size:
 				// Any read error should close the connection.
@@ -258,6 +258,9 @@ cookie_string :: proc(using c: Cookie, allocator := context.allocator) -> string
 }
 
 // TODO: check specific whitespace requirements in RFC.
+//
+// Allocations are done to check case-insensitive attributes but they are deleted right after.
+// So, all the returned strings (inside cookie) are slices into the given value string.
 cookie_parse :: proc(value: string, allocator := context.allocator) -> (cookie: Cookie, ok: bool) {
 	value := value
 

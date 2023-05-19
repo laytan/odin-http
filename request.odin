@@ -2,7 +2,6 @@ package http
 
 import "core:bufio"
 import "core:bytes"
-import "core:fmt"
 import "core:log"
 import "core:mem"
 import "core:net"
@@ -71,7 +70,13 @@ Body_Error :: enum {
 	Invalid_Trailer_Header,
 }
 
+// Any non-special body, could have been a chunked body that has been read in fully automatically.
+// Depending on the return value for 'was_allocation' of the parse function, this is either an
+// allocated string that you should delete or a slice into the body.
 Body_Plain :: string
+
+// A URL encoded body, map, keys and values are fully allocated on the allocator given to the parsing function,
+// And should be deleted by you.
 Body_Url_Encoded :: map[string]string
 
 Body_Type :: union {
@@ -91,16 +96,33 @@ body_error_status :: proc(e: Body_Error) -> Status {
 	}
 }
 
+// Frees the memory allocated by parsing the body.
+// was_allocation is returned by the body parsing procedure.
+body_destroy :: proc(body: Body_Type, was_allocation: bool) {
+    switch b in body {
+    case Body_Plain:
+        if was_allocation do delete(b)
+    case Body_Url_Encoded:
+        for k, v in b {
+            delete(k)
+            delete(v)
+        }
+        delete(b)
+    }
+}
+
 // Retrieves the request's body, can only be called once.
-request_body :: proc(req: ^Request, max_length: int = -1) -> (body: Body_Type, err: Body_Error) {
+// Free using body_destroy().
+request_body :: proc(req: ^Request, max_length: int = -1) -> (body: Body_Type, was_allocation: bool, err: Body_Error) {
 	defer req._body_err = err
 	assert(req._body_err == nil)
     return parse_body(&req.headers, &req._body, max_length, req.allocator)
 }
 
 // Meant for internal use, you should use `http.request_body`.
-parse_body :: proc(headers: ^Headers, _body: ^bufio.Scanner, max_length := -1, allocator := context.allocator) -> (body: Body_Type, err: Body_Error) {
+parse_body :: proc(headers: ^Headers, _body: ^bufio.Scanner, max_length := -1, allocator := context.allocator) -> (body: Body_Type, was_allocation: bool, err: Body_Error) {
 	if enc_header, ok := headers["transfer-encoding"]; ok && strings.has_suffix(enc_header, "chunked") {
+        was_allocation = true
 		body = request_body_chunked(headers, _body, max_length, allocator) or_return
 	} else {
 		body = request_body_length(headers, _body, max_length) or_return
@@ -109,8 +131,11 @@ parse_body :: proc(headers: ^Headers, _body: ^bufio.Scanner, max_length := -1, a
 	// Automatically decode url encoded bodies.
 	if typ, ok := headers["content-type"]; ok && typ == "application/x-www-form-urlencoded" {
 		plain := body.(Body_Plain)
+        defer if was_allocation do delete(plain)
 
 		keyvalues := strings.split(plain, "&", allocator)
+        defer delete(keyvalues, allocator)
+
 		queries := make(Body_Url_Encoded, len(keyvalues), allocator)
 		for keyvalue in keyvalues {
 			seperator := strings.index(keyvalue, "=")
@@ -119,8 +144,19 @@ parse_body :: proc(headers: ^Headers, _body: ^bufio.Scanner, max_length := -1, a
 				continue
 			}
 
-			val, decoded_ok := net.percent_decode(keyvalue[seperator + 1:], allocator)
-			queries[keyvalue[:seperator]] = decoded_ok ? val : keyvalue[seperator + 1:]
+            key, key_decoded_ok := net.percent_decode(keyvalue[:seperator], allocator)
+            if !key_decoded_ok {
+                log.warnf("url encoded body key %q could not be decoded", keyvalue[:seperator])
+                continue
+            }
+
+			val, val_decoded_ok := net.percent_decode(keyvalue[seperator + 1:], allocator)
+            if !val_decoded_ok {
+                log.warnf("url encoded body value %q for key %q could not be decoded", keyvalue[seperator+1:], key)
+                continue
+            }
+
+			queries[key] = val
 		}
 
 		body = queries
@@ -193,8 +229,10 @@ request_body_length :: proc(headers: ^Headers, _body: ^bufio.Scanner, max_length
 // Remove Trailer from existing header fields
 request_body_chunked :: proc(headers: ^Headers, _body: ^bufio.Scanner, max_length: int, allocator := context.allocator) -> (body: string, err: Body_Error) {
 	body_buff: bytes.Buffer
-	// Needs to be 1 cap because 0 would not use the allocator provided.
-	bytes.buffer_init_allocator(&body_buff, 0, 1, allocator)
+
+	bytes.buffer_init_allocator(&body_buff, 0, 0, allocator)
+    defer if err != nil do bytes.buffer_destroy(&body_buff)
+
 	for {
 		if !bufio.scanner_scan(_body) {
 			return "", .Scan_Failed
@@ -271,8 +309,6 @@ request_body_chunked :: proc(headers: ^Headers, _body: ^bufio.Scanner, max_lengt
 			delete_key(headers, key)
 		}
 	}
-
-	headers["content-length"] = fmt.tprintf("%i", bytes.buffer_length(&body_buff))
 
 	if "trailer" in headers {
 		delete(headers["trailer"])

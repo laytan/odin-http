@@ -120,7 +120,7 @@ package main
 
 import "core:fmt"
 
-import "../../client" // Change to path of package/client.
+import "../../client"
 
 main :: proc() {
 	get()
@@ -134,11 +134,19 @@ get :: proc() {
 		fmt.printf("Request failed: %s", err)
 		return
 	}
+	defer client.response_destroy(&res)
 
 	fmt.printf("Status: %s\n", res.status)
 	fmt.printf("Headers: %v\n", res.headers)
 	fmt.printf("Cookies: %v\n", res.cookies)
-	fmt.println(client.response_body(&res))
+	body, allocation, berr := client.response_body(&res)
+	if berr != nil {
+		fmt.printf("Error retrieving response body: %s", berr)
+		return
+	}
+	defer client.body_destroy(body, allocation)
+
+	fmt.println(body)
 }
 
 Post_Body :: struct {
@@ -150,10 +158,10 @@ Post_Body :: struct {
 post :: proc() {
 	req: client.Request
 	client.request_init(&req, .Post)
+	defer client.request_destroy(&req)
 
-	body := Post_Body{"Laytan", "Hello, World!"}
-
-	if err := client.with_json(&req, body); err != nil {
+	pbody := Post_Body{"Laytan", "Hello, World!"}
+	if err := client.with_json(&req, pbody); err != nil {
 		fmt.printf("JSON error: %s", err)
 		return
 	}
@@ -163,11 +171,20 @@ post :: proc() {
 		fmt.printf("Request failed: %s", err)
 		return
 	}
+	defer client.response_destroy(&res)
 
 	fmt.printf("Status: %s\n", res.status)
 	fmt.printf("Headers: %v\n", res.headers)
 	fmt.printf("Cookies: %v\n", res.cookies)
-	fmt.println(client.response_body(&res))
+
+	body, allocation, berr := client.response_body(&res)
+	if berr != nil {
+		fmt.printf("Error retrieving response body: %s", berr)
+		return
+	}
+	defer client.body_destroy(body, allocation)
+
+	fmt.println(body)
 }
 ```
 

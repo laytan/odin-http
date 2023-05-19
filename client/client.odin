@@ -21,10 +21,19 @@ request_init :: proc(r: ^Request, method := http.Method.Get, allocator := contex
 	r.method = method
 	r.headers = make(http.Headers, 3, allocator)
 	r.cookies = make([dynamic]http.Cookie, allocator)
-	bytes.buffer_init_allocator(&r.body, 0, 100, allocator)
+	bytes.buffer_init_allocator(&r.body, 0, 0, allocator)
 }
 
-with_json :: proc(r: ^Request, v: any, allocator := context.allocator, opt: json.Marshal_Options = {}) -> json.Marshal_Error {
+// Destroys the request.
+// Header keys and values that the user added will have to be deleted by the user.
+// Same with any strings inside the cookies.
+request_destroy :: proc(r: ^Request) {
+	delete(r.headers)
+	delete(r.cookies)
+	bytes.buffer_destroy(&r.body)
+}
+
+with_json :: proc(r: ^Request, v: any, opt: json.Marshal_Options = {}) -> json.Marshal_Error {
 	r.method = .Post
 	r.headers["content-type"] = http.mime_to_content_type(.Json)
 
@@ -34,9 +43,12 @@ with_json :: proc(r: ^Request, v: any, allocator := context.allocator, opt: json
 	return nil
 }
 
-get :: proc(target: string) -> (Response, Error) {
-    req := Request{method = .Get}
-	return request(target, &req)
+get :: proc(target: string, allocator := context.allocator) -> (Response, Error) {
+	r: Request
+	request_init(&r, .Get, allocator)
+	defer request_destroy(&r)
+
+	return request(target, &r, allocator)
 }
 
 Request_Error :: enum {
@@ -57,7 +69,8 @@ Error :: union {
 // TODO: max response-line and header lengths.
 // TODO: think about memory.
 request :: proc(target: string, request: ^Request, allocator := context.allocator) -> (res: Response, err: Error) {
-	url, endpoint := parse_endpoint(target, allocator) or_return
+	url, endpoint := parse_endpoint(target) or_return
+	defer delete(url.queries)
 
 	socket := net.dial_tcp(endpoint) or_return
 
@@ -65,35 +78,53 @@ request :: proc(target: string, request: ^Request, allocator := context.allocato
 	request.headers["connection"] = "close"
 
 	req_buf := format_request(url, request, allocator)
+	defer bytes.buffer_destroy(&req_buf)
 	net.send_tcp(socket, bytes.buffer_to_bytes(&req_buf)) or_return
 
 	return parse_response(socket, allocator)
-
 }
 
 Response :: struct {
 	status:    http.Status,
+	// headers and cookies should be considered read-only, after a response is returned.
 	headers:   http.Headers,
 	cookies:   [dynamic]http.Cookie,
-
 	_socket:   net.TCP_Socket,
 	_body:     bufio.Scanner,
 	_body_err: http.Body_Error,
 }
 
-// Closes the request, this is automatically called if you call `response_body`.
-// But if you don't, you can call this.
-close :: proc(res: ^Response) {
-	if res._socket == 0 do return
+// Frees the response, closes the connection.
+// Optionally pass the response_body returned 'body' and 'was_allocation' to destroy it too.
+response_destroy :: proc(res: ^Response, body: Maybe(http.Body_Type) = nil, was_allocation := false) {
+	// Header keys are allocated, values are slices into the body.
+	for k in res.headers {
+		delete(k)
+	}
+	delete(res.headers)
+
+	bufio.scanner_destroy(&res._body)
+
+	// Cookies only contain slices to memory inside the scanner body.
+	// So just deleting the array will be enough.
+	delete(res.cookies)
+
+	if body != nil {
+		body_destroy(body.(http.Body_Type), was_allocation)
+	}
+
+	// We close now and not at the time we got the response because reading the body,
+	// could make more reads need to happen (like with chunked encoding).
 	net.close(res._socket)
-	res._socket = 0
 }
 
+body_destroy :: http.body_destroy
+
 // Retrieves the response's body, can only be called once.
-response_body :: proc(res: ^Response, max_length := -1, allocator := context.allocator) -> (body: http.Body_Type, err: http.Body_Error) {
+// Free the returned body using body_destroy().
+response_body :: proc(res: ^Response, max_length := -1, allocator := context.allocator) -> (body: http.Body_Type, was_allocation: bool, err: http.Body_Error) {
 	defer res._body_err = err
 	assert(res._body_err == nil)
-    body, err = http.parse_body(&res.headers, &res._body, max_length, allocator)
-	close(res) // There is nothing left to do with the connection (everything is read), we can close.
+    body, was_allocation, err = http.parse_body(&res.headers, &res._body, max_length, allocator)
 	return
 }

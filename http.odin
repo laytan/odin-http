@@ -52,12 +52,15 @@ requestline_parse :: proc(s: string, allocator := context.allocator) -> (
 }
 
 requestline_write :: proc(rline: Requestline, buf: ^bytes.Buffer, allocator := context.allocator) {
-	bytes.buffer_write_string(buf, method_string(rline.method))              // <METHOD>
-	bytes.buffer_write_byte(buf, ' ')                                        // <METHOD> <SP>
-	bytes.buffer_write_string(buf, rline.target)                             // <METHOD> <SP> <TARGET>
-	bytes.buffer_write_byte(buf, ' ')                                        // <METHOD> <SP> <TARGET> <SP>
-	bytes.buffer_write_string(buf, version_string(rline.version, allocator)) // <METHOD> <SP> <TARGET> <SP> <VERSION>
-	bytes.buffer_write_string(buf, "\r\n")                                   // <METHOD> <SP> <TARGET> <SP> <VERSION> <CRLF>
+	version := version_string(rline.version, allocator)
+	defer delete(version)
+
+	bytes.buffer_write_string(buf, method_string(rline.method)) // <METHOD>
+	bytes.buffer_write_byte(buf, ' ')                           // <METHOD> <SP>
+	bytes.buffer_write_string(buf, rline.target)                // <METHOD> <SP> <TARGET>
+	bytes.buffer_write_byte(buf, ' ')                           // <METHOD> <SP> <TARGET> <SP>
+	bytes.buffer_write_string(buf, version)                     // <METHOD> <SP> <TARGET> <SP> <VERSION>
+	bytes.buffer_write_string(buf, "\r\n")                      // <METHOD> <SP> <TARGET> <SP> <VERSION> <CRLF>
 }
 
 Version :: struct {
@@ -125,7 +128,6 @@ method_string :: proc(m: Method) -> string {
 // Thus, you should always add keys in lowercase.
 Headers :: map[string]string
 
-// TODO: shoudn't this copy the strings, we are using a scanner which overwrites its buffer right?
 header_parse :: proc(headers: ^Headers, line: string, allocator := context.allocator) -> (key: string, ok: bool) {
 	// Preceding spaces should not be allowed.
 	(len(line) > 0 && line[0] != ' ') or_return
@@ -138,6 +140,8 @@ header_parse :: proc(headers: ^Headers, line: string, allocator := context.alloc
 
 	// Header field names are case-insensitive, so lets represent them all in lowercase.
 	key = strings.to_lower(line[:colon], allocator)
+	defer if !ok do delete(key)
+
 	value := strings.trim_space(line[colon + 1:])
 	(len(value) > 0) or_return
 
