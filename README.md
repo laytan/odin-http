@@ -98,7 +98,7 @@ static :: proc(req: ^http.Request, res: ^http.Response) {
 }
 
 post_ping :: proc(req: ^http.Request, res: ^http.Response) {
-	body, err := http.request_body(req, len("ping"))
+	body, _, err := http.request_body(req, len("ping"))
 	if err != nil {
 		res.status = http.body_error_status(err)
 		return

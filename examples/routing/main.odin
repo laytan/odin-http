@@ -47,7 +47,7 @@ main :: proc() {
 
 	// JSON/body example.
 	http.route_post(&router, "/ping", http.handler(proc(req: ^http.Request, res: ^http.Response) {
-			body, err := http.request_body(req)
+			body, _, err := http.request_body(req)
 			if err != nil {
 				log.infof("invalid ping payload %q: %s", body, err)
 				res.status = http.Status.Unprocessable_Content
