@@ -70,7 +70,7 @@ cookies :: proc(req: ^http.Request, res: ^http.Response) {
 }
 
 api :: proc(req: ^http.Request, res: ^http.Response) {
-	if err := http.respond_json(res, req.line, req.allocator); err != nil {
+	if err := http.respond_json(res, req.line); err != nil {
 		log.errorf("could not respond with JSON: %s", err)
 	}
 }

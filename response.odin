@@ -3,6 +3,7 @@ package http
 import "core:bytes"
 import "core:net"
 import "core:os"
+import "core:io"
 import "core:path/filepath"
 import "core:strings"
 import "core:encoding/json"
@@ -171,16 +172,14 @@ respond_dir :: proc(using r: ^Response, base, target, request: string, allocator
 }
 
 // Sets the response to one that returns the JSON representation of the given value.
-respond_json :: proc(
-	using r: ^Response,
-	v: any,
-	allocator := context.allocator,
-	opt: json.Marshal_Options = {},
-) -> json.Marshal_Error {
-	bs := json.marshal(v, opt, allocator) or_return
+respond_json :: proc(using r: ^Response, v: any, opt: json.Marshal_Options = {}) -> json.Marshal_Error {
+	stream := bytes.buffer_to_stream(&r.body)
+	opt := opt
+	json.marshal_to_writer(io.to_writer(stream), v, &opt) or_return
+
 	status = .Ok
-	bytes.buffer_write(&body, bs)
 	headers["content-type"] = mime_to_content_type(Mime_Type.Json)
+
 	return nil
 }
 
