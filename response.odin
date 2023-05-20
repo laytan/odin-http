@@ -67,14 +67,20 @@ response_send :: proc(using r: ^Response, conn: ^Connection, allocator := contex
 	bytes.buffer_write_string(&res, status_string(status))
 	bytes.buffer_write_string(&res, "\r\n")
 
-	if "content-length" not_in headers && response_needs_content_length(r, conn) {
-		buf := make([]byte, 32, allocator)
-		headers["content-length"] = strconv.itoa(buf, bytes.buffer_length(&body))
-	}
-
 	// Per RFC 9910 6.6.1 a Date header must be added in 2xx, 3xx, 4xx responses.
 	if status >= .Ok && status <= .Internal_Server_Error && "date" not_in headers {
 		headers["date"] = format_date_header(time.now(), allocator)
+	}
+
+	// Write the status code as the body, if there is no body set by the handlers.
+	if response_can_have_body(r, conn) && !status_success(status) && bytes.buffer_length(&body) == 0 {
+		bytes.buffer_write_string(&body, status_string(status))
+		headers["content-type"] = mime_to_content_type(.Plain)
+	}
+
+	if "content-length" not_in headers && response_needs_content_length(r, conn) {
+		buf := make([]byte, 32, allocator)
+		headers["content-length"] = strconv.itoa(buf, bytes.buffer_length(&body))
 	}
 
 	for header, value in headers {
@@ -92,13 +98,6 @@ response_send :: proc(using r: ^Response, conn: ^Connection, allocator := contex
 	for cookie in cookies {
 		bytes.buffer_write_string(&res, cookie_string(cookie))
 		bytes.buffer_write_string(&res, "\r\n")
-	}
-
-	// Write the status code as the body, if there is no body set by the handlers.
-	if response_can_have_body(r, conn) &&
-	   !status_success(status) &&
-	   bytes.buffer_length(&body) == 0 {
-		bytes.buffer_write_string(&body, status_string(status))
 	}
 
 	// Empty line denotes end of headers and start of body.
