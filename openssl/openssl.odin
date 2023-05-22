@@ -2,9 +2,16 @@ package openssl
 
 import "core:c"
 
-foreign import lib {
-	"./includes/libssl.a",
-	"./includes/libcrypto.a",
+when ODIN_OS == .Darwin {
+	foreign import lib {
+		"./includes/libssl.a",
+		"./includes/libcrypto.a",
+	}
+} else {
+	foreign import lib {
+		"system:libssl",
+		"system:libcrypto",
+	}
 }
 
 SSL_METHOD :: struct {}
