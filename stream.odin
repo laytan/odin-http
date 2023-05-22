@@ -3,6 +3,9 @@ package http
 import "core:io"
 import "core:net"
 import "core:log"
+import "core:c"
+
+import "openssl"
 
 // Wraps a tcp socket with a stream.
 tcp_stream :: proc(sock: net.TCP_Socket) -> (s: io.Stream) {
@@ -35,5 +38,24 @@ _socket_stream_vtable := io.Stream_VTable {
 			assert(false, "recv_tcp only returns TCP_Recv_Error or nil")
 		}
 		return
+	},
+}
+
+ssl_tcp_stream :: proc(sock: ^openssl.SSL) -> (s: io.Stream) {
+	s.stream_data = sock
+	s.stream_vtable = &_ssl_stream_vtable
+	return s
+}
+
+@(private)
+_ssl_stream_vtable := io.Stream_VTable {
+	impl_read = proc(s: io.Stream, p: []byte) -> (n: int, err: io.Error) {
+		ssl := cast(^openssl.SSL)s.stream_data
+		ret := openssl.SSL_read(ssl, raw_data(p), c.int(len(p)))
+		if ret <= 0 {
+			return 0, .Unexpected_EOF
+		}
+
+		return int(ret), nil
 	},
 }

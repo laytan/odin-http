@@ -6,8 +6,10 @@ import "core:bytes"
 import "core:encoding/json"
 import "core:io"
 import "core:net"
+import "core:c"
 
 import http ".."
+import openssl "../openssl"
 
 Request :: struct {
 	method:  http.Method,
@@ -58,29 +60,72 @@ Request_Error :: enum {
 	Invalid_Response_Cookie,
 }
 
+SSL_Error :: enum {
+	Controlled_Shutdown,
+	Fatal_Shutdown,
+	SSL_Write_Failed,
+}
+
 Error :: union {
 	net.Dial_Error,
 	net.Parse_Endpoint_Error,
 	net.Network_Error,
 	bufio.Scanner_Error,
 	Request_Error,
+	SSL_Error,
 }
 
-// TODO: max response-line and header lengths.
-// TODO: think about memory.
 request :: proc(target: string, request: ^Request, allocator := context.allocator) -> (res: Response, err: Error) {
 	url, endpoint := parse_endpoint(target) or_return
 	defer delete(url.queries)
-
-	socket := net.dial_tcp(endpoint) or_return
 
 	// NOTE: we don't support persistent connections yet.
 	request.headers["connection"] = "close"
 
 	req_buf := format_request(url, request, allocator)
 	defer bytes.buffer_destroy(&req_buf)
-	net.send_tcp(socket, bytes.buffer_to_bytes(&req_buf)) or_return
 
+	socket := net.dial_tcp(endpoint) or_return
+
+	// HTTPS using openssl.
+	if url.scheme == "https" {
+		using openssl
+
+		ctx := SSL_CTX_new(TLS_client_method())
+		ssl := SSL_new(ctx)
+		SSL_set_fd(ssl, c.int(socket))
+
+		switch SSL_connect(ssl) {
+		case 2:
+			err = SSL_Error.Controlled_Shutdown
+			return
+		case 1: // success
+		case:
+			err = SSL_Error.Fatal_Shutdown
+			return
+		}
+
+		buf := bytes.buffer_to_bytes(&req_buf)
+		to_write := len(buf)
+		for to_write > 0 {
+			ret := SSL_write(ssl, raw_data(buf), c.int(to_write))
+			if ret <= 0 {
+				err = SSL_Error.SSL_Write_Failed
+				return
+			}
+
+			to_write -= int(ret)
+		}
+
+		return parse_response(SSL_Communication{
+			ssl    = ssl,
+			ctx    = ctx,
+			socket = socket,
+		}, allocator)
+	}
+
+	// HTTP, just send the request.
+	net.send_tcp(socket, bytes.buffer_to_bytes(&req_buf)) or_return
 	return parse_response(socket, allocator)
 }
 
@@ -89,7 +134,7 @@ Response :: struct {
 	// headers and cookies should be considered read-only, after a response is returned.
 	headers:   http.Headers,
 	cookies:   [dynamic]http.Cookie,
-	_socket:   net.TCP_Socket,
+	_socket:   Communication,
 	_body:     bufio.Scanner,
 	_body_err: http.Body_Error,
 }
@@ -115,7 +160,14 @@ response_destroy :: proc(res: ^Response, body: Maybe(http.Body_Type) = nil, was_
 
 	// We close now and not at the time we got the response because reading the body,
 	// could make more reads need to happen (like with chunked encoding).
-	net.close(res._socket)
+	switch comm in res._socket {
+	case net.TCP_Socket:
+		net.close(comm)
+	case SSL_Communication:
+		openssl.SSL_free(comm.ssl)
+		openssl.SSL_CTX_free(comm.ctx)
+		net.close(comm.socket)
+	}
 }
 
 body_destroy :: http.body_destroy

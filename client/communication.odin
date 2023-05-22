@@ -9,6 +9,7 @@ import "core:strconv"
 import "core:strings"
 
 import http ".."
+import openssl "../openssl"
 
 parse_endpoint :: proc(target: string) -> (url: http.URL, endpoint: net.Endpoint, err: net.Network_Error) {
 	url = http.url_parse(target)
@@ -21,7 +22,11 @@ parse_endpoint :: proc(target: string) -> (url: http.URL, endpoint: net.Endpoint
 	case net.Host:
 		ep4, ep6 := net.resolve(t.hostname) or_return
 		endpoint = ep4 if ep4.address != nil else ep6
-		endpoint.port = t.port == 0 ? 80 : t.port
+
+		endpoint.port = t.port
+		if endpoint.port == 0 {
+			endpoint.port = url.scheme == "https" ? 443 : 80
+		}
 		return
 	case: panic("unreachable")
 	}
@@ -132,10 +137,26 @@ format_request :: proc(target: http.URL, request: ^Request, allocator := context
 	return
 }
 
-parse_response :: proc(socket: net.TCP_Socket, allocator := context.allocator) -> (res: Response, err: Error) {
+SSL_Communication :: struct {
+	socket: net.TCP_Socket,
+	ssl:    ^openssl.SSL,
+	ctx:    ^openssl.SSL_CTX,
+}
+
+Communication :: union {
+	net.TCP_Socket,    // HTTP.
+	SSL_Communication, // HTTPS.
+}
+
+parse_response :: proc(socket: Communication, allocator := context.allocator) -> (res: Response, err: Error) {
 	res._socket = socket
 
-	stream := http.tcp_stream(socket)
+	stream: io.Stream
+	switch comm in socket {
+	case net.TCP_Socket:    stream = http.tcp_stream(comm)
+	case SSL_Communication: stream = http.ssl_tcp_stream(comm.ssl)
+	}
+
 	stream_reader := io.to_reader(stream)
 	scanner: bufio.Scanner
 	bufio.scanner_init(&scanner, stream_reader, allocator)
