@@ -143,7 +143,6 @@ header_parse :: proc(headers: ^Headers, line: string, allocator := context.alloc
 	defer if !ok do delete(key)
 
 	value := strings.trim_space(line[colon + 1:])
-	(len(value) > 0) or_return
 
 	// RFC 7230 5.4: Server MUST respond with 400 to any request
 	// with multiple "Host" header fields.
