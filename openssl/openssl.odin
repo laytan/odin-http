@@ -9,8 +9,8 @@ when ODIN_OS == .Darwin {
 	}
 } else {
 	foreign import lib {
-		"system:libssl",
-		"system:libcrypto",
+		"system:libssl.a",
+		"system:libcrypto.a",
 	}
 }
 
