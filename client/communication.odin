@@ -80,12 +80,8 @@ format_request :: proc(target: http.URL, request: ^Request, allocator := context
 		if buf_len == 0 {
 			request.headers["content-length"] = "0"
 		} else {
-			buf: [32]byte
-			request.headers["content-length"] = strconv.itoa(buf[:], buf_len)
-
-			// Delete the header so it is not pointing to invalid memory after we return.
-			// It is only needed here to write into the buf.
-			defer delete_key(&request.headers, "content-length")
+			buf := make([]byte, 32, allocator) // TODO: is this leaking?
+			request.headers["content-length"] = strconv.itoa(buf, buf_len)
 		}
 	}
 
