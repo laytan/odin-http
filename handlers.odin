@@ -60,8 +60,8 @@ middleware_logger :: proc(next: Maybe(^Handler), opts: ^Logger_Opts = nil) -> Ha
 			method_str := method_string(rline.method)
 			switch opts.log_time {
 			case true:
-				durqs := time.duration_microseconds(time.tick_since(start))
-				log.infof("[%i|%.1fqs] %s %s", res.status, durqs, method_str, rline.target)
+				dur := time.tick_since(start)
+				log.infof("[%i|%v] %s %s", res.status, dur, method_str, rline.target)
 			case:
 				log.infof("[%i] %s %s", res.status, method_str, rline.target)
 			}
