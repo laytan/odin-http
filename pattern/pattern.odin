@@ -7,6 +7,7 @@ package pattern
 import "core:mem"
 import "core:strings"
 import "core:bytes"
+import "core:log"
 
 // Find matches the pattern against source.
 //
@@ -93,23 +94,61 @@ find :: proc(src, pattern: string, allocator := context.allocator) -> (
 	return false, -1, -1, nil, nil
 }
 
-// TODO: can this return something like an iterator?
-gmatch :: proc(src, pattern: string, allocator := context.allocator) -> (matches: [dynamic][dynamic]string, err: Pattern_Error) {
-	matches = make([dynamic][dynamic]string, allocator)
-	start: int
-	for {
-		ok, s, e, captures := find(src[start:], pattern, allocator) or_return
-		if !ok do break
+@(private)
+GmatchIterData :: struct {
+	src:       string,
+	pattern:   string,
+	allocator: mem.Allocator,
+	start:     int,
+	captures:  []string,
+}
 
-		mcaps := make([dynamic]string, len(captures) + 1, allocator)
-		mcaps[0] = src[s:e]
-		for cap, i in captures do mcaps[i + 1] = cap
-		delete(captures)
-		append(&matches, mcaps)
-		start += e
+@(private="file")
+@(thread_local)
+data: GmatchIterData
+
+// Globally match the pattern in the given string, instead of returning after the first match (like find).
+// An iterator is returned, for example:
+//
+// for match in pattern.gmatch("hello", "(l)")() {
+//    // i == 0, match == "l"
+//    // i == 1, match == "l"
+// }
+gmatch :: proc(src, pattern: string, allocator := context.allocator) -> (proc() -> (match: string, ok: bool)) {
+	data.allocator = allocator
+	data.src = src
+	data.pattern = pattern
+
+	return proc() -> (match: string, ok: bool) {
+		if len(data.captures) > 0 {
+			data.captures = data.captures[1:]
+			return data.captures[0], true
+		}
+
+		found, s, e, captures, err := find(data.src[data.start:], data.pattern, data.allocator)
+		if err != nil {
+			log.error(err)
+			if data.captures != nil {
+				delete(data.captures, data.allocator)
+			}
+			return
+		}
+		if !found {
+			if data.captures != nil {
+				delete(data.captures, data.allocator)
+			}
+			return
+		}
+
+		data.start += e
+
+		if data.captures != nil {
+			delete(data.captures, data.allocator)
+		}
+		data.captures = captures[1:]
+
+		return captures[0], true
 	}
-
-	return
 }
 
 // Escapes any special characters in val so that it is literally matched if used in a pattern.
@@ -134,7 +173,7 @@ replace :: proc(src, pattern, replacement: string, allocator := context.allocato
 }
 
 // Same as replace but replaces all matches instead of one.
-replace_all :: proc( src, pattern, replacement: string, allocator := context.allocator) -> (
+replace_all :: proc(src, pattern, replacement: string, allocator := context.allocator) -> (
 	result: string,
 	replaced: int,
 	err: Pattern_Error,
