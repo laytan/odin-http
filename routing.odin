@@ -5,7 +5,7 @@ import "core:net"
 import "core:strings"
 import "core:runtime"
 
-import "pattern"
+import "pkg/pattern"
 
 URL :: struct {
 	raw:     string, // All other fields are views/slices into this string.
