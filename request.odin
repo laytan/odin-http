@@ -195,7 +195,7 @@ request_body_length :: proc(headers: ^Headers, _body: ^bufio.Scanner, max_length
 	_body.split = scan_num_bytes
 	defer _body.split = bufio.scan_lines
 
-	log.infof("scanning %i bytes body", ilen)
+	log.debugf("scanning %i bytes body", ilen)
 
 	if !bufio.scanner_scan(_body) {
 		return "", .Scan_Failed
