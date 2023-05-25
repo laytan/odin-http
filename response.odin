@@ -21,9 +21,7 @@ response_init :: proc(r: ^Response, allocator := context.allocator) {
 	r.status = .NotFound
 	r.headers = make(Headers, 3, allocator)
 	r.headers["server"] = "Odin"
-	// NOTE: need to be at least 1 capacity so the given allocator gets used.
-	// TODO: report bug in Odin.
-	bytes.buffer_init_allocator(&r.body, 0, 1, allocator)
+	bytes.buffer_init_allocator(&r.body, 0, 0, allocator)
 }
 
 // Sends the response over the connection.
