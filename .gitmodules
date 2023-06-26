@@ -1,3 +1,0 @@
-[submodule "pkg/pattern"]
-	path = pkg/pattern
-	url = https://github.com/laytan/odin-pattern

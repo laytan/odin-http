@@ -4,8 +4,7 @@ import "core:log"
 import "core:net"
 import "core:strings"
 import "core:runtime"
-
-import "pkg/pattern"
+import "core:text/match"
 
 URL :: struct {
 	raw:     string, // All other fields are views/slices into this string.
@@ -203,15 +202,24 @@ route_add :: proc(router: ^Router, method: Method, route: Route) {
 }
 
 @(private)
+@(thread_local)
+routes_try_captures: [match.MAX_CAPTURES]match.Match
+
+@(private)
 routes_try :: proc(routes: [dynamic]Route, req: ^Request, res: ^Response) -> bool {
 	for route in routes {
-		ok, _, _, captures, err := pattern.find(req.url.path, route.pattern, req.allocator)
-		if err != nil {
-			log.errorf("pattern %q is invalid, reason: %s", route.pattern, err)
+		n, err := match.find_aux(req.url.path, route.pattern, 0, true, &routes_try_captures)
+		if err != .OK {
+			log.errorf("Error matching route: %v", err)
 			continue
 		}
 
-		if ok {
+		if n > 0 {
+			captures := make([]string, n-1)
+			for cap, i in routes_try_captures[1:n] {
+				captures[i] = req.url.path[cap.byte_start:cap.byte_end]
+			}
+
 			req.url_params = captures
 			rh := route.handler
 			rh.handle(&rh, req, res)
