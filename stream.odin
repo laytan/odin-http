@@ -26,6 +26,8 @@ _socket_stream_proc :: proc(
 	err: io.Error,
 ) {
 	#partial switch mode {
+	case .Query:
+		return io.query_utility(io.Stream_Mode_Set{.Query, .Read})
 	case .Read:
 		sock := net.TCP_Socket(uintptr(stream_data))
 		received, recv_err := net.recv_tcp(sock, p)
@@ -72,6 +74,8 @@ _ssl_stream_proc :: proc(
 	err: io.Error,
 ) {
 	#partial switch mode {
+	case .Query:
+		return io.query_utility(io.Stream_Mode_Set{.Query, .Read})
 	case .Read:
 		ssl := cast(^openssl.SSL)stream_data
 		ret := openssl.SSL_read(ssl, raw_data(p), c.int(len(p)))
