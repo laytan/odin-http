@@ -9,18 +9,29 @@ import "openssl"
 
 // Wraps a tcp socket with a stream.
 tcp_stream :: proc(sock: net.TCP_Socket) -> (s: io.Stream) {
-	s.stream_data = rawptr(uintptr(sock))
-	s.stream_vtable = &_socket_stream_vtable
+	s.data = rawptr(uintptr(sock))
+	s.procedure = _socket_stream_proc
 	return s
 }
 
 @(private)
-_socket_stream_vtable := io.Stream_VTable {
-	impl_read = proc(s: io.Stream, p: []byte) -> (n: int, err: io.Error) {
-		sock := net.TCP_Socket(uintptr(s.stream_data))
-		read, e := net.recv_tcp(sock, p)
-		n = read
-		#partial switch ex in e {
+_socket_stream_proc :: proc(
+	stream_data: rawptr,
+	mode: io.Stream_Mode,
+	p: []byte,
+	offset: i64,
+	whence: io.Seek_From,
+) -> (
+	n: i64,
+	err: io.Error,
+) {
+	#partial switch mode {
+	case .Read:
+		sock := net.TCP_Socket(uintptr(stream_data))
+		received, recv_err := net.recv_tcp(sock, p)
+		n = i64(received)
+
+		#partial switch ex in recv_err {
 		case net.TCP_Recv_Error:
 			#partial switch ex {
 			case .None:
@@ -37,25 +48,40 @@ _socket_stream_vtable := io.Stream_VTable {
 		case:
 			assert(false, "recv_tcp only returns TCP_Recv_Error or nil")
 		}
-		return
-	},
+	case:
+		err = .Empty
+	}
+	return
 }
 
 ssl_tcp_stream :: proc(sock: ^openssl.SSL) -> (s: io.Stream) {
-	s.stream_data = sock
-	s.stream_vtable = &_ssl_stream_vtable
+	s.data = sock
+	s.procedure = _ssl_stream_proc
 	return s
 }
 
 @(private)
-_ssl_stream_vtable := io.Stream_VTable {
-	impl_read = proc(s: io.Stream, p: []byte) -> (n: int, err: io.Error) {
-		ssl := cast(^openssl.SSL)s.stream_data
+_ssl_stream_proc :: proc(
+	stream_data: rawptr,
+	mode: io.Stream_Mode,
+	p: []byte,
+	offset: i64,
+	whence: io.Seek_From,
+) -> (
+	n: i64,
+	err: io.Error,
+) {
+	#partial switch mode {
+	case .Read:
+		ssl := cast(^openssl.SSL)stream_data
 		ret := openssl.SSL_read(ssl, raw_data(p), c.int(len(p)))
 		if ret <= 0 {
 			return 0, .Unexpected_EOF
 		}
 
-		return int(ret), nil
-	},
+		return i64(ret), nil
+	case:
+		err = .Empty
+	}
+	return
 }
