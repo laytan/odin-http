@@ -1,2 +1,4 @@
 *.bin
 ols.json
+opm
+Taskfile.yml
