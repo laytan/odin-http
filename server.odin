@@ -1,12 +1,10 @@
 package http
 
 import "core:net"
-import "core:io"
 import "core:bufio"
 import "core:log"
 import "core:time"
 import "core:thread"
-import "core:sync"
 import "core:mem"
 import "core:mem/virtual"
 import "core:runtime"
@@ -48,6 +46,11 @@ Server :: struct {
 	conn_allocator: mem.Allocator,
 	conns:          map[net.TCP_Socket]^Connection,
 	shutting_down:  bool,
+	shut_down:      bool,
+	handler:        Handler,
+
+	// Implementation(OS) specific data.
+	impl_data:      rawptr,
 }
 
 Default_Endpoint := net.Endpoint {
@@ -57,10 +60,12 @@ Default_Endpoint := net.Endpoint {
 
 listen_and_serve :: proc(
 	s: ^Server,
-	h: ^Handler,
+	h: Handler,
 	endpoint: net.Endpoint = Default_Endpoint,
 	opts: Server_Opts = Default_Server_Opts,
-) -> (err: net.Network_Error) {
+) -> (
+	err: net.Network_Error,
+) {
 	server_listen(s, endpoint, opts) or_return
 	return server_serve(s, h)
 }
@@ -69,68 +74,21 @@ server_listen :: proc(
 	s: ^Server,
 	endpoint: net.Endpoint = Default_Endpoint,
 	opts: Server_Opts = Default_Server_Opts,
-) -> (err: net.Network_Error) {
+) -> (
+	err: net.Network_Error,
+) {
 	s.opts = opts
 	s.tcp_sock, err = net.listen_tcp(endpoint)
 	return
 }
 
-server_serve :: proc(using s: ^Server, handler: ^Handler) -> net.Network_Error {
+server_serve :: proc(s: ^Server, handler: Handler) -> net.Network_Error {
+	s.handler = handler
+
 	// Save allocator so we can free connections later.
-	conn_allocator = context.allocator
+	s.conn_allocator = context.allocator
 
-	for {
-		// Don't accept more connections when we are shutting down,
-		// but we don't want to return yet, this way users can wait for this
-		// proc to return as well as the shutdown proc.
-		if shutting_down {
-			time.sleep(SHUTDOWN_INTERVAL)
-			continue
-		}
-
-		c := new(Connection, conn_allocator)
-		c.state = .Pending
-		c.server = s
-		c.handler = handler
-		c.socket_mu = sync.Mutex{}
-		sync.mutex_lock(&c.socket_mu)
-
-		// Each connection has its own thread. This has to be the case because
-		// sockets are blocking in the 'net' package of Odin.
-		//
-		// We use the mutex so we can start a thread before accepting the connection,
-		// this way, the first request of a connection does not have to wait for
-		// the thread to spin up.
-		c.thread = thread.create_and_start_with_poly_data(
-			c,
-			proc(c: ^Connection) {
-				// Will block until main thread unlocks the mutex, indicating a connection is ready.
-				sync.mutex_lock(&c.socket_mu)
-
-				c.state = .New
-				if err := conn_handle_reqs(c); err != nil {
-					log.errorf("connection error: %s", err)
-				}
-			},
-			context,
-		)
-
-		socket, client, err := net.accept_tcp(s.tcp_sock)
-		if err != nil {
-			free(c.thread)
-			free(c)
-			return err
-		}
-
-		c.socket = socket
-		c.client = client
-
-		log.infof("new connection with %v, got %i open connections", client.address, len(conns))
-
-		conns[socket] = c
-
-		sync.mutex_unlock(&c.socket_mu)
-	}
+	return _server_serve(s)
 }
 
 // The time between checks and closes of connections in a graceful shutdown.
@@ -149,7 +107,8 @@ SHUTDOWN_INTERVAL :: time.Millisecond * 100
 // 5. Signal 'server_start' it can return.
 server_shutdown :: proc(using s: ^Server) {
 	shutting_down = true
-	defer shutting_down = false // causes 'server_start' to return.
+	defer shutting_down = false
+	defer shut_down = true
 	defer delete(conns)
 
 	for {
@@ -175,6 +134,9 @@ server_shutdown :: proc(using s: ^Server) {
 	}
 
 	net.close(tcp_sock)
+
+	_server_shutdown(s)
+
 	log.info("shutdown: done")
 }
 
@@ -216,9 +178,10 @@ server_shutdown_on_interrupt :: proc(using s: ^Server) {
 
 @(private)
 server_on_connection_close :: proc(using s: ^Server, c: ^Connection) {
-	free(c.thread, conn_allocator)
 	free(c, conn_allocator)
 	delete_key(&s.conns, c.socket)
+
+	_server_on_conn_close(s, c)
 }
 
 
@@ -235,22 +198,21 @@ Conn_Close_Delay :: time.Millisecond * 500
 
 Connection_State :: enum {
 	Pending, // Pending a client to attach.
-	New,     // Got client, waiting to service first request.
-	Active,  // Servicing request.
-	Idle,    // Waiting for next request.
+	New, // Got client, waiting to service first request.
+	Active, // Servicing request.
+	Idle, // Waiting for next request.
 	Closing, // Going to close, cleaning up.
-	Closed,  // Fully closed.
+	Closed, // Fully closed.
 }
 
 Connection :: struct {
 	server:    ^Server,
-	socket_mu: sync.Mutex,
 	socket:    net.TCP_Socket,
 	client:    net.Endpoint,
 	curr_req:  ^Request,
-	handler:   ^Handler,
 	state:     Connection_State,
-	thread:    ^thread.Thread,
+	scanner:   Scanner,
+	impl_data: rawptr,
 }
 
 // RFC 7230 6.6.
@@ -279,17 +241,9 @@ connection_close :: proc(c: ^Connection) {
 	server_on_connection_close(c.server, c)
 }
 
-// Calls handler for each of the requests coming in.
-// Everything is allocated in a memory arena for that request, and freed at the end of the request.
-// If you need to keep data from either the Request or Response, you need to clone it.
-conn_handle_reqs :: proc(c: ^Connection) -> net.Network_Error {
-	// Make sure the connection is closed when we are returning.
-	defer if c.state != .Closing && c.state != .Closed {
-		connection_close(c)
-	}
-
-	stream := tcp_stream(c.socket)
-	stream_reader := io.to_reader(stream)
+conn_handle_reqs :: proc(c: ^Connection) {
+	log.debug("conn_handle_reqs")
+	scanner_init(&c.scanner, c, c.server.conn_allocator)
 
 	arena: virtual.Arena
 	if err := virtual.arena_init_growing(&arena); err != nil {
@@ -298,113 +252,150 @@ conn_handle_reqs :: proc(c: ^Connection) -> net.Network_Error {
 	allocator := virtual.arena_allocator(&arena)
 	context.temp_allocator = allocator
 
-	Requests: for {
-		defer free_all(allocator)
+	conn_handle_req(c)
+}
 
-		// PERF: we shouldn't create a new scanner everytime.
-		scanner: bufio.Scanner
-		bufio.scanner_init(&scanner, stream_reader, allocator)
-		scanner.max_token_size = c.server.opts.limit_request_line
+// Loop/request cycle state.
+Loop :: struct {
+	conn: ^Connection,
+	req:  Request,
+	res:  Response,
+}
 
-		res: Response
-		response_init(&res, allocator)
+conn_handle_req :: proc(c: ^Connection) {
+	log.debug("conn_handle_req")
+	on_rline1 :: proc(loop: rawptr, token: []byte, err: bufio.Scanner_Error) {
+		context.allocator = context.temp_allocator
+		loop := cast(^Loop)loop
+		using loop
 
-		req: Request
-		request_init(&req, allocator)
-		c.curr_req = &req
-		req.client = c.client
+		conn.state = .Active
+
+		if err != nil {
+			log.warnf("error scanning first line of request: %s", err)
+			res.status = .Bad_Request
+			response_send(&res, conn)
+			return
+		}
 
 		// In the interest of robustness, a server that is expecting to receive
 		// and parse a request-line SHOULD ignore at least one empty line (CRLF)
 		// received prior to the request-line.
-		rline_str, ok := scanner_scan_or_bad_req(&scanner, &res, c, .URI_Too_Long, allocator)
-		if !ok do break
-		if rline_str == "" {
-			rline_str, ok = scanner_scan_or_bad_req(&scanner, &res, c, .URI_Too_Long, allocator)
-			if !ok do break
+		if len(token) == 0 {
+			scanner_scan(&conn.scanner, loop, on_rline2)
+			return
 		}
 
-		c.state = .Active
+		on_rline2(loop, token, err)
+	}
 
-		// Recipients of an invalid request-line SHOULD respond with either a
-		// 400 (Bad Request) error or a 301 (Moved Permanently) redirect with
-		// the request-target properly encoded.
-		rline, err := requestline_parse(rline_str, allocator)
+	on_rline2 :: proc(loop: rawptr, token: []byte, err: bufio.Scanner_Error) {
+		context.allocator = context.temp_allocator
+		loop := cast(^Loop)loop
+		using loop
+
+		if err != nil {
+			log.warnf("error scanning second line of request for the request-line: %s", err)
+			res.status = .Bad_Request
+			response_send(&res, conn)
+			return
+		}
+
+		rline, err := requestline_parse(string(token))
 		switch err {
 		case .Method_Not_Implemented:
+			log.warnf("request-line %q invalid method", string(token))
 			res.headers["connection"] = "close"
-			response_send_or_log(&res, c, .Not_Implemented, allocator)
-			break Requests
+			res.status = .Not_Implemented
+			response_send(&res, conn)
+			return
 		case .Invalid_Version_Format, .Not_Enough_Fields:
+			log.warnf("request-line %q invalid: %s", string(token), err)
 			res.headers["connection"] = "close"
-			response_send_or_log(&res, c, .Bad_Request, allocator)
-			break Requests
+			res.status = .Bad_Request
+			response_send(&res, conn)
+			return
 		case .None:
 			req.line = rline
-
 		}
 
 		// Might need to support more versions later.
 		if rline.version.major != 1 || rline.version.minor < 1 {
+			log.warnf("request http version not supported %v", rline.version)
 			res.headers["connection"] = "close"
-			response_send_or_log(&res, c, .HTTP_Version_Not_Supported, allocator)
-			break
+			res.status = .HTTP_Version_Not_Supported
+			response_send(&res, conn)
+			return
 		}
 
-		req.url = url_parse(rline.target, allocator)
+		req.url = url_parse(rline.target)
 
-		scanner.max_token_size = c.server.opts.limit_headers
-		// Keep parsing the request as line delimited headers until we get to an empty line.
-		for line in scanner_scan_or_bad_req(
-			&scanner,
-			&res,
-			c,
-			.Request_Header_Fields_Too_Large,
-			allocator,
-		) {
-			// The first empty line denotes the end of the headers section.
-			if line == "" {
-				break
-			}
+		conn.scanner.max_token_size = conn.server.opts.limit_headers
+		scanner_scan(&conn.scanner, loop, on_header_line)
+	}
 
-			if _, ok := header_parse(&req.headers, line); !ok {
-				res.headers["connection"] = "close"
-				response_send_or_log(&res, c, .Bad_Request, allocator)
-				break Requests
-			}
+	on_header_line :: proc(loop: rawptr, token: []byte, err: bufio.Scanner_Error) {
+		context.allocator = context.temp_allocator
+		loop := cast(^Loop)loop
+		using loop
 
-			scanner.max_token_size -= len(line)
-			if scanner.max_token_size <= 0 {
-				res.headers["connection"] = "close"
-				response_send_or_log(&res, c, .Request_Header_Fields_Too_Large, allocator)
-				break Requests
-			}
+		if err != nil {
+			log.warnf("error scanning for header line: %s", err)
+			res.status = .Bad_Request
+			response_send(&res, conn)
+			return
 		}
 
+		// The first empty line denotes the end of the headers section.
+		if len(token) == 0 {
+			on_headers_end(loop)
+			return
+		}
+
+		if _, ok := header_parse(&req.headers, string(token)); !ok {
+			log.warnf("header-line %s is invalid", string(token))
+			loop.res.headers["connection"] = "close"
+			res.status = .Bad_Request
+			response_send(&res, conn)
+			return
+		}
+
+		conn.scanner.max_token_size -= len(token)
+		if conn.scanner.max_token_size <= 0 {
+			log.warn("request headers too large")
+			res.headers["connection"] = "close"
+			res.status = .Request_Header_Fields_Too_Large
+			response_send(&res, conn)
+			return
+		}
+
+		scanner_scan(&conn.scanner, loop, on_header_line)
+	}
+
+	on_headers_end :: proc(using loop: ^Loop) {
 		if !server_headers_validate(&req.headers) {
+			log.warn("request headers are invalid")
 			res.headers["connection"] = "close"
-			response_send_or_log(&res, c, .Bad_Request, allocator)
-			break
+			res.status = .Bad_Request
+			response_send(&res, conn)
+			return
 		}
 
-		scanner.max_token_size = bufio.DEFAULT_MAX_SCAN_TOKEN_SIZE
+		conn.scanner.max_token_size = bufio.DEFAULT_MAX_SCAN_TOKEN_SIZE
 
 		// Automatically respond with a continue status when the client has the Expect: 100-continue header.
 		if expect, ok := req.headers["expect"];
-		   ok && expect == "100-continue" && c.server.opts.auto_expect_continue {
+		   ok && expect == "100-continue" && conn.server.opts.auto_expect_continue {
 
 			res.status = .Continue
-			if err := response_send(&res, c, allocator); err != nil {
-				log.warnf("could not send automatic 100 continue: %s", err)
-			}
 
-			if c.state == .Closing || c.state == .Closed {
-				break
-			}
+			response_send(&res, conn, context.temp_allocator)
+			return
 		}
 
-		req._body = scanner
+		req._scanner = conn.scanner
 
+		rline := req.line.(Requestline)
 		// An options request with the "*" is a no-op/ping request to
 		// check for server capabilities and should not be sent to handlers.
 		if rline.method == .Options && rline.target == "*" {
@@ -414,63 +405,31 @@ conn_handle_reqs :: proc(c: ^Connection) -> net.Network_Error {
 			// says a HEAD is identical to a GET but just without writing the body,
 			// handlers shouldn't have to worry about it.
 			is_head := rline.method == .Head
-			if is_head && c.server.opts.redirect_head_to_get {
+			if is_head && conn.server.opts.redirect_head_to_get {
 				rline.method = .Get
 			}
 
-			c.handler.handle(c.handler, &req, &res)
+			// TODO: execute handlers in worker pool thread.
+			conn.server.handler.handle(&conn.server.handler, &req, &res)
 
-			if is_head && c.server.opts.redirect_head_to_get {
+			if is_head && conn.server.opts.redirect_head_to_get {
 				rline.method = .Head
 			}
 		}
 
-		if err := response_send(&res, c, allocator); err != nil {
-			log.warnf("could not send response: %s", err)
-		}
-
-		if c.state == .Closing || c.state == .Closed {
-			break
-		}
-
-		c.state = .Idle
-	}
-	return nil
-}
-
-@(private)
-response_send_or_log :: proc(res: ^Response, conn: ^Connection, status: Status, allocator := context.allocator) {
-	res.status = status
-	if err := response_send(res, conn, allocator); err != nil {
-		log.warnf("could not send request response bcs error: %s", err)
-	}
-}
-
-@(private)
-scanner_scan_or_bad_req :: proc(
-	s: ^bufio.Scanner,
-	res: ^Response,
-	conn: ^Connection,
-	to_much: Status,
-	allocator := context.allocator,
-) -> (string, bool) {
-	if !bufio.scanner_scan(s) {
-		err := bufio.scanner_error(s)
-		log.warnf("request scanner error: %s", err)
-
-		res.status = .Bad_Request
-		#partial switch ex in err {
-		case bufio.Scanner_Extra_Error:
-			#partial switch ex {
-			case .Advanced_Too_Far, .Too_Long:
-				res.status = to_much
-			}
-		}
-
-		res.headers["connection"] = "close"
-		response_send_or_log(res, conn, res.status, allocator)
-		return "", false
+		response_send(&res, conn, context.temp_allocator)
 	}
 
-	return bufio.scanner_text(s), true
+	loop := new(Loop, context.temp_allocator)
+	loop.conn = c
+
+	request_init(&loop.req)
+	response_init(&loop.res)
+
+	c.curr_req = &loop.req
+
+	log.debug("waiting for request-line of", loop)
+
+	c.scanner.max_token_size = c.server.opts.limit_request_line
+	scanner_scan(&c.scanner, loop, on_rline1)
 }

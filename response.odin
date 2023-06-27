@@ -1,20 +1,23 @@
 package http
 
 import "core:bytes"
+import "core:encoding/json"
+import "core:io"
+import "core:log"
+import "core:mem"
 import "core:net"
 import "core:os"
-import "core:io"
 import "core:path/filepath"
-import "core:strings"
-import "core:encoding/json"
-import "core:time"
 import "core:strconv"
+import "core:strings"
+import "core:time"
 
 Response :: struct {
 	status:  Status,
 	headers: Headers,
 	cookies: [dynamic]Cookie,
 	body:    bytes.Buffer,
+	send:    proc(),
 }
 
 response_init :: proc(r: ^Response, allocator := context.allocator) {
@@ -25,34 +28,31 @@ response_init :: proc(r: ^Response, allocator := context.allocator) {
 }
 
 // Sends the response over the connection.
-response_send :: proc(using r: ^Response, conn: ^Connection, allocator := context.allocator) -> net.Network_Error {
+// Frees the allocator (should be a request scoped allocator).
+// Closes the connection or starts the handling of the next request.
+response_send :: proc(using r: ^Response, conn: ^Connection, allocator := context.allocator) {
 	res: bytes.Buffer
 	// Responses are on average at least 100 bytes, so lets start there, but add the body's length.
 	initial_buf_cap := response_needs_content_length(r, conn) ? 100 + bytes.buffer_length(&body) : 100
 	bytes.buffer_init_allocator(&res, 0, initial_buf_cap, allocator)
 
 	will_close := response_must_close(conn.curr_req, r)
-	defer if will_close do connection_close(conn)
 
 	// RFC 7230 6.3: A server MUST read
 	// the entire request message body or close the connection after sending
 	// its response, since otherwise the remaining data on a persistent
 	// connection would be misinterpreted as the next request.
 	if !will_close {
-		switch conn.curr_req._body_err {
-		case .Scan_Failed, .Invalid_Length, .Invalid_Chunk_Size, .Too_Long, .Invalid_Trailer_Header:
-			// Any read error should close the connection.
-			status = body_error_status(conn.curr_req._body_err)
-			headers["connection"] = "close"
-			will_close = true
-		case .No_Length, .None: // no-op, request had no body or read succeeded.
-		case:
+		if conn.curr_req._body == nil {
 			// No error means the body was not read by a handler.
-			_, _, err := request_body(conn.curr_req, Max_Post_Handler_Discard_Bytes)
+			request_body(conn.curr_req, Max_Post_Handler_Discard_Bytes)
+		}
+
+		if err, is_err := conn.curr_req._body.(Body_Error); is_err {
 			switch err {
 			case .Scan_Failed, .Invalid_Length, .Invalid_Trailer_Header, .Too_Long, .Invalid_Chunk_Size:
 				// Any read error should close the connection.
-				status = body_error_status(conn.curr_req._body_err)
+				status = body_error_status(err)
 				headers["connection"] = "close"
 				will_close = true
 			case .No_Length, .None: // no-op, request had no body or read succeeded.
@@ -104,9 +104,28 @@ response_send :: proc(using r: ^Response, conn: ^Connection, allocator := contex
 
 	if response_can_have_body(r, conn) do bytes.buffer_write(&res, bytes.buffer_to_bytes(&body))
 
-	_, err := net.send_tcp(conn.socket, bytes.buffer_to_bytes(&res))
+	will_close_ptr := new(bool, allocator)
+	will_close_ptr^ = will_close
+	_send_response(conn, bytes.buffer_to_bytes(&res), will_close_ptr, on_response_sent, allocator)
+}
 
-	return err
+Send_Response_Callback :: proc(conn: ^Connection, should_close: ^bool, err: net.Network_Error, allocator: mem.Allocator)
+on_response_sent :: proc(conn: ^Connection, should_close: ^bool, err: net.Network_Error, allocator := context.allocator) {
+	log.debug(should_close)
+	log.debug(should_close^)
+	switch {
+	case err != nil:
+		log.errorf("could not send response: %s", err)
+		fallthrough
+	case should_close^:
+		conn.state = .Closing
+		free_all(allocator)
+		connection_close(conn)
+	case:
+		conn.state = .Idle
+		free_all(allocator)
+		conn_handle_req(conn)
+	}
 }
 
 // Sets the response to one that sends the given HTML.

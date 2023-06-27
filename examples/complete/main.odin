@@ -96,7 +96,7 @@ serve :: proc() {
 	// Start the server on 127.0.0.1:6969.
 	err := http.listen_and_serve(
 		&s,
-		&with_logger,
+		with_logger,
 		net.Endpoint{address = net.IP4_Loopback, port = 6969},
 	)
 	log.warnf("server stopped: %s", err)
@@ -136,8 +136,8 @@ static :: proc(req: ^http.Request, res: ^http.Response) {
 }
 
 post_ping :: proc(req: ^http.Request, res: ^http.Response) {
-	body, _, err := http.request_body(req, len("ping"))
-	if err != nil {
+	body := http.request_body(req, len("ping"))
+	if err, is_err := body.(http.Body_Error); is_err {
 		res.status = http.body_error_status(err)
 		return
 	}
