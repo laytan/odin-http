@@ -1,3 +1,4 @@
+//+build linux
 package io_uring
 
 import "core:os"
@@ -9,7 +10,6 @@ DEFAULT_THREAD_IDLE_MS :: 1000
 DEFAULT_ENTRIES :: 32
 MAX_ENTRIES :: 4096
 
-// TODO: check if all used.
 IO_Uring_Error :: enum {
 	None,
 	Entries_Zero,
@@ -23,6 +23,13 @@ IO_Uring_Error :: enum {
 	Permission_Denied,
 	System_Outdated,
 	Submission_Queue_Full,
+	File_Descriptor_Invalid,
+	Completion_Queue_Overcommitted,
+	Submission_Queue_Entry_Invalid,
+	Buffer_Invalid,
+	Ring_Shutting_Down,
+	Opcode_Not_Supported,
+	Signal_Interrupt,
 	Unexpected,
 }
 
@@ -65,8 +72,8 @@ io_uring_init :: proc(
 		case os.EFAULT:
 			return .Params_Outside_Accessible_Address_Space
 		// The resv array contains non-zero data, p.flags contains an unsupported flag,
-        // entries out of bounds, IORING_SETUP_SQ_AFF was specified without IORING_SETUP_SQPOLL,
-        // or IORING_SETUP_CQSIZE was specified but linux.io_uring_params.cq_entries was invalid:
+		// entries out of bounds, IORING_SETUP_SQ_AFF was specified without IORING_SETUP_SQPOLL,
+		// or IORING_SETUP_CQSIZE was specified but linux.io_uring_params.cq_entries was invalid:
 		case os.EINVAL:
 			return .Arguments_Invalid
 		case os.EMFILE:
@@ -76,7 +83,7 @@ io_uring_init :: proc(
 		case os.ENOMEM:
 			return .System_Resources
 		// IORING_SETUP_SQPOLL was specified but effective user ID lacks sufficient privileges,
-        // or a container seccomp policy prohibits io_uring syscalls:
+		// or a container seccomp policy prohibits io_uring syscalls:
 		case os.EPERM:
 			return .Permission_Denied
 		case os.ENOSYS:
@@ -169,39 +176,36 @@ enter :: proc(
 	err: IO_Uring_Error,
 ) {
 	assert(ring.fd >= 0)
-	ns := sys_io_uring_enter(ring.fd, n_to_submit, min_complete, flags, nil)
+	ns := sys_io_uring_enter(i32(ring.fd), n_to_submit, min_complete, flags, nil)
 	n_submitted = u32(ns)
 	switch os.Errno(ns) {
 	case os.ERROR_NONE:
 		err = .None
 	case os.EAGAIN:
 		// The kernel was unable to allocate memory or ran out of resources for the request. (try again)
-		err = .SystemResources
+		err = .System_Resources
 	case os.EBADF:
 		// The SQE `fd` is invalid, or `IOSQE_FIXED_FILE` was set but no files were registered
-		err = .FileDescriptorInvalid
-	case os.EBADFD:
-		// The `fd` is valid, but the ring is not in the right state. See io_uring_register(2) for how to enable the ring.
-		err = .FileDescriptorInBadState
-	case EBUSY:
+		err = .File_Descriptor_Invalid
+	case os.EBUSY:
 		// Attempted to overcommit the number of requests it can have pending. Should wait for some completions and try again.
-		err = .CompletionQueueOvercommitted
+		err = .Completion_Queue_Overcommitted
 	case os.EINVAL:
 		// The SQE is invalid, or valid but the ring was setup with `IORING_SETUP_IOPOLL`
-		err = .SubmissionQueueEntryInvalid
+		err = .Submission_Queue_Entry_Invalid
 	case os.EFAULT:
 		// The buffer is outside the process' accessible address space, or `IORING_OP_READ_FIXED`
 		// or `IORING_OP_WRITE_FIXED` was specified but no buffers were registered, or the range
 		// described by `addr` and `len` is not within the buffer registered at `buf_index`
-		err = .BufferInvalid
+		err = .Buffer_Invalid
 	case os.ENXIO:
-		err = .RingShuttingDown
+		err = .Ring_Shutting_Down
 	case os.EOPNOTSUPP:
 		// The kernel believes the `fd` doesn't refer to an `io_uring`, or the opcode isn't supported by this kernel (more likely)
-		err = .OpcodeNotSupported
+		err = .Opcode_Not_Supported
 	case os.EINTR:
 		// The op was interrupted by a delivery of a signal before it could complete.This can happen while waiting for events with `IORING_ENTER_GETEVENTS`
-		err = .SignalInterrupt
+		err = .Signal_Interrupt
 	case:
 		err = .Unexpected
 	}
@@ -326,7 +330,7 @@ fsync :: proc(
 	sqe^ = {}
 	sqe.opcode = .FSYNC
 	sqe.rw_flags = i32(flags)
-	sqe.fd = fd
+	sqe.fd = i32(fd)
 	sqe.user_data = user_data
 	return
 }
@@ -358,7 +362,7 @@ read :: proc(
 	sqe = get_sqe(ring) or_return
 	sqe^ = {}
 	sqe.opcode = .READ
-	sqe.fd = fd
+	sqe.fd = i32(fd)
 	sqe.addr = cast(u64)uintptr(&buf[0])
 	sqe.len = u32(len(buf))
 	sqe.off = offset
@@ -380,7 +384,7 @@ write :: proc(
 	sqe = get_sqe(ring) or_return
 	sqe^ = {}
 	sqe.opcode = .WRITE
-	sqe.fd = fd
+	sqe.fd = i32(fd)
 	sqe.addr = cast(u64)uintptr(&buf[0])
 	sqe.len = u32(len(buf))
 	sqe.off = offset
@@ -401,8 +405,7 @@ accept :: proc(
 	sqe: ^io_uring_sqe,
 	err: IO_Uring_Error,
 ) {
-	sqe, err = get_sqe(ring)
-	if err != .None {return}
+	sqe = get_sqe(ring) or_return
 	sqe^ = {}
 	sqe.opcode = IORING_OP.ACCEPT
 	sqe.fd = i32(sockfd)
@@ -427,7 +430,7 @@ connect :: proc(
 	sqe = get_sqe(ring) or_return
 	sqe^ = {}
 	sqe.opcode = IORING_OP.CONNECT
-	sqe.fd = transmute(Handle)sockfd
+	sqe.fd = i32(sockfd)
 	sqe.addr = cast(u64)uintptr(addr)
 	sqe.off = cast(u64)uintptr(addr_len)
 	sqe.user_data = user_data
@@ -448,7 +451,7 @@ recv :: proc(
 	sqe = get_sqe(ring) or_return
 	sqe^ = {}
 	sqe.opcode = IORING_OP.RECV
-	sqe.fd = transmute(Handle)sockfd
+	sqe.fd = i32(sockfd)
 	sqe.addr = cast(u64)uintptr(&buf[0])
 	sqe.len = cast(u32)uintptr(len(buf))
 	sqe.rw_flags = i32(flags)
@@ -470,7 +473,7 @@ send :: proc(
 	sqe = get_sqe(ring) or_return
 	sqe^ = {}
 	sqe.opcode = IORING_OP.SEND
-	sqe.fd = transmute(Handle)sockfd
+	sqe.fd = i32(sockfd)
 	sqe.addr = cast(u64)uintptr(&buf[0])
 	sqe.len = u32(len(buf))
 	sqe.rw_flags = i32(flags)
@@ -493,7 +496,7 @@ openat :: proc(
 	sqe = get_sqe(ring) or_return
 	sqe^ = {}
 	sqe.opcode = IORING_OP.OPENAT
-	sqe.fd = fd
+	sqe.fd = i32(fd)
 	sqe.addr = cast(u64)transmute(uintptr)path
 	sqe.len = cast(u32)mode
 	sqe.rw_flags = i32(flags)
@@ -514,7 +517,7 @@ close :: proc(
 	if err != .None {return}
 	sqe^ = {}
 	sqe.opcode = IORING_OP.CLOSE
-	sqe.fd = fd
+	sqe.fd = i32(fd)
 	sqe.user_data = user_data
 	return
 }

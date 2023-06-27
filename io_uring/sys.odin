@@ -1,3 +1,4 @@
+//+build linux
 package io_uring
 
 import "core:intrinsics"
@@ -198,6 +199,13 @@ IORING_LINK_TIMEOUT_UPDATE: u32 : (1 << 4)
 IORING_TIMEOUT_ETIME_SUCCESS: u32 : (1 << 5)
 IORING_TIMEOUT_CLOCK_MASK: u32 : (IORING_TIMEOUT_BOOTTIME | IORING_TIMEOUT_REALTIME)
 IORING_TIMEOUT_UPDATE_MASK: u32 : (IORING_TIMEOUT_UPDATE | IORING_LINK_TIMEOUT_UPDATE)
+
+/*
+ * sq_ring.flags
+ */
+IORING_SQ_NEED_WAKEUP: u32 : (1 << 0) /* needs io_uring_enter wakeup */
+IORING_SQ_CQ_OVERFLOW: u32 : (1 << 1) /* CQ ring is overflown */
+IORING_SQ_TASKRUN: u32 : (1 << 2) /* task should enter the kernel */
 
 /*
  * sqe.splice_flags
