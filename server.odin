@@ -242,7 +242,6 @@ connection_close :: proc(c: ^Connection) {
 }
 
 conn_handle_reqs :: proc(c: ^Connection) {
-	log.debug("conn_handle_reqs")
 	scanner_init(&c.scanner, c, c.server.conn_allocator)
 
 	arena: virtual.Arena
@@ -252,6 +251,7 @@ conn_handle_reqs :: proc(c: ^Connection) {
 	allocator := virtual.arena_allocator(&arena)
 	context.temp_allocator = allocator
 
+	log.debugf("started handling requests for connection with %s", net.endpoint_to_string(c.client, context.temp_allocator))
 	conn_handle_req(c)
 }
 
@@ -263,7 +263,6 @@ Loop :: struct {
 }
 
 conn_handle_req :: proc(c: ^Connection) {
-	log.debug("conn_handle_req")
 	on_rline1 :: proc(loop: rawptr, token: []byte, err: bufio.Scanner_Error) {
 		context.allocator = context.temp_allocator
 		loop := cast(^Loop)loop
@@ -272,7 +271,6 @@ conn_handle_req :: proc(c: ^Connection) {
 		conn.state = .Active
 
 		if err != nil {
-			log.warnf("error scanning first line of request: %s", err)
 			res.status = .Bad_Request
 			response_send(&res, conn)
 			return
@@ -282,6 +280,7 @@ conn_handle_req :: proc(c: ^Connection) {
 		// and parse a request-line SHOULD ignore at least one empty line (CRLF)
 		// received prior to the request-line.
 		if len(token) == 0 {
+			log.debug("scanning for rline2")
 			scanner_scan(&conn.scanner, loop, on_rline2)
 			return
 		}
@@ -330,6 +329,7 @@ conn_handle_req :: proc(c: ^Connection) {
 
 		req.url = url_parse(rline.target)
 
+		log.debug("scanning for header_line")
 		conn.scanner.max_token_size = conn.server.opts.limit_headers
 		scanner_scan(&conn.scanner, loop, on_header_line)
 	}
@@ -369,6 +369,7 @@ conn_handle_req :: proc(c: ^Connection) {
 			return
 		}
 
+		log.debug("scanning for further header_line")
 		scanner_scan(&conn.scanner, loop, on_header_line)
 	}
 
@@ -377,7 +378,7 @@ conn_handle_req :: proc(c: ^Connection) {
 			log.warn("request headers are invalid")
 			res.headers["connection"] = "close"
 			res.status = .Bad_Request
-			response_send(&res, conn)
+			response_send(&res, conn, context.temp_allocator)
 			return
 		}
 
@@ -410,6 +411,7 @@ conn_handle_req :: proc(c: ^Connection) {
 			}
 
 			// TODO: execute handlers in worker pool thread.
+			log.debug("calling handler")
 			conn.server.handler.handle(&conn.server.handler, &req, &res)
 
 			if is_head && conn.server.opts.redirect_head_to_get {
@@ -417,6 +419,7 @@ conn_handle_req :: proc(c: ^Connection) {
 			}
 		}
 
+		log.debug("sending response")
 		response_send(&res, conn, context.temp_allocator)
 	}
 
@@ -428,7 +431,7 @@ conn_handle_req :: proc(c: ^Connection) {
 
 	c.curr_req = &loop.req
 
-	log.debug("waiting for request-line of", loop)
+	log.debugf("waiting for next request on %s", net.endpoint_to_string(c.client, context.temp_allocator))
 
 	c.scanner.max_token_size = c.server.opts.limit_request_line
 	scanner_scan(&c.scanner, loop, on_rline1)

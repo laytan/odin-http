@@ -25,6 +25,9 @@ init :: proc(kq: ^KQueue, allocator := context.allocator) -> (err: Queue_Error) 
 }
 
 destroy :: proc(kq: ^KQueue) {
+	for timeout in kq.timeouts do free(timeout, kq.allocator)
+	for completed in kq.completed do free(completed, kq.allocator)
+	for pending in kq.io_pending do free(pending, kq.allocator)
 	delete(kq.timeouts)
 	delete(kq.completed)
 	delete(kq.io_pending)

@@ -144,14 +144,11 @@ request_body :: proc(
 				req._body_was_alloc = was_allocation
 			}
 
-			log.debug("parse_body")
 			parse_body(&req.headers, &req._scanner, max_length, req, on_body, req.allocator)
-			log.debug("parse_body returned")
 		}, context)
 
 	// TODO: sync.condition.
 	for req._body == nil {}
-	log.debug("parse_body for end")
 	return req._body, req._body_was_alloc
 }
 

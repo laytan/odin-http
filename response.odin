@@ -45,6 +45,7 @@ response_send :: proc(using r: ^Response, conn: ^Connection, allocator := contex
 	if !will_close {
 		if conn.curr_req._body == nil {
 			// No error means the body was not read by a handler.
+			log.debug("reading body")
 			request_body(conn.curr_req, Max_Post_Handler_Discard_Bytes)
 		}
 
@@ -111,8 +112,6 @@ response_send :: proc(using r: ^Response, conn: ^Connection, allocator := contex
 
 Send_Response_Callback :: proc(conn: ^Connection, should_close: ^bool, err: net.Network_Error, allocator: mem.Allocator)
 on_response_sent :: proc(conn: ^Connection, should_close: ^bool, err: net.Network_Error, allocator := context.allocator) {
-	log.debug(should_close)
-	log.debug(should_close^)
 	switch {
 	case err != nil:
 		log.errorf("could not send response: %s", err)

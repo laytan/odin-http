@@ -78,7 +78,6 @@ _send_response :: proc(
 ) {
 	dw := cast(^Darwin_Server)c.server.impl_data
 
-
 	inflight := new(Darwin_Response_Inflight, allocator)
 	c.impl_data = inflight // So connection_close can free an in progress response.
 
@@ -88,6 +87,7 @@ _send_response :: proc(
 	inflight.allocator = allocator
 	inflight.will_close = will_close
 
+	log.debug("sending using kqueue")
 	kqueue.send(dw.kq, kqueue.Op_Send{os.Socket(c.socket), buf, 0}, inflight, on_send)
 }
 
@@ -115,6 +115,7 @@ on_send :: proc(inflight: rawptr, sent: u32, err: os.Errno) {
 		return
 	}
 
+	log.debug("further sending using kqueue")
 	kqueue.send(
 		dw.kq,
 		kqueue.Op_Send{os.Socket(inflight.c.socket), inflight.buf[inflight.sent:], 0},
@@ -139,15 +140,15 @@ on_accept :: proc(
 	ep := sockaddr_to_endpoint(&addr)
 	client := net.TCP_Socket(sock)
 
-	log.infof("new connection with %v", ep)
-
 	c := new(Connection, server.conn_allocator)
 	c.state = .New
 	c.server = server
 	c.client = ep
 	c.socket = client
 
-	log.debug("calling conn_handle_reqs")
+	server.conns[c.socket] = c
+
+	log.errorf("new connection with %v, got %d conns", ep, len(server.conns))
 	conn_handle_reqs(c)
 }
 
