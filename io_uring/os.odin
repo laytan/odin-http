@@ -5,6 +5,7 @@ import "core:os"
 import "core:math"
 import "core:sys/unix"
 import "core:sync"
+import "core:mem"
 
 DEFAULT_THREAD_IDLE_MS :: 1000
 DEFAULT_ENTRIES :: 32
@@ -34,25 +35,25 @@ IO_Uring_Error :: enum {
 }
 
 IO_Uring :: struct {
-	fd:       os.Handle,
-	sq:       Submission_Queue,
-	cq:       Completion_Queue,
-	flags:    u32,
-	features: u32,
+	fd:        os.Handle,
+	sq:        Submission_Queue,
+	cq:        Completion_Queue,
+	flags:     u32,
+	features:  u32,
 }
 
 // Set up an IO_Uring with default parameters, `entries` must be a power of 2 between 1 and 4096.
 io_uring_make :: proc(
+	params: ^io_uring_params,
 	entries: u32 = DEFAULT_ENTRIES,
 	flags: u32 = 0,
-	allocator := context.allocator,
 ) -> (
 	ring: IO_Uring,
+	err: IO_Uring_Error,
 ) {
-	params := new(io_uring_params, allocator)
 	params.flags = flags
 	params.sq_thread_idle = DEFAULT_THREAD_IDLE_MS
-	io_uring_init(&ring, entries, params)
+	err = io_uring_init(&ring, entries, params)
 	return
 }
 
