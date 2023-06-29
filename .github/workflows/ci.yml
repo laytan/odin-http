@@ -7,7 +7,7 @@ on:
     - cron: 0 20 * * *
 
 jobs:
-  build_linux:
+  linux:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v1
@@ -27,18 +27,22 @@ jobs:
         run: ./Odin/odin test nbio
         timeout-minutes: 10
       - name: Odin check
+        if: success() || failure()
         run: ./Odin/odin check examples/complete -vet && ./Odin/odin check examples/client -vet
         timeout-minutes: 10
       - name: Odin check for Linux i386
+        if: success() || failure()
         run: ./Odin/odin check examples/complete -vet -target:linux_i386 && ./Odin/odin check examples/client -vet -target:linux_i386
         timeout-minutes: 10
       - name: Odin check for FreeBSD amd64
+        if: success() || failure()
         run: ./Odin/odin check examples/complete -vet -target:freebsd_amd64 && ./Odin/odin check examples/client -vet -target:freebsd_amd64
         timeout-minutes: 10
       - name: Odin check for OpenBSD amd64
+        if: success() || failure()
         run: ./Odin/odin check examples/complete -vet -target:openbsd_amd64 && ./Odin/odin check examples/client -vet -target:openbsd_amd64
         timeout-minutes: 10
-  build_macOS:
+  macOS:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v1
@@ -62,18 +66,22 @@ jobs:
         run: ./Odin/odin test nbio
         timeout-minutes: 10
       - name: Odin check
+        if: success() || failure()
         run: ./Odin/odin check examples/complete -vet && ./Odin/odin check examples/client -vet
         timeout-minutes: 10
       - name: Odin check for Linux i386
+        if: success() || failure()
         run: ./Odin/odin check examples/complete -vet -target:linux_i386 && ./Odin/odin check examples/client -vet -target:linux_i386
         timeout-minutes: 10
       - name: Odin check for FreeBSD amd64
+        if: success() || failure()
         run: ./Odin/odin check examples/complete -vet -target:freebsd_amd64 && ./Odin/odin check examples/client -vet -target:freebsd_amd64
         timeout-minutes: 10
       - name: Odin check for OpenBSD amd64
+        if: success() || failure()
         run: ./Odin/odin check examples/complete -vet -target:openbsd_amd64 && ./Odin/odin check examples/client -vet -target:openbsd_amd64
         timeout-minutes: 10
-  build_windows:
+  windows:
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v1
@@ -94,18 +102,22 @@ jobs:
         run: .\Odin\odin.exe test nbio
         timeout-minutes: 10
       - name: Odin check server
+        if: success() || failure()
         shell: cmd
         run: .\Odin\odin.exe check examples/complete -vet
         timeout-minutes: 10
       - name: Odin check client
+        if: success() || failure()
         shell: cmd
         run: .\Odin\odin.exe check examples/client -vet
         timeout-minutes: 10
       - name: Odin check server for Windows 32bits
+        if: success() || failure()
         shell: cmd
         run: .\Odin\odin.exe check examples/complete -target:windows_i386
         timeout-minutes: 10
       - name: Odin check client for Windows 32bits
+        if: success() || failure()
         shell: cmd
         run: .\Odin\odin.exe check examples/client -target:windows_i386
         timeout-minutes: 10
