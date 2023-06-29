@@ -76,15 +76,13 @@ jobs:
   build_windows:
     runs-on: windows-2022
     steps:
+      - uses: actions/checkout@v1
       - name: Get odin
         run: git clone https://github.com/odin-lang/Odin
-      - uses: actions/checkout@v1
       - name: build Odin
-        shell: cmd
         run: |
-          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat
           cd Odin
-          .\build.bat 1
+          .\build.bat
       - name: Odin version
         run: .\Odin\odin.exe version
         timeout-minutes: 1
@@ -93,31 +91,21 @@ jobs:
         timeout-minutes: 1
       - name: Non-blocking IO test
         shell: cmd
-        run: |
-          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat
-          .\Odin\odin.exe test nbio
+        run: .\Odin\odin.exe test nbio
         timeout-minutes: 10
       - name: Odin check server
         shell: cmd
-        run: |
-          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat
-          .\Odin\odin.exe check examples/complete -vet
+        run: .\Odin\odin.exe check examples/complete -vet
         timeout-minutes: 10
       - name: Odin check client
         shell: cmd
-        run: |
-          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat
-          .\Odin\odin.exe check examples/client -vet
+        run: .\Odin\odin.exe check examples/client -vet
         timeout-minutes: 10
       - name: Odin check server for Windows 32bits
         shell: cmd
-        run: |
-          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat
-          .\Odin\odin.exe check examples/complete -target:windows_i386
+        run: .\Odin\odin.exe check examples/complete -target:windows_i386
         timeout-minutes: 10
       - name: Odin check client for Windows 32bits
         shell: cmd
-        run: |
-          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat
-          .\Odin\odin.exe check examples/client -target:windows_i386
+        run: .\Odin\odin.exe check examples/client -target:windows_i386
         timeout-minutes: 10
