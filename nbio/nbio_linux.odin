@@ -24,9 +24,7 @@ Linux :: struct {
 }
 
 Completion :: struct {
-	lx:            ^Linux,
 	result:        i32,
-	next:          ^Completion,
 	operation:     Operation,
 	callback:      proc(lx: ^Linux, c: ^Completion),
 	user_callback: rawptr,
@@ -35,6 +33,7 @@ Completion :: struct {
 
 _init :: proc(io: ^IO, entries: u32 = DEFAULT_ENTRIES, flags: u32 = 0, allocator := context.allocator) -> (err: os.Errno) {
 	lx := new(Linux, allocator)
+	io.impl_data = lx
 
 	lx.allocator = allocator
 
@@ -45,22 +44,8 @@ _init :: proc(io: ^IO, entries: u32 = DEFAULT_ENTRIES, flags: u32 = 0, allocator
 		lx.ring = ring
 		queue.init(&lx.unqueued, allocator=allocator)
 		queue.init(&lx.completed, allocator=allocator)
-	case .Params_Outside_Accessible_Address_Space:
-		err = os.EFAULT
-	case .Arguments_Invalid:
-		err = os.EINVAL
-	case .Process_Fd_Quota_Exceeded:
-		err = os.EMFILE
-	case .System_Fd_Quota_Exceeded:
-		err = os.ENFILE
-	case .System_Resources:
-		err = os.ENOMEM
-	case .Permission_Denied:
-		err = os.EPERM
-	case .System_Outdated:
-		err = os.ENOSYS
 	case:
-		err = -1
+		err = ring_err_to_os_err(rerr)
 	}
 
 	return
@@ -101,10 +86,18 @@ flush :: proc(lx: ^Linux, wait_nr: u32, timeouts: ^uint, etime: ^bool) -> os.Err
 	err = flush_completions(lx, 0, timeouts, etime)
 	if err != os.ERROR_NONE do return err
 
+
 	// TODO: see if correct
 	for unqueued in queue.pop_front_safe(&lx.unqueued) {
 		switch op in unqueued.operation {
-		case Op_Accept: enqueue_accept(lx, unqueued)
+		case Op_Accept:  accept_enqueue(lx, unqueued)
+		case Op_Close:   close_enqueue(lx, unqueued)
+		case Op_Connect: connect_enqueue(lx, unqueued)
+		case Op_Read:    read_enqueue(lx, unqueued)
+		case Op_Recv:    recv_enqueue(lx, unqueued)
+		case Op_Send:    send_enqueue(lx, unqueued)
+		case Op_Write:   write_enqueue(lx, unqueued)
+		case Op_Timeout: timeout_enqueue(lx, unqueued)
 		}
 	}
 
@@ -120,7 +113,8 @@ flush_completions :: proc(lx: ^Linux, wait_nr: u32, timeouts: ^uint, etime: ^boo
 	wait_remaining := wait_nr
 	for {
 		completed, err := io_uring.copy_cqes(&lx.ring, cqes[:], wait_remaining)
-		assert(err == .None) // TODO: convert to os.Errno and return.
+		if err != .None do return ring_err_to_os_err(err)
+
 		wait_remaining = max(0, wait_remaining - completed)
 
 		for cqe in cqes[:completed] {
@@ -151,14 +145,15 @@ flush_submissions :: proc(lx: ^Linux, wait_nr: u32, timeouts: ^uint, etime: ^boo
 	for {
 		submitted, err := io_uring.submit(&lx.ring, wait_nr)
 		#partial switch err {
+		case .None: break
 		case .Signal_Interrupt: continue
 		case .Completion_Queue_Overcommitted, .System_Resources:
 			ferr := flush_completions(lx, 1, timeouts, etime)
 			if ferr != os.ERROR_NONE do return ferr
 			continue
+		case:
+			return ring_err_to_os_err(err)
 		}
-		// TODO: convert to os err and return.
-		assert(err != nil)
 
 		lx.ios_queued -= u64(submitted)
 		lx.ios_in_kernel += u64(submitted)
@@ -177,59 +172,381 @@ _accept :: proc(io: ^IO, socket: os.Socket, user_data: rawptr, callback: Accept_
 	op := Op_Accept{socket = socket}
 	completion.operation = op
 	completion.callback = accept_callback
+
 	accept_enqueue(lx, completion)
 }
 
+@(private="file")
 accept_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
 	op := completion.operation.(Op_Accept)
+
 	sqe, err := io_uring.accept(&lx.ring, u64(uintptr(completion)), op.socket, cast(^os.SOCKADDR)&op.addr, &op.addr_len)
 	if err == .Submission_Queue_Full {
 		queue.push_back(&lx.unqueued, completion)
 		return
 	}
 
-	sqe.user_data = u64(uintptr(completion))
-
 	lx.ios_queued += 1
 }
 
+@(private="file")
 accept_callback :: proc(lx: ^Linux, completion: ^Completion) {
 	op := completion.operation.(Op_Accept)
 	callback := cast(Accept_Callback)completion.user_callback
 
-	err := os.ERROR_NONE
 	if completion.result < 0 {
-		// TODO: feels weird, is this correct?
-		err = os.Errno(-completion.result)
+		errno := os.Errno(-completion.result)
+		if errno == os.EINTR {
+			accept_enqueue(lx, completion)
+			return
+		}
+
+		callback(completion.user_data, 0, op.addr, op.addr_len, errno)
+		free(completion, lx.allocator)
+		return
 	}
 
-	callback(completion.user_data, op.socket, op.addr, os.socklen_t(op.addr_len), err)
+	callback(completion.user_data, os.Socket(completion.result), op.addr, op.addr_len, os.ERROR_NONE)
+	free(completion, lx.allocator)
 }
 
 _close :: proc(io: ^IO, fd: os.Handle, user_data: rawptr, callback: Close_Callback) {
 	lx := cast(^Linux)io.impl_data
+
+	completion := new(Completion, lx.allocator)
+	completion.user_data = user_data
+	completion.user_callback = rawptr(callback)
+	completion.operation = Op_Close{fd}
+	completion.callback = close_callback
+
+	close_enqueue(lx, completion)
+}
+
+@(private="file")
+close_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
+	op := completion.operation.(Op_Close)
+
+	sqe, err := io_uring.close(&lx.ring, u64(uintptr(completion)), op.fd)
+	if err == .Submission_Queue_Full {
+		queue.push_back(&lx.unqueued, completion)
+		return
+	}
+
+	lx.ios_queued += 1
+}
+
+@(private="file")
+close_callback :: proc(lx: ^Linux, completion: ^Completion) {
+	op := completion.operation.(Op_Close)
+	callback := cast(Close_Callback)completion.user_callback
+
+	errno := os.Errno(-completion.result)
+
+	// In particular close() should not be retried after an EINTR
+	// since this may cause a reused descriptor from another thread to be closed.
+	callback(completion.user_data, errno == os.ERROR_NONE || errno == os.EINTR)
+	free(completion, lx.allocator)
 }
 
 _connect :: proc(io: ^IO, op: Op_Connect, user_data: rawptr, callback: Connect_Callback) {
 	lx := cast(^Linux)io.impl_data
+
+	completion := new(Completion, lx.allocator)
+	completion.user_data = user_data
+	completion.user_callback = rawptr(callback)
+	completion.operation = op
+	completion.callback = connect_callback
+
+	connect_enqueue(lx, completion)
 }
+
+@(private="file")
+connect_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
+	op := completion.operation.(Op_Connect)
+
+	sqe, err := io_uring.connect(&lx.ring, u64(uintptr(completion)), op.socket, op.addr, op.len)
+	if err == .Submission_Queue_Full {
+		queue.push_back(&lx.unqueued, completion)
+		return
+	}
+
+	lx.ios_queued += 1
+}
+
+@(private="file")
+connect_callback :: proc(lx: ^Linux, completion: ^Completion) {
+	op := completion.operation.(Op_Connect)
+	callback := cast(Connect_Callback)completion.user_callback
+
+	errno := os.Errno(-completion.result)
+	if errno == os.EINTR {
+		connect_enqueue(lx, completion)
+		return
+	}
+
+	callback(completion.user_data, op.socket, errno)
+	free(completion, lx.allocator)
+}
+
 
 _read :: proc(io: ^IO, op: Op_Read, user_data: rawptr, callback: Read_Callback) {
 	lx := cast(^Linux)io.impl_data
+
+	completion := new(Completion, lx.allocator)
+	completion.user_data = user_data
+	completion.user_callback = rawptr(callback)
+	completion.operation = op
+	completion.callback = read_callback
+
+	read_enqueue(lx, completion)
+}
+
+@(private="file")
+read_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
+	op := completion.operation.(Op_Read)
+
+	sqe, err := io_uring.read(&lx.ring, u64(uintptr(completion)), op.fd, op.buf, u64(op.offset))
+	if err == .Submission_Queue_Full {
+		queue.push_back(&lx.unqueued, completion)
+		return
+	}
+
+	lx.ios_queued += 1
+}
+
+@(private="file")
+read_callback :: proc(lx: ^Linux, completion: ^Completion) {
+	op := completion.operation.(Op_Read)
+	callback := cast(Read_Callback)completion.user_callback
+
+	if completion.result < 0 {
+		errno := os.Errno(-completion.result)
+		if errno == os.EINTR {
+			connect_enqueue(lx, completion)
+			return
+		}
+
+		callback(completion.user_data, 0, errno)
+		free(completion, lx.allocator)
+		return
+	}
+
+	callback(completion.user_data, int(completion.result), os.ERROR_NONE)
+	free(completion, lx.allocator)
 }
 
 _recv :: proc(io: ^IO, op: Op_Recv, user_data: rawptr, callback: Recv_Callback) {
 	lx := cast(^Linux)io.impl_data
+
+	completion := new(Completion, lx.allocator)
+	completion.user_data = user_data
+	completion.user_callback = rawptr(callback)
+	completion.operation = op
+	completion.callback = recv_callback
+
+	recv_enqueue(lx, completion)
+}
+
+@(private="file")
+recv_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
+	op := completion.operation.(Op_Recv)
+
+	sqe, err := io_uring.recv(&lx.ring, u64(uintptr(completion)), op.socket, op.buf, u32(op.flags))
+	if err == .Submission_Queue_Full {
+		queue.push_back(&lx.unqueued, completion)
+		return
+	}
+
+	lx.ios_queued += 1
+}
+
+@(private="file")
+recv_callback :: proc(lx: ^Linux, completion: ^Completion) {
+	op := completion.operation.(Op_Recv)
+	callback := cast(Recv_Callback)completion.user_callback
+
+	if completion.result < 0 {
+		errno := os.Errno(-completion.result)
+		if errno == os.EINTR {
+			recv_enqueue(lx, completion)
+			return
+		}
+
+		callback(completion.user_data, op.buf, 0, errno)
+		free(completion, lx.allocator)
+		return
+	}
+
+	callback(completion.user_data, op.buf, u32(completion.result), os.ERROR_NONE)
+	free(completion, lx.allocator)
 }
 
 _send :: proc(io: ^IO, op: Op_Send, user_data: rawptr, callback: Send_Callback) {
 	lx := cast(^Linux)io.impl_data
+
+	completion := new(Completion, lx.allocator)
+	completion.user_data = user_data
+	completion.user_callback = rawptr(callback)
+	completion.operation = op
+	completion.callback = send_callback
+
+	send_enqueue(lx, completion)
+}
+
+@(private="file")
+send_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
+	op := completion.operation.(Op_Send)
+
+	sqe, err := io_uring.send(&lx.ring, u64(uintptr(completion)), op.socket, op.buf, u32(op.flags))
+	if err == .Submission_Queue_Full {
+		queue.push_back(&lx.unqueued, completion)
+		return
+	}
+
+	lx.ios_queued += 1
+}
+
+@(private="file")
+send_callback :: proc(lx: ^Linux, completion: ^Completion) {
+	op := completion.operation.(Op_Send)
+	callback := cast(Send_Callback)completion.user_callback
+
+	if completion.result < 0 {
+		errno := os.Errno(-completion.result)
+		if errno == os.EINTR {
+			recv_enqueue(lx, completion)
+			return
+		}
+
+		callback(completion.user_data, 0, errno)
+		free(completion, lx.allocator)
+		return
+	}
+
+	callback(completion.user_data, u32(completion.result), os.ERROR_NONE)
+	free(completion, lx.allocator)
 }
 
 _write :: proc(io: ^IO, op: Op_Write, user_data: rawptr, callback: Write_Callback) {
 	lx := cast(^Linux)io.impl_data
+
+	completion := new(Completion, lx.allocator)
+	completion.user_data = user_data
+	completion.user_callback = rawptr(callback)
+	completion.operation = op
+	completion.callback = write_callback
+
+	write_enqueue(lx, completion)
+}
+
+@(private="file")
+write_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
+	op := completion.operation.(Op_Write)
+
+	sqe, err := io_uring.write(&lx.ring, u64(uintptr(completion)), op.fd, op.buf, u64(op.offset))
+	if err == .Submission_Queue_Full {
+		queue.push_back(&lx.unqueued, completion)
+		return
+	}
+
+	lx.ios_queued += 1
+}
+
+@(private="file")
+write_callback :: proc(lx: ^Linux, completion: ^Completion) {
+	op := completion.operation.(Op_Write)
+	callback := cast(Write_Callback)completion.user_callback
+
+	if completion.result < 0 {
+		errno := os.Errno(-completion.result)
+		if errno == os.EINTR {
+			recv_enqueue(lx, completion)
+			return
+		}
+
+		callback(completion.user_data, 0, errno)
+		free(completion, lx.allocator)
+		return
+	}
+
+	callback(completion.user_data, int(completion.result), os.ERROR_NONE)
+	free(completion, lx.allocator)
 }
 
 _timeout :: proc(io: ^IO, dur: time.Duration, user_data: rawptr, callback: Timeout_Callback) {
 	lx := cast(^Linux)io.impl_data
+
+	completion := new(Completion, lx.allocator)
+	completion.user_data = user_data
+	completion.user_callback = rawptr(callback)
+	completion.operation = Op_Timeout {
+		expires = time.time_add(time.now(), dur),
+	}
+	completion.callback = timeout_callback
+
+	timeout_enqueue(lx, completion)
+}
+
+@(private="file")
+timeout_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
+	op := completion.operation.(Op_Timeout)
+
+	// TODO: does this need to be allocated?
+	timeout := time.to_unix_nanoseconds(op.expires)
+	ts: os.Unix_File_Time
+	ts.nanoseconds = timeout % NANOSECONDS_PER_SECOND
+	ts.seconds = timeout / NANOSECONDS_PER_SECOND
+
+	sqe, err := io_uring.timeout(&lx.ring, u64(uintptr(completion)), &ts, 0, io_uring.IORING_TIMEOUT_ABS)
+	if err == .Submission_Queue_Full {
+		queue.push_back(&lx.unqueued, completion)
+		return
+	}
+
+	lx.ios_queued += 1
+}
+
+@(private="file")
+timeout_callback :: proc(lx: ^Linux, completion: ^Completion) {
+	op := completion.operation.(Op_Timeout)
+	callback := cast(Timeout_Callback)completion.user_callback
+
+	errno := os.Errno(-completion.result)
+	if errno == os.EINTR {
+		timeout_enqueue(lx, completion)
+		return
+	}
+
+	// TODO: we are swallowing the returned error here.
+	callback(completion.user_data)
+	free(completion, lx.allocator)
+}
+
+ring_err_to_os_err :: proc(err: io_uring.IO_Uring_Error) -> os.Errno {
+	switch err {
+	case .None:
+		return os.ERROR_NONE
+	case .Params_Outside_Accessible_Address_Space, .Buffer_Invalid, .File_Descriptor_Invalid, .Submission_Queue_Entry_Invalid, .Ring_Shutting_Down:
+		return os.EFAULT
+	case .Arguments_Invalid, .Entries_Zero, .Entries_Too_Large, .Entries_Not_Power_Of_Two, .Opcode_Not_Supported:
+		return os.EINVAL
+	case .Process_Fd_Quota_Exceeded:
+		return os.EMFILE
+	case .System_Fd_Quota_Exceeded:
+		return os.ENFILE
+	case .System_Resources, .Completion_Queue_Overcommitted:
+		return os.ENOMEM
+	case .Permission_Denied:
+		return os.EPERM
+	case .System_Outdated:
+		return os.ENOSYS
+	case .Submission_Queue_Full:
+		return os.EOVERFLOW
+	case .Signal_Interrupt:
+		return os.EINTR
+	case .Unexpected:
+		fallthrough
+	case:
+		return -1
+	}
 }

@@ -111,8 +111,9 @@ io_uring_sqe :: struct {
 		/*
 		 * If the ring is initialized with IORING_SETUP_SQE128, then
 		 * this field is used for 80 bytes of arbitrary command data
+		 * NOTE: This is currently not supported.
 		 */
-		cmd:     [^]u8,
+		// cmd:     [^]u8,
 	},
 }
 
@@ -124,8 +125,9 @@ io_uring_cqe :: struct {
 	/*
 	 * If the ring is initialized with IORING_SETUP_CQE32, then this field
 	 * contains 16-bytes of padding, doubling the size of the CQE.
+	 * NOTE: This is currently not supported.
 	 */
-	big_cqe:   [^]u64,
+	// big_cqe:   [^]u64,
 }
 
 /*
@@ -423,9 +425,9 @@ IORING_ENTER_REGISTERED_RING: u32 : (1 << 4)
 /*
  * Magic offsets for the application to mmap the data it needs
  */
-IORING_OFF_SQ_RING: u64 : 0
+IORING_OFF_SQ_RING: uintptr : 0
 IORING_OFF_CQ_RING: u64 : 0x8000000
-IORING_OFF_SQES: u64 : 0x10000000
+IORING_OFF_SQES: uintptr : 0x10000000
 IORING_OFF_PBUF_RING: u64 : 0x80000000
 IORING_OFF_PBUF_SHIFT :: 16
 IORING_OFF_MMAP_MASK: u64 : 0xf8000000

@@ -40,7 +40,7 @@ tick :: proc(io: ^IO) -> os.Errno {
 Op_Accept :: struct {
 	socket: os.Socket,
 	addr: os.SOCKADDR_STORAGE_LH,
-	addr_len: u32,
+	addr_len: os.socklen_t,
 }
 
 Accept_Callback :: proc(

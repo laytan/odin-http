@@ -1,5 +1,4 @@
-//+build darwin
-package kqueue
+package nbio
 
 import "core:testing"
 import "core:os"
@@ -8,6 +7,7 @@ import "core:fmt"
 import "core:c"
 import "core:slice"
 import "core:mem"
+import "core:time"
 
 expect :: testing.expect
 log :: testing.log
@@ -31,7 +31,7 @@ test_write_read_close :: proc(t: ^testing.T) {
 	{
 		Test_Ctx :: struct {
 			t:         ^testing.T,
-			kq:        ^KQueue,
+			io:        ^IO,
 			done:      bool,
 			fd:        os.Handle,
 			write_buf: [20]byte,
@@ -40,9 +40,9 @@ test_write_read_close :: proc(t: ^testing.T) {
 			read:      int,
 		}
 
-		kq: KQueue
-		init(&kq)
-		defer destroy(&kq)
+		io: IO
+		init(&io)
+		defer destroy(&io)
 
 		tctx := Test_Ctx {
 			write_buf = [20]byte{
@@ -70,7 +70,7 @@ test_write_read_close :: proc(t: ^testing.T) {
 			read_buf = [20]byte{},
 		}
 		tctx.t = t
-		tctx.kq = &kq
+		tctx.io = &io
 
 		path := "test_write_read_close"
 		handle, errno := os.open(
@@ -83,11 +83,11 @@ test_write_read_close :: proc(t: ^testing.T) {
 
 		tctx.fd = handle
 
-		write(&kq, Op_Write{handle, tctx.write_buf[:], 0}, &tctx, write_callback)
+		write(&io, Op_Write{handle, tctx.write_buf[:], 0}, &tctx, write_callback)
 
 		for !tctx.done {
-			terr := tick(&kq)
-			expect(t, terr == nil, fmt.tprintf("error ticking: %s", terr))
+			terr := tick(&io)
+			expect(t, terr == os.ERROR_NONE, fmt.tprintf("error ticking: %v", terr))
 		}
 
 		expect(t, tctx.read == 20)
@@ -100,7 +100,7 @@ test_write_read_close :: proc(t: ^testing.T) {
 
 			ctx.written = written
 
-			read(ctx.kq, Op_Read{ctx.fd, ctx.read_buf[:], 0}, ctx, read_callback)
+			read(ctx.io, Op_Read{ctx.fd, ctx.read_buf[:], 0}, ctx, read_callback)
 		}
 
 		read_callback :: proc(ctx: rawptr, r: int, err: os.Errno) {
@@ -109,7 +109,7 @@ test_write_read_close :: proc(t: ^testing.T) {
 
 			ctx.read = r
 
-			close(ctx.kq, ctx.fd, ctx, close_callback)
+			close(ctx.io, ctx.fd, ctx, close_callback)
 		}
 
 		close_callback :: proc(ctx: rawptr, ok: bool) {
@@ -140,7 +140,7 @@ test_client_and_server_send_recv :: proc(t: ^testing.T) {
 	{
 		Test_Ctx :: struct {
 			t:             ^testing.T,
-			kq:            ^KQueue,
+			io:            ^IO,
 			send_buf:      []byte,
 			recv_buf:      []byte,
 			sent:          u32,
@@ -149,16 +149,16 @@ test_client_and_server_send_recv :: proc(t: ^testing.T) {
 			done:          bool,
 		}
 
-		kq: KQueue
-		init(&kq)
-		defer destroy(&kq)
+		io: IO
+		init(&io)
+		defer destroy(&io)
 
 		tctx := Test_Ctx {
 			send_buf = []byte{1, 0, 1, 0, 1, 0, 1, 0, 1, 0},
 			recv_buf = []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
 		}
 		tctx.t = t
-		tctx.kq = &kq
+		tctx.io = &io
 
 		endpoint := net.Endpoint {
 			address = net.IP4_Loopback,
@@ -179,7 +179,7 @@ test_client_and_server_send_recv :: proc(t: ^testing.T) {
 		errn := os.listen(os.Socket(server.(net.TCP_Socket)), 1000)
 		expect(t, errn == os.ERROR_NONE, fmt.tprintf("listen error: %i", errn))
 
-		accept(&kq, os.Socket(server.(net.TCP_Socket)), &tctx, accept_callback)
+		accept(&io, os.Socket(server.(net.TCP_Socket)), &tctx, accept_callback)
 
 		client, cerr := net.create_socket(.IP4, .TCP)
 		expect(t, cerr == nil, fmt.tprintf("create socket error: %s", cerr))
@@ -190,20 +190,21 @@ test_client_and_server_send_recv :: proc(t: ^testing.T) {
 		sockaddr := os.sockaddr_in {
 			sin_port   = u16be(endpoint.port),
 			sin_addr   = transmute(os.in_addr)endpoint.address.(net.IP4_Address),
-			sin_family = u8(os.AF_INET),
-			sin_len    = size_of(os.sockaddr_in),
+			sin_family = os.ADDRESS_FAMILY(os.AF_INET),
+			// sin_len    = size_of(os.sockaddr_in), // TODO: different between os
 		}
 		ossockaddr := (^os.SOCKADDR)(&sockaddr)
 		op_connect := Op_Connect {
 			socket = os.Socket(client.(net.TCP_Socket)),
 			addr   = ossockaddr,
-			len    = i32(ossockaddr.len),
+			len    = size_of(os.SOCKADDR), // TODO: different between os
 		}
-		connect(&kq, op_connect, &tctx, connect_callback)
+		connect(&io, op_connect, &tctx, connect_callback)
 
 		for !tctx.done {
-			terr := tick(&kq)
-			expect(t, terr == nil, fmt.tprintf("tick error: %s", terr))
+			terr := tick(&io)
+			time.sleep(time.Second)
+			expect(t, terr == os.ERROR_NONE, fmt.tprintf("tick error: %v", terr))
 		}
 
 		expect(
@@ -239,7 +240,7 @@ test_client_and_server_send_recv :: proc(t: ^testing.T) {
 			ctx := cast(^Test_Ctx)ctx
 			expect(ctx.t, err == os.ERROR_NONE, fmt.tprintf("connect error: %i", err))
 
-			send(ctx.kq, Op_Send{sock, ctx.send_buf, 0}, ctx, send_callback)
+			send(ctx.io, Op_Send{sock, ctx.send_buf, 0}, ctx, send_callback)
 		}
 
 		send_callback :: proc(ctx: rawptr, res: u32, err: os.Errno) {
@@ -261,7 +262,7 @@ test_client_and_server_send_recv :: proc(t: ^testing.T) {
 
 			ctx.accepted_sock = sock
 
-			recv(ctx.kq, Op_Recv{sock, ctx.recv_buf, 0}, ctx, recv_callback)
+			recv(ctx.io, Op_Recv{sock, ctx.recv_buf, 0}, ctx, recv_callback)
 		}
 
 		recv_callback :: proc(ctx: rawptr, buf: []byte, received: u32, err: os.Errno) {

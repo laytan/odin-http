@@ -96,8 +96,10 @@ io_uring_init :: proc(
 
 	fd := os.Handle(res)
 
-	// Unsupported feature.
+	// Unsupported features.
 	assert((params.features & IORING_FEAT_SINGLE_MMAP) != 0)
+	assert((params.flags & IORING_SETUP_CQE32) == 0)
+	assert((params.flags & IORING_SETUP_SQE128) == 0)
 
 	sq, ok := submission_queue_make(fd, params)
 	if !ok do return .System_Resources
@@ -178,38 +180,42 @@ enter :: proc(
 ) {
 	assert(ring.fd >= 0)
 	ns := sys_io_uring_enter(i32(ring.fd), n_to_submit, min_complete, flags, nil)
-	n_submitted = u32(ns)
-	switch os.Errno(ns) {
-	case os.ERROR_NONE:
-		err = .None
-	case os.EAGAIN:
-		// The kernel was unable to allocate memory or ran out of resources for the request. (try again)
-		err = .System_Resources
-	case os.EBADF:
-		// The SQE `fd` is invalid, or `IOSQE_FIXED_FILE` was set but no files were registered
-		err = .File_Descriptor_Invalid
-	case os.EBUSY:
-		// Attempted to overcommit the number of requests it can have pending. Should wait for some completions and try again.
-		err = .Completion_Queue_Overcommitted
-	case os.EINVAL:
-		// The SQE is invalid, or valid but the ring was setup with `IORING_SETUP_IOPOLL`
-		err = .Submission_Queue_Entry_Invalid
-	case os.EFAULT:
-		// The buffer is outside the process' accessible address space, or `IORING_OP_READ_FIXED`
-		// or `IORING_OP_WRITE_FIXED` was specified but no buffers were registered, or the range
-		// described by `addr` and `len` is not within the buffer registered at `buf_index`
-		err = .Buffer_Invalid
-	case os.ENXIO:
-		err = .Ring_Shutting_Down
-	case os.EOPNOTSUPP:
-		// The kernel believes the `fd` doesn't refer to an `io_uring`, or the opcode isn't supported by this kernel (more likely)
-		err = .Opcode_Not_Supported
-	case os.EINTR:
-		// The op was interrupted by a delivery of a signal before it could complete.This can happen while waiting for events with `IORING_ENTER_GETEVENTS`
-		err = .Signal_Interrupt
-	case:
-		err = .Unexpected
+	if ns < 0 {
+		switch os.Errno(ns) {
+		case os.ERROR_NONE:
+			err = .None
+		case os.EAGAIN:
+			// The kernel was unable to allocate memory or ran out of resources for the request. (try again)
+			err = .System_Resources
+		case os.EBADF:
+			// The SQE `fd` is invalid, or `IOSQE_FIXED_FILE` was set but no files were registered
+			err = .File_Descriptor_Invalid
+		// case os.EBUSY: // TODO: why is this not in os_linux
+		// 	// Attempted to overcommit the number of requests it can have pending. Should wait for some completions and try again.
+		// 	err = .Completion_Queue_Overcommitted
+		case os.EINVAL:
+			// The SQE is invalid, or valid but the ring was setup with `IORING_SETUP_IOPOLL`
+			err = .Submission_Queue_Entry_Invalid
+		case os.EFAULT:
+			// The buffer is outside the process' accessible address space, or `IORING_OP_READ_FIXED`
+			// or `IORING_OP_WRITE_FIXED` was specified but no buffers were registered, or the range
+			// described by `addr` and `len` is not within the buffer registered at `buf_index`
+			err = .Buffer_Invalid
+		case os.ENXIO:
+			err = .Ring_Shutting_Down
+		case os.EOPNOTSUPP:
+			// The kernel believes the `fd` doesn't refer to an `io_uring`, or the opcode isn't supported by this kernel (more likely)
+			err = .Opcode_Not_Supported
+		case os.EINTR:
+			// The op was interrupted by a delivery of a signal before it could complete.This can happen while waiting for events with `IORING_ENTER_GETEVENTS`
+			err = .Signal_Interrupt
+		case:
+			err = .Unexpected
+		}
+		return
 	}
+
+	n_submitted = u32(ns)
 	return
 }
 
@@ -365,7 +371,7 @@ read :: proc(
 	sqe.opcode = .READ
 	sqe.fd = i32(fd)
 	sqe.addr = cast(u64)uintptr(&buf[0])
-	sqe.len = u32(len(buf))
+	sqe.len = u32(len(buf)) // TODO: should we minus the offset here?
 	sqe.off = offset
 	sqe.user_data = user_data
 	return
@@ -400,7 +406,7 @@ accept :: proc(
 	user_data: u64,
 	sockfd: os.Socket,
 	addr: ^os.SOCKADDR = nil,
-	addr_len: ^u32 = nil,
+	addr_len: ^os.socklen_t = nil,
 	flags: u32 = 0,
 ) -> (
 	sqe: ^io_uring_sqe,
@@ -423,7 +429,7 @@ connect :: proc(
 	user_data: u64,
 	sockfd: os.Socket,
 	addr: ^os.SOCKADDR,
-	addr_len: u32,
+	addr_len: os.socklen_t,
 ) -> (
 	sqe: ^io_uring_sqe,
 	err: IO_Uring_Error,
@@ -536,10 +542,11 @@ close :: proc(
 // timeout was removed before it expired.
 //
 // io_uring timeouts use the `CLOCK.MONOTONIC` clock source.
+// TODO: is os.Unix_File_Time the correct type to use here?
 timeout :: proc(
 	ring: ^IO_Uring,
 	user_data: u64,
-	ts: ^os.Time_Spec,
+	ts: ^os.Unix_File_Time,
 	count: u32,
 	flags: u32,
 ) -> (
@@ -604,7 +611,7 @@ timeout_remove :: proc(
 link_timeout :: proc(
 	ring: ^IO_Uring,
 	user_data: u64,
-	ts: ^os.Time_Spec,
+	ts: ^os.Unix_File_Time,
 	flags: u32,
 ) -> (
 	sqe: ^io_uring_sqe,
@@ -656,11 +663,11 @@ submission_queue_make :: proc(
 	size := max(sq_size, cq_size)
 
 	mmap_result := unix.sys_mmap(
-		0,
-		size,
+		nil,
+		uint(size),
 		unix.PROT_READ | unix.PROT_WRITE,
-		unix.MAP_SHARED | unix.MAP_POPULATE,
-		fd,
+		unix.MAP_SHARED /* | unix.MAP_POPULATE */,
+		int(fd),
 		IORING_OFF_SQ_RING,
 	)
 	if mmap_result < 0 do return
@@ -670,11 +677,11 @@ submission_queue_make :: proc(
 
 	size_sqes := params.sq_entries * size_of(io_uring_sqe)
 	mmap_sqes_result := unix.sys_mmap(
-		0,
-		size_sqes,
+		nil,
+		uint(size_sqes),
 		unix.PROT_READ | unix.PROT_WRITE,
-		unix.MAP_SHARED | unix.MAP_POPULATE,
-		fd,
+		unix.MAP_SHARED /* | unix.MAP_POPULATE */,
+		int(fd),
 		IORING_OFF_SQES,
 	)
 	if mmap_sqes_result < 0 do return
