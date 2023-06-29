@@ -10,7 +10,7 @@ import "core:thread"
 import "core:time"
 
 Default_Server_Connection :: struct {
-	thread:    thread.Thread,
+	thread:    ^thread.Thread,
 	socket_mu: sync.Mutex,
 	reader:    io.Reader,
 }
@@ -27,15 +27,14 @@ _server_serve :: proc(using s: ^Server) -> net.Network_Error {
 
 		if shut_down do break
 
+		dc := new(Default_Server_Connection, conn_allocator)
+		dc.socket_mu = sync.Mutex{}
+		sync.mutex_lock(&dc.socket_mu)
+
 		c := new(Connection, conn_allocator)
 		c.impl_data = dc
 		c.state = .Pending
 		c.server = s
-		c.handler = handler
-
-		dc := new(Default_Server_Connection, conn_allocator)
-		dc.socket_mu = sync.Mutex{}
-		sync.mutex_lock(&dc.socket_mu)
 
 		// Each connection has its own thread. This has to be the case because
 		// sockets are blocking in the 'net' package of Odin.
@@ -51,16 +50,14 @@ _server_serve :: proc(using s: ^Server) -> net.Network_Error {
 				sync.mutex_lock(&dc.socket_mu)
 
 				c.state = .New
-				if err := conn_handle_reqs(c); err != nil {
-					log.errorf("connection error: %s", err)
-				}
+				conn_handle_reqs(c)
 			},
 			context,
 		)
 
 		socket, client, err := net.accept_tcp(s.tcp_sock)
 		if err != nil {
-			free(c.thread)
+			free(dc.thread)
 			free(c)
 			return err
 		}
