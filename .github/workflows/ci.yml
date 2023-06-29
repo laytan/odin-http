@@ -23,6 +23,9 @@ jobs:
       - name: Odin report
         run: ./Odin/odin report
         timeout-minutes: 1
+      - name: Non-blocking IO test
+        run: ./Odin/odin test nbio
+        timeout-minutes: 10
       - name: Odin check
         run: ./Odin/odin check examples/complete -vet && ./Odin/odin check examples/client -vet
         timeout-minutes: 10
@@ -34,9 +37,6 @@ jobs:
         timeout-minutes: 10
       - name: Odin check for OpenBSD amd64
         run: ./Odin/odin check examples/complete -vet -target:openbsd_amd64 && ./Odin/odin check examples/client -vet -target:openbsd_amd64
-        timeout-minutes: 10
-      - name: Non-blocking IO test
-        run: ./Odin/odin test nbio
         timeout-minutes: 10
   # build_macOS:
   #   runs-on: macos-latest
