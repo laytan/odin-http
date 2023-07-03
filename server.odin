@@ -498,18 +498,18 @@ conn_handle_req :: proc(c: ^Connection) {
 	scanner_scan(&c.scanner, loop, on_rline1)
 }
 
-// Private proc in net package copied verbatim.
 @(private)
 sockaddr_to_endpoint :: proc(native_addr: ^os.SOCKADDR_STORAGE_LH) -> (ep: net.Endpoint) {
-	switch native_addr.family {
-	case u8(os.AF_INET):
+	addr := native_addr.family when ODIN_OS == .Darwin else native_addr.ss_family
+	switch addr {
+	case os.ADDRESS_FAMILY(os.AF_INET):
 		addr := cast(^os.sockaddr_in)native_addr
 		port := int(addr.sin_port)
 		ep = net.Endpoint {
 			address = net.IP4_Address(transmute([4]byte)addr.sin_addr),
 			port    = port,
 		}
-	case u8(os.AF_INET6):
+	case os.ADDRESS_FAMILY(os.AF_INET6):
 		addr := cast(^os.sockaddr_in6)native_addr
 		port := int(addr.sin6_port)
 		ep = net.Endpoint {
