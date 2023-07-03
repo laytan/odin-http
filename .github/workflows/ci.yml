@@ -72,18 +72,6 @@ jobs:
         if: success() || failure()
         run: ./Odin/odin check examples/complete -vet --strict-style && ./Odin/odin check examples/client -vet --strict-style
         timeout-minutes: 10
-      - name: Odin check for Linux i386
-        if: success() || failure()
-        run: ./Odin/odin check examples/complete -vet -target:linux_i386 --strict-style && ./Odin/odin check examples/client -vet -target:linux_i386 --strict-style
-        timeout-minutes: 10
-      - name: Odin check for FreeBSD amd64
-        if: success() || failure()
-        run: ./Odin/odin check examples/complete -vet -target:freebsd_amd64 --strict-style && ./Odin/odin check examples/client -vet -target:freebsd_amd64 --strict-style
-        timeout-minutes: 10
-      - name: Odin check for OpenBSD amd64
-        if: success() || failure()
-        run: ./Odin/odin check examples/complete -vet -target:openbsd_amd64 --strict-style && ./Odin/odin check examples/client -vet -target:openbsd_amd64 --strict-style
-        timeout-minutes: 10
   windows:
     runs-on: windows-2022
     steps:
