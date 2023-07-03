@@ -170,8 +170,8 @@ test_client_and_server_send_recv :: proc(t: ^testing.T) {
 		err = net.set_option(server, .Reuse_Address, true)
 		expect(t, err == nil, fmt.tprintf("set option error: %s", err))
 
-		err = net.set_blocking(server, false)
-		expect(t, err == nil, fmt.tprintf("set non blocking error: %s", err))
+		err = prepare_socket(server)
+		expect(t, err == nil, fmt.tprintf("prepare socket err: %s", err))
 
 		err = net.bind(server, endpoint)
 		expect(t, err == nil, fmt.tprintf("bind error: %s", err))
@@ -184,26 +184,25 @@ test_client_and_server_send_recv :: proc(t: ^testing.T) {
 		client, cerr := net.create_socket(.IP4, .TCP)
 		expect(t, cerr == nil, fmt.tprintf("create socket error: %s", cerr))
 
-		err = net.set_blocking(client, false)
-		expect(t, err == nil, fmt.tprintf("set non blocking error: %s", err))
+		err = prepare_socket(client)
+		expect(t, err == nil, fmt.tprintf("client prepare socket err: %s", err))
 
 		sockaddr := os.sockaddr_in {
 			sin_port   = u16be(endpoint.port),
 			sin_addr   = transmute(os.in_addr)endpoint.address.(net.IP4_Address),
-			sin_family = os.ADDRESS_FAMILY(os.AF_INET),
-			// sin_len    = size_of(os.sockaddr_in), // TODO: different between os
+			sin_family = os.AF_INET,
 		}
+
 		ossockaddr := (^os.SOCKADDR)(&sockaddr)
 		op_connect := Op_Connect {
 			socket = os.Socket(client.(net.TCP_Socket)),
 			addr   = ossockaddr,
-			len    = size_of(os.SOCKADDR), // TODO: different between os
+			len    = size_of(os.SOCKADDR),
 		}
 		connect(&io, op_connect, &tctx, connect_callback)
 
 		for !tctx.done {
 			terr := tick(&io)
-			time.sleep(time.Second)
 			expect(t, terr == os.ERROR_NONE, fmt.tprintf("tick error: %v", terr))
 		}
 

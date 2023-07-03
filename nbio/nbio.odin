@@ -2,7 +2,7 @@ package nbio
 
 import "core:os"
 import "core:time"
-import "core:c"
+import "core:net"
 
 @(private)
 DEFAULT_ENTRIES :: 32
@@ -37,6 +37,11 @@ tick :: proc(io: ^IO) -> os.Errno {
 	return _tick(io)
 }
 
+// TODO: set LINGER option.
+prepare_socket :: proc(socket: net.Any_Socket) -> net.Network_Error {
+	return _prepare_socket(socket)
+}
+
 Op_Accept :: struct {
 	socket: os.Socket,
 	addr: os.SOCKADDR_STORAGE_LH,
@@ -45,7 +50,7 @@ Op_Accept :: struct {
 
 Accept_Callback :: proc(
 	user_data: rawptr,
-	sock: os.Socket,
+	sock: os.Socket, // TODO: remove.
 	addr: os.SOCKADDR_STORAGE_LH,
 	addr_len: os.socklen_t,
 	err: os.Errno,
@@ -66,7 +71,7 @@ close :: proc(io: ^IO, fd: os.Handle, user_data: rawptr, callback: Close_Callbac
 }
 
 Op_Connect :: struct {
-	socket:    os.Socket,
+	socket:    os.Socket, // TODO: remove?
 	addr:      ^os.SOCKADDR,
 	len:       os.socklen_t,
 	initiated: bool,
