@@ -1,4 +1,3 @@
-//+build darwin
 //+private
 package nbio
 
@@ -6,8 +5,13 @@ import "core:c"
 import "core:os"
 import "core:time"
 import "core:mem"
+import "core:net"
 
 import "../kqueue"
+
+_prepare_socket :: proc(socket: net.Any_Socket) -> net.Network_Error {
+	return net.set_blocking(socket, false)
+}
 
 KQueue :: struct {
 	fd:          os.Handle,
@@ -26,11 +30,21 @@ Completion :: struct {
 	user_data:     rawptr,
 }
 
-_init :: proc(io: ^IO, entries: u32 = DEFAULT_ENTRIES, flags: u32 = 0, allocator := context.allocator) -> (err: os.Errno) {
-	kq := new(Kqueue, allocator)
+_init :: proc(
+	io: ^IO,
+	entries: u32 = DEFAULT_ENTRIES,
+	flags: u32 = 0,
+	allocator := context.allocator,
+) -> (
+	err: os.Errno,
+) {
+	kq := new(KQueue, allocator)
 	defer if err != os.ERROR_NONE do free(kq, allocator)
 
-	kq.fd = kqueue.kqueue() or_return
+	qerr: kqueue.Queue_Error
+	kq.fd, qerr = kqueue.kqueue()
+	if qerr != .None do return kq_err_to_os_err(qerr)
+
 	kq.timeouts = make([dynamic]^Completion, allocator)
 	kq.completed = make([dynamic]^Completion, allocator)
 	kq.io_pending = make([dynamic]^Completion, allocator)
@@ -42,7 +56,7 @@ _init :: proc(io: ^IO, entries: u32 = DEFAULT_ENTRIES, flags: u32 = 0, allocator
 }
 
 _destroy :: proc(io: ^IO) {
-	kq := cast(^Kqueue)io.impl_data
+	kq := cast(^KQueue)io.impl_data
 	for timeout in kq.timeouts do free(timeout, kq.allocator)
 	for completed in kq.completed do free(completed, kq.allocator)
 	for pending in kq.io_pending do free(pending, kq.allocator)
@@ -60,15 +74,15 @@ _tick :: proc(io: ^IO) -> os.Errno {
 }
 
 flush :: proc(io: ^IO, wait_for_completions: bool) -> os.Errno {
-	kq := cast(^Kqueue)io.impl_data
+	kq := cast(^KQueue)io.impl_data
 
-	events: [MAX_EVENTS]KEvent
+	events: [MAX_EVENTS]kqueue.KEvent
 
 	next_timeout := flush_timeouts(kq)
 	change_events := flush_io(kq, events[:])
 
 	if (change_events > 0 || len(kq.completed) == 0) {
-		ts: Time_Spec
+		ts: kqueue.Time_Spec
 
 		if (change_events == 0 && len(kq.completed) == 0) {
 			if (wait_for_completions) {
@@ -76,11 +90,12 @@ flush :: proc(io: ^IO, wait_for_completions: bool) -> os.Errno {
 				ts.nsec = timeout % NANOSECONDS_PER_SECOND
 				ts.sec = c.long(timeout / NANOSECONDS_PER_SECOND)
 			} else if (kq.io_inflight == 0) {
-				return .None
+				return os.ERROR_NONE
 			}
 		}
 
-		new_events := kqueue.kevent(kq.fd, events[:change_events], events[:], &ts) or_return
+		new_events, err := kqueue.kevent(kq.fd, events[:change_events], events[:], &ts)
+		if err != .None do return ev_err_to_os_err(err)
 
 		for i := 0; i < change_events; i += 1 {
 			unordered_remove(&kq.io_pending, 0)
@@ -101,10 +116,10 @@ flush :: proc(io: ^IO, wait_for_completions: bool) -> os.Errno {
 	}
 	resize(&kq.completed, 0)
 
-	return .None
+	return os.ERROR_NONE
 }
 
-flush_io :: proc(kq: ^KQueue, events: []KEvent) -> int {
+flush_io :: proc(kq: ^KQueue, events: []kqueue.KEvent) -> int {
 	events := events
 	for event, i in &events {
 		if len(kq.io_pending) <= i do return i
@@ -113,27 +128,27 @@ flush_io :: proc(kq: ^KQueue, events: []KEvent) -> int {
 		#partial switch op in completion.operation {
 		case Op_Accept:
 			event.ident = uintptr(op.socket)
-			event.filter = EVFILT_READ
+			event.filter = kqueue.EVFILT_READ
 		case Op_Connect:
 			event.ident = uintptr(op.socket)
-			event.filter = EVFILT_WRITE
+			event.filter = kqueue.EVFILT_WRITE
 		case Op_Read:
 			event.ident = uintptr(op.fd)
-			event.filter = EVFILT_READ
+			event.filter = kqueue.EVFILT_READ
 		case Op_Write:
 			event.ident = uintptr(op.fd)
-			event.filter = EVFILT_WRITE
+			event.filter = kqueue.EVFILT_WRITE
 		case Op_Recv:
 			event.ident = uintptr(op.socket)
-			event.filter = EVFILT_READ
+			event.filter = kqueue.EVFILT_READ
 		case Op_Send:
 			event.ident = uintptr(op.socket)
-			event.filter = EVFILT_WRITE
+			event.filter = kqueue.EVFILT_WRITE
 		case:
 			panic("invalid completion operation queued")
 		}
 
-		event.flags = EV_ADD | EV_ENABLE | EV_ONESHOT
+		event.flags = kqueue.EV_ADD | kqueue.EV_ENABLE | kqueue.EV_ONESHOT
 		event.udata = completion
 	}
 
@@ -177,12 +192,14 @@ flush_timeouts :: proc(kq: ^KQueue) -> (min_timeout: Maybe(i64)) {
 
 // Wraps os.accept using the kqueue.
 _accept :: proc(io: ^IO, socket: os.Socket, user_data: rawptr, callback: Accept_Callback) {
-	kq := cast(^Kqueue)io.impl_data
+	kq := cast(^KQueue)io.impl_data
 
 	completion := new(Completion, kq.allocator)
 	completion.user_data = user_data
 	completion.user_callback = rawptr(callback)
-	completion.operation = Op_Accept{socket}
+	completion.operation = Op_Accept {
+		socket = socket,
+	}
 
 	completion.callback = proc(kq: ^KQueue, completion: ^Completion) {
 		op := completion.operation.(Op_Accept)
@@ -206,7 +223,7 @@ _accept :: proc(io: ^IO, socket: os.Socket, user_data: rawptr, callback: Accept_
 
 // Wraps os.close using the kqueue.
 _close :: proc(io: ^IO, fd: os.Handle, user_data: rawptr, callback: Close_Callback) {
-	kq := cast(^Kqueue)io.impl_data
+	kq := cast(^KQueue)io.impl_data
 	completion := new(Completion, kq.allocator)
 	completion.user_data = user_data
 	completion.user_callback = rawptr(callback)
@@ -226,7 +243,7 @@ _close :: proc(io: ^IO, fd: os.Handle, user_data: rawptr, callback: Close_Callba
 
 // Wraps os.connect using the kqueue.
 _connect :: proc(io: ^IO, op: Op_Connect, user_data: rawptr, callback: Connect_Callback) {
-	kq := cast(^Kqueue)io.impl_data
+	kq := cast(^KQueue)io.impl_data
 
 	completion := new(Completion, kq.allocator)
 	completion.user_data = user_data
@@ -258,7 +275,7 @@ _connect :: proc(io: ^IO, op: Op_Connect, user_data: rawptr, callback: Connect_C
 
 // Wraps os.read_at using the kqueue.
 _read :: proc(io: ^IO, op: Op_Read, user_data: rawptr, callback: Read_Callback) {
-	kq := cast(^Kqueue)io.impl_data
+	kq := cast(^KQueue)io.impl_data
 
 	completion := new(Completion, kq.allocator)
 	completion.user_data = user_data
@@ -285,7 +302,7 @@ _read :: proc(io: ^IO, op: Op_Read, user_data: rawptr, callback: Read_Callback) 
 
 // Wraps os.recv using the kqueue.
 _recv :: proc(io: ^IO, op: Op_Recv, user_data: rawptr, callback: Recv_Callback) {
-	kq := cast(^Kqueue)io.impl_data
+	kq := cast(^KQueue)io.impl_data
 
 	completion := new(Completion, kq.allocator)
 	completion.user_data = user_data
@@ -311,7 +328,7 @@ _recv :: proc(io: ^IO, op: Op_Recv, user_data: rawptr, callback: Recv_Callback) 
 
 // Wraps os.send using the kqueue.
 _send :: proc(io: ^IO, op: Op_Send, user_data: rawptr, callback: Send_Callback) {
-	kq := cast(^Kqueue)io.impl_data
+	kq := cast(^KQueue)io.impl_data
 
 	completion := new(Completion, kq.allocator)
 	completion.user_data = user_data
@@ -337,7 +354,7 @@ _send :: proc(io: ^IO, op: Op_Send, user_data: rawptr, callback: Send_Callback) 
 
 // Wraps os.write using the kqueue.
 _write :: proc(io: ^IO, op: Op_Write, user_data: rawptr, callback: Write_Callback) {
-	kq := cast(^Kqueue)io.impl_data
+	kq := cast(^KQueue)io.impl_data
 
 	completion := new(Completion, kq.allocator)
 	completion.user_data = user_data
@@ -363,7 +380,7 @@ _write :: proc(io: ^IO, op: Op_Write, user_data: rawptr, callback: Write_Callbac
 
 // Runs the callback after the timeout, using the kqueue.
 _timeout :: proc(io: ^IO, dur: time.Duration, user_data: rawptr, callback: Timeout_Callback) {
-	kq := cast(^Kqueue)io.impl_data
+	kq := cast(^KQueue)io.impl_data
 
 	completion := new(Completion, kq.allocator)
 	completion.user_data = user_data
@@ -376,7 +393,53 @@ _timeout :: proc(io: ^IO, dur: time.Duration, user_data: rawptr, callback: Timeo
 		callback := cast(Timeout_Callback)completion.user_callback
 		callback(completion.user_data)
 
-		free(completion)
+		free(completion, kq.allocator)
 	}
 	append(&kq.timeouts, completion)
+}
+
+@(private = "file")
+kq_err_to_os_err :: proc(err: kqueue.Queue_Error) -> os.Errno {
+	switch err {
+	case .Out_Of_Memory:
+		return os.ENOMEM
+	case .Descriptor_Table_Full:
+		return os.EMFILE
+	case .File_Table_Full:
+		return os.ENFILE
+	case .Unknown:
+		return os.EFAULT
+	case .None:
+		fallthrough
+	case:
+		return os.ERROR_NONE
+	}
+}
+
+@(private = "file")
+ev_err_to_os_err :: proc(err: kqueue.Event_Error) -> os.Errno {
+	switch err {
+	case .Access_Denied:
+		return os.EACCES
+	case .Invalid_Event:
+		return os.EFAULT
+	case .Invalid_Descriptor:
+		return os.EBADF
+	case .Signal:
+		return os.EINTR
+	case .Invalid_Timeout_Or_Filter:
+		return os.EINVAL
+	case .Event_Not_Found:
+		return os.ENOENT
+	case .Out_Of_Memory:
+		return os.ENOMEM
+	case .Process_Not_Found:
+		return os.ESRCH
+	case .Unknown:
+		return os.EFAULT
+	case .None:
+		fallthrough
+	case:
+		return os.ERROR_NONE
+	}
 }
