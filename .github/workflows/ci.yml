@@ -6,6 +6,9 @@ on:
   schedule:
     - cron: 0 20 * * *
 
+env:
+  FORCE_COLOR: "1"
+
 jobs:
   linux:
     runs-on: ubuntu-latest
@@ -28,19 +31,19 @@ jobs:
         timeout-minutes: 10
       - name: Odin check
         if: success() || failure()
-        run: ./Odin/odin check examples/complete -vet && ./Odin/odin check examples/client -vet
+        run: ./Odin/odin check examples/complete -vet --strict-style && ./Odin/odin check examples/client -vet --strict-style
         timeout-minutes: 10
       - name: Odin check for Linux i386
         if: success() || failure()
-        run: ./Odin/odin check examples/complete -vet -target:linux_i386 && ./Odin/odin check examples/client -vet -target:linux_i386
+        run: ./Odin/odin check examples/complete -vet -target:linux_i386 --strict-style && ./Odin/odin check examples/client -vet -target:linux_i386 --strict-style
         timeout-minutes: 10
       - name: Odin check for FreeBSD amd64
         if: success() || failure()
-        run: ./Odin/odin check examples/complete -vet -target:freebsd_amd64 && ./Odin/odin check examples/client -vet -target:freebsd_amd64
+        run: ./Odin/odin check examples/complete -vet -target:freebsd_amd64 --strict-style && ./Odin/odin check examples/client -vet -target:freebsd_amd64 --strict-style
         timeout-minutes: 10
       - name: Odin check for OpenBSD amd64
         if: success() || failure()
-        run: ./Odin/odin check examples/complete -vet -target:openbsd_amd64 && ./Odin/odin check examples/client -vet -target:openbsd_amd64
+        run: ./Odin/odin check examples/complete -vet -target:openbsd_amd64 --strict-style && ./Odin/odin check examples/client -vet -target:openbsd_amd64 --strict-style
         timeout-minutes: 10
   macOS:
     runs-on: macos-latest
@@ -67,19 +70,19 @@ jobs:
         timeout-minutes: 10
       - name: Odin check
         if: success() || failure()
-        run: ./Odin/odin check examples/complete -vet && ./Odin/odin check examples/client -vet
+        run: ./Odin/odin check examples/complete -vet --strict-style && ./Odin/odin check examples/client -vet --strict-style
         timeout-minutes: 10
       - name: Odin check for Linux i386
         if: success() || failure()
-        run: ./Odin/odin check examples/complete -vet -target:linux_i386 && ./Odin/odin check examples/client -vet -target:linux_i386
+        run: ./Odin/odin check examples/complete -vet -target:linux_i386 --strict-style && ./Odin/odin check examples/client -vet -target:linux_i386 --strict-style
         timeout-minutes: 10
       - name: Odin check for FreeBSD amd64
         if: success() || failure()
-        run: ./Odin/odin check examples/complete -vet -target:freebsd_amd64 && ./Odin/odin check examples/client -vet -target:freebsd_amd64
+        run: ./Odin/odin check examples/complete -vet -target:freebsd_amd64 --strict-style && ./Odin/odin check examples/client -vet -target:freebsd_amd64 --strict-style
         timeout-minutes: 10
       - name: Odin check for OpenBSD amd64
         if: success() || failure()
-        run: ./Odin/odin check examples/complete -vet -target:openbsd_amd64 && ./Odin/odin check examples/client -vet -target:openbsd_amd64
+        run: ./Odin/odin check examples/complete -vet -target:openbsd_amd64 --strict-style && ./Odin/odin check examples/client -vet -target:openbsd_amd64 --strict-style
         timeout-minutes: 10
   windows:
     runs-on: windows-2022
@@ -104,20 +107,20 @@ jobs:
       - name: Odin check server
         if: success() || failure()
         shell: cmd
-        run: .\Odin\odin.exe check examples/complete -vet
+        run: .\Odin\odin.exe check examples/complete -vet --strict-style
         timeout-minutes: 10
       - name: Odin check client
         if: success() || failure()
         shell: cmd
-        run: .\Odin\odin.exe check examples/client -vet
+        run: .\Odin\odin.exe check examples/client -vet --strict-style
         timeout-minutes: 10
       - name: Odin check server for Windows 32bits
         if: success() || failure()
         shell: cmd
-        run: .\Odin\odin.exe check examples/complete -target:windows_i386
+        run: .\Odin\odin.exe check examples/complete -target:windows_i386 --strict-style
         timeout-minutes: 10
       - name: Odin check client for Windows 32bits
         if: success() || failure()
         shell: cmd
-        run: .\Odin\odin.exe check examples/client -target:windows_i386
+        run: .\Odin\odin.exe check examples/client -target:windows_i386 --strict-style
         timeout-minutes: 10
