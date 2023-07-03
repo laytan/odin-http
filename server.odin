@@ -9,7 +9,9 @@ import "core:mem"
 import "core:mem/virtual"
 import "core:runtime"
 import "core:c/libc"
+import "core:c"
 import "core:os"
+import "nbio"
 
 Server_Opts :: struct {
 	// Whether the server should accept every request that sends a "Expect: 100-continue" header automatically.
@@ -48,9 +50,7 @@ Server :: struct {
 	shutting_down:  bool,
 	shut_down:      bool,
 	handler:        Handler,
-
-	// Implementation(OS) specific data.
-	impl_data:      rawptr,
+	io:             nbio.IO,
 }
 
 Default_Endpoint := net.Endpoint {
@@ -88,7 +88,32 @@ server_serve :: proc(s: ^Server, handler: Handler) -> net.Network_Error {
 	// Save allocator so we can free connections later.
 	s.conn_allocator = context.allocator
 
-	return _server_serve(s)
+	nbio.prepare_socket(s.tcp_sock)
+
+	errno := nbio.init(&s.io)
+	// TODO: error handling.
+	assert(errno == os.ERROR_NONE)
+	defer nbio.destroy(&s.io)
+
+	log.debug("accepting connections")
+	nbio.accept(&s.io, os.Socket(s.tcp_sock), s, on_accept)
+
+	log.debug("starting event loop")
+	for {
+		if s.shutting_down {
+			time.sleep(SHUTDOWN_INTERVAL)
+			continue
+		}
+
+		if s.shut_down do break
+
+		errno = nbio.tick(&s.io)
+		// TODO: error handling.
+		assert(errno == os.ERROR_NONE)
+	}
+
+	log.debug("event loop end")
+	return nil
 }
 
 // The time between checks and closes of connections in a graceful shutdown.
@@ -135,7 +160,7 @@ server_shutdown :: proc(using s: ^Server) {
 
 	net.close(tcp_sock)
 
-	_server_shutdown(s)
+	nbio.destroy(&io)
 
 	log.info("shutdown: done")
 }
@@ -181,7 +206,7 @@ server_on_connection_close :: proc(using s: ^Server, c: ^Connection) {
 	free(c, conn_allocator)
 	delete_key(&s.conns, c.socket)
 
-	_server_on_conn_close(s, c)
+	// TODO: clean up c.response inflight.
 }
 
 
@@ -212,7 +237,13 @@ Connection :: struct {
 	curr_req:  ^Request,
 	state:     Connection_State,
 	scanner:   Scanner,
-	impl_data: rawptr,
+	response:  Maybe(Response_Inflight),
+}
+
+Response_Inflight :: struct {
+	buf:        []byte,
+	sent:       int,
+	will_close: bool,
 }
 
 // RFC 7230 6.6.
@@ -239,6 +270,36 @@ connection_close :: proc(c: ^Connection) {
 	c.state = .Closed
 
 	server_on_connection_close(c.server, c)
+}
+
+@(private)
+on_accept :: proc(
+	server: rawptr,
+	sock: os.Socket,
+	addr: os.SOCKADDR_STORAGE_LH,
+	addr_len: c.int,
+	err: os.Errno,
+) {
+	server := cast(^Server)server
+	addr := addr
+
+	// Accept next connection.
+	// TODO: is this how it should be done (performance wise)?
+	nbio.accept(&server.io, os.Socket(server.tcp_sock), server, on_accept)
+
+	ep := sockaddr_to_endpoint(&addr)
+	client := net.TCP_Socket(sock)
+
+	c := new(Connection, server.conn_allocator)
+	c.state = .New
+	c.server = server
+	c.client = ep
+	c.socket = client
+
+	server.conns[c.socket] = c
+
+	log.infof("new connection with %v, got %d conns", ep, len(server.conns))
+	conn_handle_reqs(c)
 }
 
 conn_handle_reqs :: proc(c: ^Connection) {
@@ -435,4 +496,28 @@ conn_handle_req :: proc(c: ^Connection) {
 
 	c.scanner.max_token_size = c.server.opts.limit_request_line
 	scanner_scan(&c.scanner, loop, on_rline1)
+}
+
+// Private proc in net package copied verbatim.
+@(private)
+sockaddr_to_endpoint :: proc(native_addr: ^os.SOCKADDR_STORAGE_LH) -> (ep: net.Endpoint) {
+	switch native_addr.family {
+	case u8(os.AF_INET):
+		addr := cast(^os.sockaddr_in)native_addr
+		port := int(addr.sin_port)
+		ep = net.Endpoint {
+			address = net.IP4_Address(transmute([4]byte)addr.sin_addr),
+			port    = port,
+		}
+	case u8(os.AF_INET6):
+		addr := cast(^os.sockaddr_in6)native_addr
+		port := int(addr.sin6_port)
+		ep = net.Endpoint {
+			address = net.IP6_Address(transmute([8]u16be)addr.sin6_addr),
+			port    = port,
+		}
+	case:
+		panic("native_addr is neither IP4 or IP6 address")
+	}
+	return
 }

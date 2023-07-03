@@ -2,11 +2,13 @@ package http
 
 import "core:bufio"
 import "core:intrinsics"
+import "core:os"
+import "core:log"
+import "nbio"
 
 Scan_Callback :: proc(user_data: rawptr, token: []byte, err: bufio.Scanner_Error)
 
-// A callback based scanner over the connection.
-// Calls to os specific reader procedures.
+// A callback based scanner over the connection based on nbio.
 Scanner :: struct {
 	connection:                   ^Connection,
 	split:                        bufio.Split_Proc,
@@ -22,7 +24,6 @@ Scanner :: struct {
 	done:                         bool,
 	could_be_too_short:           bool,
 
-	// Callback data for when we need to read more into the buffer.
 	user_data:                    rawptr,
 	callback:                     Scan_Callback,
 }
@@ -166,11 +167,25 @@ scanner_scan :: proc(
 	s.callback = callback
 	s.could_be_too_short = could_be_too_short
 
-	// Implemented per OS, should read data into the buffer and call scanner_on_read.
-	_scanner_read(s, s.buf[s.end:len(s.buf)])
+	nbio.recv(
+		&s.connection.server.io,
+		nbio.Op_Recv{os.Socket(s.connection.socket), s.buf[s.end:len(s.buf)], 0},
+		s,
+		scanner_on_read,
+	)
 }
 
-scanner_on_read :: proc(s: ^Scanner, n: int, err: bufio.Scanner_Error) {
+scanner_on_read :: proc(s_: rawptr, _: []byte, n_: u32, e: os.Errno) {
+	s := cast(^Scanner)s_
+	n := int(n_)
+
+	// Basically all errors from recv are for exceptional cases and don't happen under normal circumstances.
+	err: bufio.Scanner_Error
+	if e != os.ERROR_NONE {
+		log.errorf("Unexpected recv error from nbio: %v", e)
+		err = .Unknown
+	}
+
 	set_err :: proc(s: ^Scanner, err: bufio.Scanner_Error) {
 		switch s._err {
 		case nil, .EOF:

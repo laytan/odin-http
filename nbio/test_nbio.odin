@@ -190,7 +190,7 @@ test_client_and_server_send_recv :: proc(t: ^testing.T) {
 		sockaddr := os.sockaddr_in {
 			sin_port   = u16be(endpoint.port),
 			sin_addr   = transmute(os.in_addr)endpoint.address.(net.IP4_Address),
-			sin_family = os.AF_INET,
+			sin_family = os.ADDRESS_FAMILY(os.AF_INET),
 		}
 
 		ossockaddr := (^os.SOCKADDR)(&sockaddr)

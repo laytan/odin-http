@@ -11,6 +11,7 @@ import "core:path/filepath"
 import "core:strconv"
 import "core:strings"
 import "core:time"
+import "nbio"
 
 Response :: struct {
 	status:  Status,
@@ -105,24 +106,44 @@ response_send :: proc(using r: ^Response, conn: ^Connection, allocator := contex
 
 	if response_can_have_body(r, conn) do bytes.buffer_write(&res, bytes.buffer_to_bytes(&body))
 
-	will_close_ptr := new(bool, allocator)
-	will_close_ptr^ = will_close
-	_send_response(conn, bytes.buffer_to_bytes(&res), will_close_ptr, on_response_sent, allocator)
+	buf := bytes.buffer_to_bytes(&res)
+	conn.response = Response_Inflight{buf = buf, will_close = will_close}
+	nbio.send(
+		&conn.server.io,
+		nbio.Op_Send{os.Socket(conn.socket), buf, 0},
+		conn,
+		on_response_sent,
+	)
 }
 
-Send_Response_Callback :: proc(conn: ^Connection, should_close: ^bool, err: net.Network_Error, allocator: mem.Allocator)
-on_response_sent :: proc(conn: ^Connection, should_close: ^bool, err: net.Network_Error, allocator := context.allocator) {
+@(private)
+on_response_sent :: proc(conn_: rawptr, sent: u32, err: os.Errno) {
+	conn := cast(^Connection)conn_
+	res := conn.response.(Response_Inflight)
+
+	res.sent += int(sent)
+	if len(res.buf) != int(sent) {
+		nbio.send(
+			&conn.server.io,
+			nbio.Op_Send{os.Socket(conn.socket), res.buf[res.sent:], 0},
+			conn,
+			on_response_sent,
+		)
+		return
+	}
+
+	defer free_all(conn.curr_req.allocator)
+	defer conn.response = nil
+
 	switch {
-	case err != nil:
-		log.errorf("could not send response: %s", err)
+	case err != os.ERROR_NONE:
+		log.errorf("could not send response: %v", err)
 		fallthrough
-	case should_close^:
+	case res.will_close:
 		conn.state = .Closing
-		free_all(allocator)
 		connection_close(conn)
 	case:
 		conn.state = .Idle
-		free_all(allocator)
 		conn_handle_req(conn)
 	}
 }
