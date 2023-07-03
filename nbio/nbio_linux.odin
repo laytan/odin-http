@@ -193,7 +193,7 @@ _accept :: proc(io: ^IO, socket: os.Socket, user_data: rawptr, callback: Accept_
 accept_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
 	op := completion.operation.(Op_Accept)
 
-	sqe, err := io_uring.accept(
+	_, err := io_uring.accept(
 		&lx.ring,
 		u64(uintptr(completion)),
 		op.socket,
@@ -245,7 +245,7 @@ _close :: proc(io: ^IO, fd: os.Handle, user_data: rawptr, callback: Close_Callba
 close_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
 	op := completion.operation.(Op_Close)
 
-	sqe, err := io_uring.close(&lx.ring, u64(uintptr(completion)), op.fd)
+	_, err := io_uring.close(&lx.ring, u64(uintptr(completion)), op.fd)
 	if err == .Submission_Queue_Full {
 		queue.push_back(&lx.unqueued, completion)
 		return
@@ -256,7 +256,6 @@ close_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
 
 @(private = "file")
 close_callback :: proc(lx: ^Linux, completion: ^Completion) {
-	op := completion.operation.(Op_Close)
 	callback := cast(Close_Callback)completion.user_callback
 
 	errno := os.Errno(-completion.result)
@@ -283,7 +282,7 @@ _connect :: proc(io: ^IO, op: Op_Connect, user_data: rawptr, callback: Connect_C
 connect_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
 	op := completion.operation.(Op_Connect)
 
-	sqe, err := io_uring.connect(&lx.ring, u64(uintptr(completion)), op.socket, op.addr, op.len)
+	_, err := io_uring.connect(&lx.ring, u64(uintptr(completion)), op.socket, op.addr, op.len)
 	if err == .Submission_Queue_Full {
 		queue.push_back(&lx.unqueued, completion)
 		return
@@ -324,7 +323,7 @@ _read :: proc(io: ^IO, op: Op_Read, user_data: rawptr, callback: Read_Callback) 
 read_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
 	op := completion.operation.(Op_Read)
 
-	sqe, err := io_uring.read(&lx.ring, u64(uintptr(completion)), op.fd, op.buf, u64(op.offset))
+	_, err := io_uring.read(&lx.ring, u64(uintptr(completion)), op.fd, op.buf, u64(op.offset))
 	if err == .Submission_Queue_Full {
 		queue.push_back(&lx.unqueued, completion)
 		return
@@ -335,7 +334,6 @@ read_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
 
 @(private = "file")
 read_callback :: proc(lx: ^Linux, completion: ^Completion) {
-	op := completion.operation.(Op_Read)
 	callback := cast(Read_Callback)completion.user_callback
 
 	if completion.result < 0 {
@@ -370,7 +368,7 @@ _recv :: proc(io: ^IO, op: Op_Recv, user_data: rawptr, callback: Recv_Callback) 
 recv_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
 	op := completion.operation.(Op_Recv)
 
-	sqe, err := io_uring.recv(&lx.ring, u64(uintptr(completion)), op.socket, op.buf, u32(op.flags))
+	_, err := io_uring.recv(&lx.ring, u64(uintptr(completion)), op.socket, op.buf, u32(op.flags))
 	if err == .Submission_Queue_Full {
 		queue.push_back(&lx.unqueued, completion)
 		return
@@ -416,7 +414,7 @@ _send :: proc(io: ^IO, op: Op_Send, user_data: rawptr, callback: Send_Callback) 
 send_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
 	op := completion.operation.(Op_Send)
 
-	sqe, err := io_uring.send(&lx.ring, u64(uintptr(completion)), op.socket, op.buf, u32(op.flags))
+	_, err := io_uring.send(&lx.ring, u64(uintptr(completion)), op.socket, op.buf, u32(op.flags))
 	if err == .Submission_Queue_Full {
 		queue.push_back(&lx.unqueued, completion)
 		return
@@ -427,7 +425,6 @@ send_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
 
 @(private = "file")
 send_callback :: proc(lx: ^Linux, completion: ^Completion) {
-	op := completion.operation.(Op_Send)
 	callback := cast(Send_Callback)completion.user_callback
 
 	if completion.result < 0 {
@@ -462,7 +459,7 @@ _write :: proc(io: ^IO, op: Op_Write, user_data: rawptr, callback: Write_Callbac
 write_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
 	op := completion.operation.(Op_Write)
 
-	sqe, err := io_uring.write(&lx.ring, u64(uintptr(completion)), op.fd, op.buf, u64(op.offset))
+	_, err := io_uring.write(&lx.ring, u64(uintptr(completion)), op.fd, op.buf, u64(op.offset))
 	if err == .Submission_Queue_Full {
 		queue.push_back(&lx.unqueued, completion)
 		return
@@ -473,7 +470,6 @@ write_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
 
 @(private = "file")
 write_callback :: proc(lx: ^Linux, completion: ^Completion) {
-	op := completion.operation.(Op_Write)
 	callback := cast(Write_Callback)completion.user_callback
 
 	if completion.result < 0 {
@@ -516,7 +512,7 @@ timeout_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
 	ts.nanoseconds = timeout % NANOSECONDS_PER_SECOND
 	ts.seconds = timeout / NANOSECONDS_PER_SECOND
 
-	sqe, err := io_uring.timeout(&lx.ring, u64(uintptr(completion)), &ts, 0, io_uring.IORING_TIMEOUT_ABS)
+	_, err := io_uring.timeout(&lx.ring, u64(uintptr(completion)), &ts, 0, io_uring.IORING_TIMEOUT_ABS)
 	if err == .Submission_Queue_Full {
 		queue.push_back(&lx.unqueued, completion)
 		return
@@ -527,7 +523,6 @@ timeout_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
 
 @(private = "file")
 timeout_callback :: proc(lx: ^Linux, completion: ^Completion) {
-	op := completion.operation.(Op_Timeout)
 	callback := cast(Timeout_Callback)completion.user_callback
 
 	errno := os.Errno(-completion.result)

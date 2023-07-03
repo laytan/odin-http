@@ -5,7 +5,6 @@ import "core:os"
 import "core:math"
 import "core:sys/unix"
 import "core:sync"
-import "core:mem"
 
 DEFAULT_THREAD_IDLE_MS :: 1000
 DEFAULT_ENTRIES :: 32
