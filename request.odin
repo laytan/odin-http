@@ -7,7 +7,6 @@ import "core:mem"
 import "core:net"
 import "core:strconv"
 import "core:strings"
-import "core:thread"
 
 Request :: struct {
 	// If in a handler, this is always there and never None.

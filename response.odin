@@ -1,11 +1,8 @@
 package http
 
 import "core:bytes"
-import "core:encoding/json"
-import "core:io"
 import "core:log"
 import "core:os"
-import "core:path/filepath"
 import "core:strconv"
 import "core:strings"
 import "core:time"
@@ -32,37 +29,46 @@ response_init :: proc(r: ^Response, allocator := context.allocator) {
 // Closes the connection or starts the handling of the next request.
 @(private)
 response_send :: proc(using r: ^Response, conn: ^Connection, allocator := context.allocator) {
-	res: bytes.Buffer
-	// Responses are on average at least 100 bytes, so lets start there, but add the body's length.
-	initial_buf_cap := response_needs_content_length(r, conn) ? 100 + bytes.buffer_length(&body) : 100
-	bytes.buffer_init_allocator(&res, 0, initial_buf_cap, allocator)
+	context.allocator = allocator
 
-	will_close := response_must_close(conn.curr_req, r)
-
-	// RFC 7230 6.3: A server MUST read
-	// the entire request message body or close the connection after sending
-	// its response, since otherwise the remaining data on a persistent
-	// connection would be misinterpreted as the next request.
-	if !will_close {
-		if conn.curr_req._body == nil {
-			// No error means the body was not read by a handler.
-			log.debug("reading body")
-			request_body(conn.curr_req, Max_Post_Handler_Discard_Bytes)
-		}
-
-		if err, is_err := conn.curr_req._body.(Body_Error); is_err {
+	check_body := proc(body: Body_Type, was_alloc: bool, res: rawptr) {
+		res := cast(^Response)res
+		will_close: bool
+		if err, is_err := body.(Body_Error); is_err {
 			switch err {
 			case .Scan_Failed, .Invalid_Length, .Invalid_Trailer_Header, .Too_Long, .Invalid_Chunk_Size:
 				// Any read error should close the connection.
-				status = body_error_status(err)
-				headers["connection"] = "close"
+				res.status = body_error_status(err)
+				res.headers["connection"] = "close"
 				will_close = true
 			case .No_Length, .None: // no-op, request had no body or read succeeded.
 			case:
 				assert(err != nil, "always expect error from request_body")
 			}
 		}
+
+		response_send_got_body(res, will_close)
 	}
+
+	// RFC 7230 6.3: A server MUST read
+	// the entire request message body or close the connection after sending
+	// its response, since otherwise the remaining data on a persistent
+	// connection would be misinterpreted as the next request.
+	if !response_must_close(conn.curr_req, r) {
+		request_body(conn.curr_req, check_body, Max_Post_Handler_Discard_Bytes, r)
+	} else {
+		response_send_got_body(r, true)
+	}
+}
+
+@(private)
+response_send_got_body :: proc(using r: ^Response, will_close: bool) {
+	conn := r._conn
+
+	res: bytes.Buffer
+	// Responses are on average at least 100 bytes, so lets start there, but add the body's length.
+	initial_buf_cap := response_needs_content_length(r, conn) ? 100 + bytes.buffer_length(&body) : 100
+	bytes.buffer_init_allocator(&res, 0, initial_buf_cap)
 
 	bytes.buffer_write_string(&res, "HTTP/1.1 ")
 	bytes.buffer_write_string(&res, status_string(status))
@@ -70,7 +76,7 @@ response_send :: proc(using r: ^Response, conn: ^Connection, allocator := contex
 
 	// Per RFC 9910 6.6.1 a Date header must be added in 2xx, 3xx, 4xx responses.
 	if status >= .Ok && status <= .Internal_Server_Error && "date" not_in headers {
-		headers["date"] = format_date_header(time.now(), allocator)
+		headers["date"] = format_date_header(time.now())
 	}
 
 	// Write the status code as the body, if there is no body set by the handlers.
@@ -80,7 +86,7 @@ response_send :: proc(using r: ^Response, conn: ^Connection, allocator := contex
 	}
 
 	if "content-length" not_in headers && response_needs_content_length(r, conn) {
-		buf := make([]byte, 32, allocator)
+		buf := make([]byte, 32)
 		headers["content-length"] = strconv.itoa(buf, bytes.buffer_length(&body))
 	}
 
@@ -90,7 +96,8 @@ response_send :: proc(using r: ^Response, conn: ^Connection, allocator := contex
 
 		// Escape newlines in headers, if we don't, an attacker can find an endpoint
 		// that returns a header with user input, and inject headers into the response.
-		esc_value, _ := strings.replace_all(value, "\n", "\\n", allocator)
+		// PERF: probably slow.
+		esc_value, _ := strings.replace_all(value, "\n", "\\n")
 		bytes.buffer_write_string(&res, esc_value)
 
 		bytes.buffer_write_string(&res, "\r\n")
@@ -115,6 +122,7 @@ response_send :: proc(using r: ^Response, conn: ^Connection, allocator := contex
 		on_response_sent,
 	)
 }
+
 
 @(private)
 on_response_sent :: proc(conn_: rawptr, sent: u32, err: os.Errno) {
