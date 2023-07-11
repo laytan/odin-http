@@ -128,24 +128,30 @@ ping :: proc(req: ^http.Request, res: ^http.Response) {
 }
 
 index :: proc(req: ^http.Request, res: ^http.Response) {
-	http.respond_file(res, "examples/complete/static/index.html", req.allocator)
+	http.respond_file(res, "examples/complete/static/index.html")
 }
 
 static :: proc(req: ^http.Request, res: ^http.Response) {
-	http.respond_dir(res, "/", "examples/complete/static", req.url_params[0], req.allocator)
+	http.respond_dir(res, "/", "examples/complete/static", req.url_params[0])
 }
 
+// TODO: this needs abstractions.
 post_ping :: proc(req: ^http.Request, res: ^http.Response) {
-	body := http.request_body(req, len("ping"))
-	if err, is_err := body.(http.Body_Error); is_err {
-		res.status = http.body_error_status(err)
-		return
-	}
+	http.request_body(req, proc(body: http.Body_Type, was_alloc: bool, res: rawptr) {
+		res := cast(^http.Response)res
 
-	if (body.(http.Body_Plain) or_else "") != "ping" {
-		res.status = .Unprocessable_Content
-		return
-	}
+		if err, is_err := body.(http.Body_Error); is_err {
+			res.status = http.body_error_status(err)
+			http.respond(res)
+			return
+		}
 
-	http.respond_plain(res, "pong")
+		if (body.(http.Body_Plain) or_else "") != "ping" {
+			res.status = .Unprocessable_Content
+			http.respond(res)
+			return
+		}
+
+		http.respond_plain(res, "pong")
+	}, len("ping"), res)
 }

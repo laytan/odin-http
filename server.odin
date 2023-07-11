@@ -462,26 +462,20 @@ conn_handle_req :: proc(c: ^Connection) {
 		// check for server capabilities and should not be sent to handlers.
 		if rline.method == .Options && rline.target == "*" {
 			res.status = .Ok
+			response_send(&res, conn, context.temp_allocator)
 		} else {
 			// Give the handler this request as a GET, since the HTTP spec
 			// says a HEAD is identical to a GET but just without writing the body,
 			// handlers shouldn't have to worry about it.
 			is_head := rline.method == .Head
 			if is_head && conn.server.opts.redirect_head_to_get {
+				req.is_head = true
 				rline.method = .Get
 			}
 
-			// TODO: execute handlers in worker pool thread.
 			log.debug("calling handler")
 			conn.server.handler.handle(&conn.server.handler, &req, &res)
-
-			if is_head && conn.server.opts.redirect_head_to_get {
-				rline.method = .Head
-			}
 		}
-
-		log.debug("sending response")
-		response_send(&res, conn, context.temp_allocator)
 	}
 
 	loop := new(Loop, context.temp_allocator)
@@ -496,6 +490,20 @@ conn_handle_req :: proc(c: ^Connection) {
 
 	c.scanner.max_token_size = c.server.opts.limit_request_line
 	scanner_scan(&c.scanner, loop, on_rline1)
+}
+
+// Sends the response back to the client, handlers should call this.
+respond :: proc(r: ^Response) {
+	conn := r._conn
+	req := conn.curr_req
+	rline := req.line.(Requestline)
+
+	// Respond as head request if we set it to get.
+	if req.is_head && conn.server.opts.redirect_head_to_get {
+		rline.method = .Head
+	}
+
+	response_send(r, conn, req.allocator)
 }
 
 @(private)

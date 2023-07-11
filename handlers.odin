@@ -16,6 +16,8 @@ Handler :: struct {
 	handle:    Handler_Proc,
 }
 
+// TODO: something like http.handler_with_body which gets the body before calling the handler.
+
 handler :: proc(handle: Handle_Proc) -> Handler {
 	h: Handler
 	h.user_data = rawptr(handle)
@@ -44,6 +46,8 @@ Default_Logger_Opts := Logger_Opts {
 	log_time = false,
 }
 
+// TODO: this does not work with the non blocking IO,
+// Might need to change to a Handler.pre and Handler.post so we can do stuff before and after.
 middleware_logger :: proc(next: Maybe(^Handler), opts: ^Logger_Opts = nil) -> Handler {
 	h: Handler
 	h.user_data = opts != nil ? opts : &Default_Logger_Opts
@@ -69,7 +73,9 @@ middleware_logger :: proc(next: Maybe(^Handler), opts: ^Logger_Opts = nil) -> Ha
 
 		switch n in h.next {
 		case ^Handler: n.handle(n, req, res)
-		case: log.warn("middleware_logger does not have a next handler")
+		case:
+			log.warn("middleware_logger does not have a next handler")
+			respond(res)
 		}
 	}
 
@@ -89,6 +95,7 @@ on_limit_message :: proc(message: ^string) -> Rate_Limit_On_Limit {
         on_limit = proc(_: ^Request, res: ^Response, user_data: rawptr) {
             message := (^string)(user_data)
             bytes.buffer_write_string(&res.body, message^)
+			respond(res)
         },
     }
 }
@@ -146,6 +153,8 @@ middleware_rate_limit :: proc(next: ^Handler, opts: ^Rate_Limit_Opts, allocator 
 
 			if on, ok := data.opts.on_limit.(Rate_Limit_On_Limit); ok {
 				on.on_limit(req, res, on.user_data)
+			} else {
+				respond(res)
 			}
 			return
 		}

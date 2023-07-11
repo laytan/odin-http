@@ -12,6 +12,9 @@ import "core:thread"
 Request :: struct {
 	// If in a handler, this is always there and never None.
 	line:            Maybe(Requestline),
+	// Is true if the request is actually a HEAD request,
+	// line.method will be .Get if Server_Opts.redirect_head_to_get is set.
+	is_head:         bool,
 	headers:         Headers,
 	url:             URL,
 	client:          net.Endpoint,
@@ -125,31 +128,37 @@ body_destroy :: proc(body: Body_Type, was_allocation: bool) {
 
 // Retrieves the request's body, can only be called once.
 // Free using body_destroy() if needed, the body automatically at the end of a request if this is a server request body.
-// TODO: make non-blocking.
+// TODO: probably inefficient.
 request_body :: proc(
 	req: ^Request,
+	cb: proc(body: Body_Type, was_allocation: bool, user_data: rawptr),
 	max_length: int = -1,
-) -> (
-	body: Body_Type,
-	was_allocation: bool,
-) #optional_ok {
+	user_data: rawptr = nil,
+) {
 	if req._body != nil {
-		return req._body, req._body_was_alloc
+		cb(req._body, req._body_was_alloc, user_data)
+		return
 	}
 
-	thread.run_with_poly_data2(req, max_length, proc(req: ^Request, max_length: int) {
-			on_body :: proc(req: rawptr, body: Body_Type, was_allocation: bool) {
-				req := cast(^Request)req
-				req._body = body
-				req._body_was_alloc = was_allocation
-			}
+	Request_Body_State :: struct {
+		cb: proc(body: Body_Type, was_allocation: bool, user_data: rawptr),
+		user_data: rawptr,
+		req: ^Request,
+	}
 
-			parse_body(&req.headers, &req._scanner, max_length, req, on_body, req.allocator)
-		}, context)
+	on_body :: proc(state: rawptr, body: Body_Type, was_allocation: bool) {
+		state := cast(^Request_Body_State)state
+		state.req._body = body
+		state.req._body_was_alloc = was_allocation
+		state.cb(body, was_allocation, state.user_data)
+	}
 
-	// TODO: sync.condition.
-	for req._body == nil {}
-	return req._body, req._body_was_alloc
+	state := new(Request_Body_State, req.allocator)
+	state.cb = cb
+	state.user_data = user_data
+	state.req = req
+
+	parse_body(&req.headers, &req._scanner, max_length, state, on_body, req.allocator)
 }
 
 @(private)
