@@ -42,14 +42,17 @@ main :: proc() {
 	http.route_get(&router, "/hello/(%w+)", http.handler(proc(req: ^http.Request, res: ^http.Response) {
 		http.respond_plain(res, "Hello, ")
 		bytes.buffer_write_string(&res.body, req.url_params[0])
+		http.respond(res)
 	}))
 
 	// JSON/body example.
 	http.route_post(&router, "/ping", http.handler(proc(req: ^http.Request, res: ^http.Response) {
-			body, _, err := http.request_body(req)
-			if err != nil {
-				log.infof("invalid ping payload %q: %s", body, err)
-				res.status = http.Status.Unprocessable_Content
+		http.request_body(req, proc(body: http.Body_Type, was_alloc: bool, res: rawptr) {
+			res := cast(^http.Response)res
+
+			if err, is_err := body.(http.Body_Error); is_err {
+				res.status = http.body_error_status(err)
+				http.respond(res)
 				return
 			}
 
@@ -61,7 +64,8 @@ main :: proc() {
 			}
 
 			http.respond_json(res, Hello_Res_Payload{message = fmt.tprintf("Hello %s!", p.name)})
-		}))
+		}, user_data = res)
+	}))
 
 	// Custom 404 page.
 	http.route_all(&router, "(.*)", http.handler(proc(req: ^http.Request, res: ^http.Response) {
@@ -73,5 +77,5 @@ main :: proc() {
 		}))
 
 	handler := http.router_handler(&router)
-	fmt.printf("Server stopped: %s", http.listen_and_serve(&s, &handler))
+	fmt.printf("Server stopped: %s", http.listen_and_serve(&s, handler))
 }
