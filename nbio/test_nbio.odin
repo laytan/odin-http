@@ -7,7 +7,6 @@ import "core:fmt"
 import "core:c"
 import "core:slice"
 import "core:mem"
-import "core:time"
 
 expect :: testing.expect
 log :: testing.log
