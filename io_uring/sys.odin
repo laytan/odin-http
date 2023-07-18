@@ -84,6 +84,9 @@ io_uring_sqe :: struct {
 		rename_flags:     u32,
 		unlink_flags:     u32,
 		hardlink_flags:   u32,
+		xattr_flags:      u32,
+		msg_ring_flags:   u32,
+		uring_cmd_flags:  u32,
 	},
 	user_data:        u64, /* data to be passed back at completion time */
 	/* pack this to avoid bogus arm OABI complaints */
