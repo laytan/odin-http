@@ -182,6 +182,7 @@ _accept :: proc(io: ^IO, socket: os.Socket, user_data: rawptr, callback: Accept_
 	completion.user_callback = rawptr(callback)
 	op := Op_Accept {
 		socket = socket,
+		addr_len = size_of(os.SOCKADDR_STORAGE_LH),
 	}
 	completion.operation = op
 	completion.callback = accept_callback
@@ -191,7 +192,7 @@ _accept :: proc(io: ^IO, socket: os.Socket, user_data: rawptr, callback: Accept_
 
 @(private = "file")
 accept_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
-	op := completion.operation.(Op_Accept)
+	op := &completion.operation.(Op_Accept)
 
 	_, err := io_uring.accept(
 		&lx.ring,
@@ -210,7 +211,7 @@ accept_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
 
 @(private = "file")
 accept_callback :: proc(lx: ^Linux, completion: ^Completion) {
-	op := completion.operation.(Op_Accept)
+	op := &completion.operation.(Op_Accept)
 	callback := cast(Accept_Callback)completion.user_callback
 
 	if completion.result < 0 {
@@ -243,7 +244,7 @@ _close :: proc(io: ^IO, fd: os.Handle, user_data: rawptr, callback: Close_Callba
 
 @(private = "file")
 close_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
-	op := completion.operation.(Op_Close)
+	op := &completion.operation.(Op_Close)
 
 	_, err := io_uring.close(&lx.ring, u64(uintptr(completion)), op.fd)
 	if err == .Submission_Queue_Full {
@@ -280,7 +281,7 @@ _connect :: proc(io: ^IO, op: Op_Connect, user_data: rawptr, callback: Connect_C
 
 @(private = "file")
 connect_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
-	op := completion.operation.(Op_Connect)
+	op := &completion.operation.(Op_Connect)
 
 	_, err := io_uring.connect(&lx.ring, u64(uintptr(completion)), op.socket, op.addr, op.len)
 	if err == .Submission_Queue_Full {
@@ -293,7 +294,7 @@ connect_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
 
 @(private = "file")
 connect_callback :: proc(lx: ^Linux, completion: ^Completion) {
-	op := completion.operation.(Op_Connect)
+	op := &completion.operation.(Op_Connect)
 	callback := cast(Connect_Callback)completion.user_callback
 
 	errno := os.Errno(-completion.result)
@@ -321,7 +322,7 @@ _read :: proc(io: ^IO, op: Op_Read, user_data: rawptr, callback: Read_Callback) 
 
 @(private = "file")
 read_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
-	op := completion.operation.(Op_Read)
+	op := &completion.operation.(Op_Read)
 
 	_, err := io_uring.read(&lx.ring, u64(uintptr(completion)), op.fd, op.buf, u64(op.offset))
 	if err == .Submission_Queue_Full {
@@ -366,7 +367,7 @@ _recv :: proc(io: ^IO, op: Op_Recv, user_data: rawptr, callback: Recv_Callback) 
 
 @(private = "file")
 recv_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
-	op := completion.operation.(Op_Recv)
+	op := &completion.operation.(Op_Recv)
 
 	_, err := io_uring.recv(&lx.ring, u64(uintptr(completion)), op.socket, op.buf, u32(op.flags))
 	if err == .Submission_Queue_Full {
@@ -379,7 +380,7 @@ recv_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
 
 @(private = "file")
 recv_callback :: proc(lx: ^Linux, completion: ^Completion) {
-	op := completion.operation.(Op_Recv)
+	op := &completion.operation.(Op_Recv)
 	callback := cast(Recv_Callback)completion.user_callback
 
 	if completion.result < 0 {
@@ -412,7 +413,7 @@ _send :: proc(io: ^IO, op: Op_Send, user_data: rawptr, callback: Send_Callback) 
 
 @(private = "file")
 send_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
-	op := completion.operation.(Op_Send)
+	op := &completion.operation.(Op_Send)
 
 	_, err := io_uring.send(&lx.ring, u64(uintptr(completion)), op.socket, op.buf, u32(op.flags))
 	if err == .Submission_Queue_Full {
@@ -457,7 +458,7 @@ _write :: proc(io: ^IO, op: Op_Write, user_data: rawptr, callback: Write_Callbac
 
 @(private = "file")
 write_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
-	op := completion.operation.(Op_Write)
+	op := &completion.operation.(Op_Write)
 
 	_, err := io_uring.write(&lx.ring, u64(uintptr(completion)), op.fd, op.buf, u64(op.offset))
 	if err == .Submission_Queue_Full {
@@ -504,7 +505,7 @@ _timeout :: proc(io: ^IO, dur: time.Duration, user_data: rawptr, callback: Timeo
 
 @(private = "file")
 timeout_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
-	op := completion.operation.(Op_Timeout)
+	op := &completion.operation.(Op_Timeout)
 
 	// TODO: does this need to be allocated?
 	timeout := time.to_unix_nanoseconds(op.expires)
