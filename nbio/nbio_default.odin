@@ -65,7 +65,7 @@ _tick :: proc(io: ^IO) -> (err: os.Errno) {
 _accept :: proc(io: ^IO, socket: os.Socket, user_data: rawptr, callback: Accept_Callback) {
 	add_completion(io, user_data, rawptr(callback), Op_Accept{socket = socket}, proc(t: thread.Task) {
 		completion := cast(^Completion)t.data
-		op := completion.operation.(Op_Accept)
+		op := &completion.operation.(Op_Accept)
 
 		sockaddr: os.SOCKADDR_STORAGE_LH
 		sockaddrlen := c.int(size_of(sockaddr))
@@ -82,7 +82,7 @@ _accept :: proc(io: ^IO, socket: os.Socket, user_data: rawptr, callback: Accept_
 _close :: proc(io: ^IO, fd: os.Handle, user_data: rawptr, callback: Close_Callback) {
 	add_completion(io, user_data, rawptr(callback), Op_Close{fd}, proc(t: thread.Task) {
 		completion := cast(^Completion)t.data
-		op := completion.operation.(Op_Close)
+		op := &completion.operation.(Op_Close)
 
 		ok := os.close(op.fd)
 
@@ -96,7 +96,7 @@ _close :: proc(io: ^IO, fd: os.Handle, user_data: rawptr, callback: Close_Callba
 _connect :: proc(io: ^IO, op: Op_Connect, user_data: rawptr, callback: Connect_Callback) {
 	add_completion(io, user_data, rawptr(callback), op, proc(t: thread.Task) {
 		completion := cast(^Completion)t.data
-		op := completion.operation.(Op_Connect)
+		op := &completion.operation.(Op_Connect)
 
 		err := os.connect(op.socket, op.addr, op.len)
 
@@ -110,7 +110,7 @@ _connect :: proc(io: ^IO, op: Op_Connect, user_data: rawptr, callback: Connect_C
 _read :: proc(io: ^IO, op: Op_Read, user_data: rawptr, callback: Read_Callback) {
 	add_completion(io, user_data, rawptr(callback), op, proc(t: thread.Task) {
 		completion := cast(^Completion)t.data
-		op := completion.operation.(Op_Read)
+		op := &completion.operation.(Op_Read)
 
 		read, err := os.read_at(op.fd, op.buf, op.offset)
 
@@ -124,7 +124,7 @@ _read :: proc(io: ^IO, op: Op_Read, user_data: rawptr, callback: Read_Callback) 
 _recv :: proc(io: ^IO, op: Op_Recv, user_data: rawptr, callback: Recv_Callback) {
 	add_completion(io, user_data, rawptr(callback), op, proc(t: thread.Task) {
 		completion := cast(^Completion)t.data
-		op := completion.operation.(Op_Recv)
+		op := &completion.operation.(Op_Recv)
 
 		received, err := os.recv(op.socket, op.buf, op.flags)
 
@@ -138,7 +138,7 @@ _recv :: proc(io: ^IO, op: Op_Recv, user_data: rawptr, callback: Recv_Callback) 
 _send :: proc(io: ^IO, op: Op_Send, user_data: rawptr, callback: Send_Callback) {
 	add_completion(io, user_data, rawptr(callback), op, proc(t: thread.Task) {
 		completion := cast(^Completion)t.data
-		op := completion.operation.(Op_Send)
+		op := &completion.operation.(Op_Send)
 
 		sent, err := os.send(op.socket, op.buf, op.flags)
 
@@ -152,7 +152,7 @@ _send :: proc(io: ^IO, op: Op_Send, user_data: rawptr, callback: Send_Callback) 
 _write :: proc(io: ^IO, op: Op_Write, user_data: rawptr, callback: Write_Callback) {
 	add_completion(io, user_data, rawptr(callback), op, proc(t: thread.Task) {
 		completion := cast(^Completion)t.data
-		op := completion.operation.(Op_Write)
+		op := &completion.operation.(Op_Write)
 
 		read, err := os.write_at(op.fd, op.buf, op.offset)
 
@@ -170,7 +170,7 @@ _timeout :: proc(io: ^IO, dur: time.Duration, user_data: rawptr, callback: Timeo
 
 	add_completion(io, user_data, rawptr(callback), op, proc(t: thread.Task) {
 		completion := cast(^Completion)t.data
-		op := completion.operation.(Op_Timeout)
+		op := &completion.operation.(Op_Timeout)
 
 		diff := time.diff(time.now(), op.expires)
 		if (diff > 0) {

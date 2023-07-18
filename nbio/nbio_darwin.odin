@@ -202,7 +202,7 @@ _accept :: proc(io: ^IO, socket: os.Socket, user_data: rawptr, callback: Accept_
 	}
 
 	completion.callback = proc(kq: ^KQueue, completion: ^Completion) {
-		op := completion.operation.(Op_Accept)
+		op := &completion.operation.(Op_Accept)
 
 		sockaddr: os.SOCKADDR_STORAGE_LH
 		sockaddrlen := c.int(size_of(sockaddr))
@@ -230,7 +230,7 @@ _close :: proc(io: ^IO, fd: os.Handle, user_data: rawptr, callback: Close_Callba
 	completion.operation = Op_Close{fd}
 
 	completion.callback = proc(kq: ^KQueue, completion: ^Completion) {
-		op := completion.operation.(Op_Close)
+		op := &completion.operation.(Op_Close)
 		ok := os.close(op.fd)
 
 		callback := cast(Close_Callback)completion.user_callback
@@ -283,7 +283,7 @@ _read :: proc(io: ^IO, op: Op_Read, user_data: rawptr, callback: Read_Callback) 
 	completion.operation = op
 
 	completion.callback = proc(kq: ^KQueue, completion: ^Completion) {
-		op := completion.operation.(Op_Read)
+		op := &completion.operation.(Op_Read)
 
 		read, err := os.read_at(op.fd, op.buf, op.offset)
 		if err == os.EWOULDBLOCK {
@@ -310,7 +310,7 @@ _recv :: proc(io: ^IO, op: Op_Recv, user_data: rawptr, callback: Recv_Callback) 
 	completion.operation = op
 
 	completion.callback = proc(kq: ^KQueue, completion: ^Completion) {
-		op := completion.operation.(Op_Recv)
+		op := &completion.operation.(Op_Recv)
 
 		received, err := os.recv(op.socket, op.buf, op.flags)
 		if err == os.EWOULDBLOCK {
@@ -336,7 +336,7 @@ _send :: proc(io: ^IO, op: Op_Send, user_data: rawptr, callback: Send_Callback) 
 	completion.operation = op
 
 	completion.callback = proc(kq: ^KQueue, completion: ^Completion) {
-		op := completion.operation.(Op_Send)
+		op := &completion.operation.(Op_Send)
 
 		sent, err := os.send(op.socket, op.buf, op.flags)
 		if err == os.EWOULDBLOCK {
@@ -361,7 +361,7 @@ _write :: proc(io: ^IO, op: Op_Write, user_data: rawptr, callback: Write_Callbac
 	completion.user_callback = rawptr(callback)
 	completion.operation = op
 	completion.callback = proc(kq: ^KQueue, completion: ^Completion) {
-		op := completion.operation.(Op_Write)
+		op := &completion.operation.(Op_Write)
 
 		read, err := os.write_at(op.fd, op.buf, op.offset)
 		if err == os.EWOULDBLOCK {
