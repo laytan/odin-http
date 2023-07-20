@@ -35,6 +35,7 @@ request_init :: proc(r: ^Request, allocator: mem.Allocator = context.allocator) 
 	r.allocator = allocator
 }
 
+// Validates the headers of a request, from the pov of the server.
 server_headers_validate :: proc(headers: ^Headers) -> bool {
 	// RFC 7230 5.4: A server MUST respond with a 400 (Bad Request) status code to any
 	// HTTP/1.1 request message that lacks a Host header field.
@@ -43,6 +44,8 @@ server_headers_validate :: proc(headers: ^Headers) -> bool {
 	return headers_validate(headers)
 }
 
+// Validates the headers, use server_headers_validate if these are request headers,
+// validated from the server side.
 headers_validate :: proc(headers: ^Headers) -> bool {
 	// RFC 7230 3.3.3: If a Transfer-Encoding header field
 	// is present in a request and the chunked transfer coding is not
@@ -127,7 +130,7 @@ body_destroy :: proc(body: Body_Type, was_allocation: bool) {
 
 // Retrieves the request's body, can only be called once.
 // Free using body_destroy() if needed, the body automatically at the end of a request if this is a server request body.
-// TODO: probably inefficient.
+// TODO: probably inefficient with all of the callbacks here.
 request_body :: proc(
 	req: ^Request,
 	cb: proc(body: Body_Type, was_allocation: bool, user_data: rawptr),

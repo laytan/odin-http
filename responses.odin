@@ -93,3 +93,15 @@ respond_json :: proc(using r: ^Response, v: any, opt: json.Marshal_Options = {},
 	return nil
 }
 
+// Sends the response back to the client, handlers should call this.
+respond :: proc(r: ^Response) {
+	conn := r._conn
+	req := conn.curr_req
+
+	// Respond as head request if we set it to get.
+	if rline, ok := req.line.(Requestline); ok && req.is_head && conn.server.opts.redirect_head_to_get {
+		rline.method = .Head
+	}
+
+	response_send(r, conn, req.allocator)
+}
