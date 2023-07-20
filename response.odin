@@ -148,6 +148,7 @@ on_response_sent :: proc(conn_: rawptr, sent: u32, err: os.Errno) {
 }
 
 // Response has been sent, clean up and close/handle next.
+@(private)
 clean_request_loop :: proc(conn: ^Connection, close: bool = false) {
 	free_all(conn.curr_req.allocator)
 	conn.response = nil

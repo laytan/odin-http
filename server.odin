@@ -304,6 +304,7 @@ on_accept :: proc(
 	conn_handle_reqs(c)
 }
 
+@(private)
 conn_handle_reqs :: proc(c: ^Connection) {
 	scanner_init(&c.scanner, c, c.server.conn_allocator)
 
@@ -319,12 +320,14 @@ conn_handle_reqs :: proc(c: ^Connection) {
 }
 
 // Loop/request cycle state.
+@(private)
 Loop :: struct {
 	conn: ^Connection,
 	req:  Request,
 	res:  Response,
 }
 
+@(private)
 conn_handle_req :: proc(c: ^Connection) {
 	on_rline1 :: proc(loop: rawptr, token: []byte, err: bufio.Scanner_Error) {
 		context.allocator = context.temp_allocator

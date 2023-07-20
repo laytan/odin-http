@@ -1,3 +1,4 @@
+//+private
 package http
 
 import "core:bufio"

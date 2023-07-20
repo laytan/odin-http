@@ -7,7 +7,7 @@ when ODIN_OS == .Darwin {
 		"./includes/darwin/libssl.a",
 		"./includes/darwin/libcrypto.a",
 	}
-} else when ODIN_OS == .Windows { 
+} else when ODIN_OS == .Windows {
 	foreign import lib {
 		"./includes/windows/libssl.lib",
 		"./includes/windows/libcrypto.lib",
