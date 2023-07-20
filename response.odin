@@ -130,7 +130,7 @@ on_response_sent :: proc(conn_: rawptr, sent: u32, err: os.Errno) {
 	res := conn.response.(Response_Inflight)
 
 	res.sent += int(sent)
-	if len(res.buf) != int(sent) {
+	if len(res.buf) != res.sent {
 		nbio.send(
 			&conn.server.io,
 			nbio.Op_Send{os.Socket(conn.socket), res.buf[res.sent:], 0},
@@ -140,14 +140,20 @@ on_response_sent :: proc(conn_: rawptr, sent: u32, err: os.Errno) {
 		return
 	}
 
-	defer free_all(conn.curr_req.allocator)
-	defer conn.response = nil
+	if err != os.ERROR_NONE {
+		log.errorf("could not send response: %v", err)
+	}
+
+	clean_request_loop(conn, res.will_close)
+}
+
+// Response has been sent, clean up and close/handle next.
+clean_request_loop :: proc(conn: ^Connection, close: bool = false) {
+	free_all(conn.curr_req.allocator)
+	conn.response = nil
 
 	switch {
-	case err != os.ERROR_NONE:
-		log.errorf("could not send response: %v", err)
-		fallthrough
-	case res.will_close:
+	case close:
 		conn.state = .Closing
 		connection_close(conn)
 	case:

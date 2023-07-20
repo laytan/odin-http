@@ -28,11 +28,10 @@ respond_plain :: proc(using r: ^Response, text: string, send := true) {
 // Sets the response to one that sends the contents of the file at the given path.
 // Content-Type header is set based on the file extension, see the MimeType enum for known file extensions.
 respond_file :: proc(using r: ^Response, path: string, send := true, allocator := context.temp_allocator) {
-	defer if send do respond(r)
-
 	bs, ok := os.read_entire_file(path, allocator)
 	if !ok {
 		status = .NotFound
+		respond(r)
 		return
 	}
 

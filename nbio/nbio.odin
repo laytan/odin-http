@@ -98,7 +98,7 @@ read :: proc(io: ^IO, op: Op_Read, user_data: rawptr, callback: Read_Callback) {
 Op_Recv :: struct {
 	socket: os.Socket,
 	buf:    []byte,
-	flags:  int,
+	flags:  int, // TODO: remove?
 }
 
 Recv_Callback :: proc(user_data: rawptr, buf: []byte, received: u32, err: os.Errno)

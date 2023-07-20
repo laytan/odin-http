@@ -33,6 +33,7 @@ Completion :: struct {
 	user_data:     rawptr,
 }
 
+// TODO: does not make sense to take flags here?
 _init :: proc(io: ^IO, entries: u32 = DEFAULT_ENTRIES, flags: u32 = 0, alloc := context.allocator) -> (err: os.Errno) {
 	lx := new(Linux, alloc)
 	io.impl_data = lx
@@ -374,6 +375,7 @@ recv_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
 		queue.push_back(&lx.unqueued, completion)
 		return
 	}
+	// TODO: handle other errors, also in other enqueue procs.
 
 	lx.ios_queued += 1
 }

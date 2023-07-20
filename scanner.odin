@@ -71,19 +71,19 @@ scanner_scan :: proc(
 		}
 		if err != nil {
 			set_err(s, err)
-			callback(user_data, nil, err)
+			callback(user_data, nil, s._err)
 			return
 		}
 
 		// Do advance
 		if advance < 0 {
 			set_err(s, .Negative_Advance)
-			callback(user_data, nil, .Negative_Advance)
+			callback(user_data, nil, s._err)
 			return
 		}
 		if advance > s.end - s.start {
 			set_err(s, .Advanced_Too_Far)
-			callback(user_data, nil, .Advanced_Too_Far)
+			callback(user_data, nil, s._err)
 			return
 		}
 		s.start += advance
@@ -100,7 +100,7 @@ scanner_scan :: proc(
 				}
 				if s.successive_empty_token_count > s.max_consecutive_empty_reads {
 					set_err(s, .No_Progress)
-					callback(user_data, nil, .No_Progress)
+					callback(user_data, nil, s._err)
 					return
 				}
 			}
@@ -108,7 +108,7 @@ scanner_scan :: proc(
 			s.consecutive_empty_reads = 0
 			s.callback = nil
 			s.user_data = nil
-			callback(user_data, token, nil)
+			callback(user_data, token, s._err)
 			return
 		}
 	}
@@ -137,7 +137,7 @@ scanner_scan :: proc(
 		}
 		if len(s.buf) >= s.max_token_size {
 			set_err(s, .Too_Long)
-			callback(user_data, nil, .Too_Long)
+			callback(user_data, nil, s._err)
 			return
 		}
 		// overflow check
@@ -146,7 +146,7 @@ scanner_scan :: proc(
 			overflowed: bool
 			if new_size, overflowed = intrinsics.overflow_mul(len(s.buf), 2); overflowed {
 				set_err(s, .Too_Long)
-				callback(user_data, nil, .Too_Long)
+				callback(user_data, nil, s._err)
 				return
 			}
 		}
@@ -195,10 +195,17 @@ scanner_on_read :: proc(s_: rawptr, _: []byte, n_: u32, e: os.Errno) {
 
 	defer scanner_scan(s, s.user_data, s.callback)
 
+	// When n == 0, connection is closed or buffer is of length 0.
+	if n == 0 {
+		set_err(s, .EOF)
+		return
+	}
+
 	if n < 0 || len(s.buf) - s.end < n {
 		set_err(s, .Bad_Read_Count)
 		return
 	}
+
 	s.end += n
 	if err != nil {
 		set_err(s, err)

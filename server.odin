@@ -258,6 +258,8 @@ connection_close :: proc(c: ^Connection) {
 
 	c.state = .Closing
 
+	// TODO: non blocking.
+
 	// Close read side of the connection, then wait a little bit, allowing the client
 	// to process the closing and receive any remaining data.
 	net.shutdown(c.socket, net.Shutdown_Manner.Send)
@@ -332,8 +334,8 @@ conn_handle_req :: proc(c: ^Connection) {
 		conn.state = .Active
 
 		if err != nil {
-			res.status = .Bad_Request
-			response_send(&res, conn)
+			log.warnf("request scanning error: %v", err)
+			clean_request_loop(conn, close = true)
 			return
 		}
 
@@ -341,7 +343,7 @@ conn_handle_req :: proc(c: ^Connection) {
 		// and parse a request-line SHOULD ignore at least one empty line (CRLF)
 		// received prior to the request-line.
 		if len(token) == 0 {
-			log.debug("scanning for rline2")
+			log.debug("first request line empty, skipping in interest of robustness")
 			scanner_scan(&conn.scanner, loop, on_rline2)
 			return
 		}
@@ -355,25 +357,22 @@ conn_handle_req :: proc(c: ^Connection) {
 		using loop
 
 		if err != nil {
-			log.warnf("error scanning second line of request for the request-line: %s", err)
-			res.status = .Bad_Request
-			response_send(&res, conn)
+			log.warnf("request scanning error: %v", err)
+			clean_request_loop(conn, close = true)
 			return
 		}
 
 		rline, err := requestline_parse(string(token))
 		switch err {
 		case .Method_Not_Implemented:
-			log.warnf("request-line %q invalid method", string(token))
+			log.infof("request-line %q invalid method", string(token))
 			res.headers["connection"] = "close"
 			res.status = .Not_Implemented
-			response_send(&res, conn)
+			respond(&res)
 			return
 		case .Invalid_Version_Format, .Not_Enough_Fields:
 			log.warnf("request-line %q invalid: %s", string(token), err)
-			res.headers["connection"] = "close"
-			res.status = .Bad_Request
-			response_send(&res, conn)
+			clean_request_loop(conn, close = true)
 			return
 		case .None:
 			req.line = rline
@@ -381,16 +380,15 @@ conn_handle_req :: proc(c: ^Connection) {
 
 		// Might need to support more versions later.
 		if rline.version.major != 1 || rline.version.minor < 1 {
-			log.warnf("request http version not supported %v", rline.version)
+			log.infof("request http version not supported %v", rline.version)
 			res.headers["connection"] = "close"
 			res.status = .HTTP_Version_Not_Supported
-			response_send(&res, conn)
+			respond(&res)
 			return
 		}
 
 		req.url = url_parse(rline.target)
 
-		log.debug("scanning for header_line")
 		conn.scanner.max_token_size = conn.server.opts.limit_headers
 		scanner_scan(&conn.scanner, loop, on_header_line)
 	}
@@ -401,9 +399,8 @@ conn_handle_req :: proc(c: ^Connection) {
 		using loop
 
 		if err != nil {
-			log.warnf("error scanning for header line: %s", err)
-			res.status = .Bad_Request
-			response_send(&res, conn)
+			log.warnf("request scanning error: %v", err)
+			clean_request_loop(conn, close = true)
 			return
 		}
 
@@ -415,9 +412,9 @@ conn_handle_req :: proc(c: ^Connection) {
 
 		if _, ok := header_parse(&req.headers, string(token)); !ok {
 			log.warnf("header-line %s is invalid", string(token))
-			loop.res.headers["connection"] = "close"
+			res.headers["connection"] = "close"
 			res.status = .Bad_Request
-			response_send(&res, conn)
+			respond(&res)
 			return
 		}
 
@@ -426,11 +423,10 @@ conn_handle_req :: proc(c: ^Connection) {
 			log.warn("request headers too large")
 			res.headers["connection"] = "close"
 			res.status = .Request_Header_Fields_Too_Large
-			response_send(&res, conn)
+			respond(&res)
 			return
 		}
 
-		log.debug("scanning for further header_line")
 		scanner_scan(&conn.scanner, loop, on_header_line)
 	}
 
@@ -439,7 +435,7 @@ conn_handle_req :: proc(c: ^Connection) {
 			log.warn("request headers are invalid")
 			res.headers["connection"] = "close"
 			res.status = .Bad_Request
-			response_send(&res, conn, context.temp_allocator)
+			respond(&res)
 			return
 		}
 
@@ -451,7 +447,7 @@ conn_handle_req :: proc(c: ^Connection) {
 
 			res.status = .Continue
 
-			response_send(&res, conn, context.temp_allocator)
+			respond(&res)
 			return
 		}
 
@@ -462,7 +458,7 @@ conn_handle_req :: proc(c: ^Connection) {
 		// check for server capabilities and should not be sent to handlers.
 		if rline.method == .Options && rline.target == "*" {
 			res.status = .Ok
-			response_send(&res, conn, context.temp_allocator)
+			respond(&res)
 		} else {
 			// Give the handler this request as a GET, since the HTTP spec
 			// says a HEAD is identical to a GET but just without writing the body,
@@ -473,14 +469,13 @@ conn_handle_req :: proc(c: ^Connection) {
 				rline.method = .Get
 			}
 
-			log.debug("calling handler")
-			res._conn = conn
 			conn.server.handler.handle(&conn.server.handler, &req, &res)
 		}
 	}
 
 	loop := new(Loop, context.temp_allocator)
 	loop.conn = c
+	loop.res._conn = c
 
 	request_init(&loop.req)
 	response_init(&loop.res)
@@ -497,10 +492,9 @@ conn_handle_req :: proc(c: ^Connection) {
 respond :: proc(r: ^Response) {
 	conn := r._conn
 	req := conn.curr_req
-	rline := req.line.(Requestline)
 
 	// Respond as head request if we set it to get.
-	if req.is_head && conn.server.opts.redirect_head_to_get {
+	if rline, ok := req.line.(Requestline); ok && req.is_head && conn.server.opts.redirect_head_to_get {
 		rline.method = .Head
 	}
 

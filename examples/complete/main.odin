@@ -79,6 +79,8 @@ serve :: proc() {
 		next.handle(next, req, res)
 
 		// The next handler has finished, we can now do things with the response.
+		// TODO: this is not true when the handler uses callbacks for nonblocking.
+		// Middleware in general doesn't work as expected.
 		log.infof("index handler returned status code: %s", res.status)
 	})
 	http.route_get(&router, "/", index_with_middleware)
