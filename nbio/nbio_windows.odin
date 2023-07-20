@@ -1,13 +1,20 @@
 //+private
-//+build !linux !darwin
+//+build windows
 package nbio
 
+import "core:c"
+import "core:mem"
+import "core:net"
 import "core:os"
 import "core:thread"
-import "core:mem"
-import "core:c"
-import "core:net"
 import "core:time"
+import win "core:sys/windows"
+
+Handle :: union {
+	win.SOCKET,
+	win.HANDLE,
+	os.Handle,
+}
 
 _prepare_socket :: proc(socket: net.Any_Socket) -> net.Network_Error {
 	return net.set_blocking(socket, true)
@@ -62,7 +69,13 @@ _tick :: proc(io: ^IO) -> (err: os.Errno) {
 	return
 }
 
-_accept :: proc(io: ^IO, socket: os.Socket, user_data: rawptr, callback: Accept_Callback) {
+Op_Accept :: struct {
+	socket:   net.TCP_Socket,
+	addr:     win.SOCKADDR_STORAGE_LH,
+	addr_len: win.socklen_t,
+}
+
+_accept :: proc(io: ^IO, socket: net.TCP_Socket, user_data: rawptr, callback: On_Accept) {
 	add_completion(io, user_data, rawptr(callback), Op_Accept{socket = socket}, proc(t: thread.Task) {
 		completion := cast(^Completion)t.data
 		op := &completion.operation.(Op_Accept)
@@ -79,7 +92,7 @@ _accept :: proc(io: ^IO, socket: os.Socket, user_data: rawptr, callback: Accept_
 	})
 }
 
-_close :: proc(io: ^IO, fd: os.Handle, user_data: rawptr, callback: Close_Callback) {
+_close :: proc(io: ^IO, fd: Handle, user_data: rawptr, callback: Close_Callback) {
 	add_completion(io, user_data, rawptr(callback), Op_Close{fd}, proc(t: thread.Task) {
 		completion := cast(^Completion)t.data
 		op := &completion.operation.(Op_Close)

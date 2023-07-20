@@ -9,6 +9,8 @@ import "core:net"
 
 import "../io_uring"
 
+Handle :: os.Handle
+
 _prepare_socket :: proc(socket: net.Any_Socket) -> net.Network_Error {
 	return net.set_blocking(socket, false)
 }
@@ -222,12 +224,12 @@ accept_callback :: proc(lx: ^Linux, completion: ^Completion) {
 			return
 		}
 
-		callback(completion.user_data, 0, op.addr, op.addr_len, errno)
+		callback(completion.user_data, 0, op.addr, errno)
 		free(completion, lx.allocator)
 		return
 	}
 
-	callback(completion.user_data, os.Socket(completion.result), op.addr, op.addr_len, os.ERROR_NONE)
+	callback(completion.user_data, os.Socket(completion.result), op.addr, os.ERROR_NONE)
 	free(completion, lx.allocator)
 }
 

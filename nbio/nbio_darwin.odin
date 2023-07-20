@@ -9,6 +9,8 @@ import "core:net"
 
 import "../kqueue"
 
+Handle :: os.Handle
+
 _prepare_socket :: proc(socket: net.Any_Socket) -> net.Network_Error {
 	return net.set_blocking(socket, false)
 }
