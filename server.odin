@@ -474,6 +474,7 @@ conn_handle_req :: proc(c: ^Connection) {
 			}
 
 			log.debug("calling handler")
+			res._conn = conn
 			conn.server.handler.handle(&conn.server.handler, &req, &res)
 		}
 	}
