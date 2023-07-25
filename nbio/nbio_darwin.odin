@@ -11,14 +11,20 @@ import "../kqueue"
 
 Handle :: os.Handle
 
-_prepare_socket :: proc(socket: net.Any_Socket) -> net.Network_Error {
-	return net.set_blocking(socket, false)
+Operation :: union #no_nil {
+	Op_Accept,
+	Op_Close,
+	Op_Connect,
+	Op_Read,
+	Op_Recv,
+	Op_Send,
+	Op_Write,
+	Op_Timeout,
 }
 
 KQueue :: struct {
 	fd:          os.Handle,
 	io_inflight: int,
-	// PERF: should not be pointers.
 	timeouts:    [dynamic]^Completion,
 	completed:   [dynamic]^Completion,
 	io_pending:  [dynamic]^Completion,
@@ -69,6 +75,7 @@ _destroy :: proc(io: ^IO) {
 	free(kq, kq.allocator)
 }
 
+// TODO: should this be the entries parameter?
 MAX_EVENTS :: 256
 
 _tick :: proc(io: ^IO) -> os.Errno {
@@ -99,13 +106,15 @@ flush :: proc(io: ^IO, wait_for_completions: bool) -> os.Errno {
 		new_events, err := kqueue.kevent(kq.fd, events[:change_events], events[:], &ts)
 		if err != .None do return ev_err_to_os_err(err)
 
-		for i := 0; i < change_events; i += 1 {
+		for _ in 0..<change_events {
 			unordered_remove(&kq.io_pending, 0)
 		}
 
 		kq.io_inflight += change_events
 		kq.io_inflight -= new_events
 
+		// TODO(perf): don't do this and after the resize to 0, exec callbacks for these events.
+		// This is an unnecessary append to then directly remove outside of this if.
 		reserve(&kq.completed, new_events)
 		for event in events[:new_events] {
 			completion := cast(^Completion)event.udata
@@ -127,7 +136,7 @@ flush_io :: proc(kq: ^KQueue, events: []kqueue.KEvent) -> int {
 		if len(kq.io_pending) <= i do return i
 		completion := kq.io_pending[i]
 
-		#partial switch op in completion.operation {
+		switch op in completion.operation {
 		case Op_Accept:
 			event.ident = uintptr(op.socket)
 			event.filter = kqueue.EVFILT_READ
@@ -192,50 +201,51 @@ flush_timeouts :: proc(kq: ^KQueue) -> (min_timeout: Maybe(i64)) {
 	return
 }
 
-// Wraps os.accept using the kqueue.
-_accept :: proc(io: ^IO, socket: os.Socket, user_data: rawptr, callback: Accept_Callback) {
+Op_Accept :: distinct net.TCP_Socket
+
+// TODO: maybe call this accept_tcp, or can we make it work with udp?
+// can you even accept from udp sockets?
+_accept :: proc(io: ^IO, socket: net.TCP_Socket, user: rawptr, callback: On_Accept) {
 	kq := cast(^KQueue)io.impl_data
 
 	completion := new(Completion, kq.allocator)
-	completion.user_data = user_data
+	completion.user_data = user
 	completion.user_callback = rawptr(callback)
-	completion.operation = Op_Accept {
-		socket = socket,
-	}
+	completion.operation = Op_Accept(socket)
 
 	completion.callback = proc(kq: ^KQueue, completion: ^Completion) {
-		op := &completion.operation.(Op_Accept)
+		op := completion.operation.(Op_Accept)
 
-		sockaddr: os.SOCKADDR_STORAGE_LH
-		sockaddrlen := c.int(size_of(sockaddr))
-
-		sock, err := os.accept(op.socket, cast(^os.SOCKADDR)&sockaddr, &sockaddrlen)
-		if err == os.EWOULDBLOCK {
+		client, source, err := net.accept_tcp(net.TCP_Socket(op))
+		if err == net.Accept_Error.WouldBlock {
 			append(&kq.io_pending, completion)
 			return
 		}
 
-		callback := cast(Accept_Callback)completion.user_callback
-		callback(completion.user_data, sock, sockaddr, sockaddrlen, err)
+		callback := cast(On_Accept)completion.user_callback
+		callback(completion.user_data, client, source, err)
 
 		free(completion, kq.allocator)
 	}
 	append(&kq.completed, completion)
 }
 
+Op_Close :: distinct Handle
+
 // Wraps os.close using the kqueue.
-_close :: proc(io: ^IO, fd: os.Handle, user_data: rawptr, callback: Close_Callback) {
+_close :: proc(io: ^IO, fd: Handle, user: rawptr, callback: On_Close) {
 	kq := cast(^KQueue)io.impl_data
+
 	completion := new(Completion, kq.allocator)
-	completion.user_data = user_data
+	completion.user_data = user
 	completion.user_callback = rawptr(callback)
-	completion.operation = Op_Close{fd}
+	completion.operation = Op_Close(fd)
 
 	completion.callback = proc(kq: ^KQueue, completion: ^Completion) {
-		op := &completion.operation.(Op_Close)
-		ok := os.close(op.fd)
+		op := completion.operation.(Op_Close)
+		ok := os.close(Handle(op))
 
-		callback := cast(Close_Callback)completion.user_callback
+		callback := cast(On_Close)completion.user_callback
 		callback(completion.user_data, ok)
 
 		free(completion, kq.allocator)
@@ -243,14 +253,40 @@ _close :: proc(io: ^IO, fd: os.Handle, user_data: rawptr, callback: Close_Callba
 	append(&kq.completed, completion)
 }
 
-// Wraps os.connect using the kqueue.
-_connect :: proc(io: ^IO, op: Op_Connect, user_data: rawptr, callback: Connect_Callback) {
+Op_Connect :: struct {
+	socket: net.TCP_Socket,
+	sockaddr: os.SOCKADDR_STORAGE_LH,
+	initiated: bool,
+}
+
+// TODO: maybe call this dial?
+_connect :: proc(io: ^IO, endpoint: net.Endpoint, user: rawptr, callback: On_Connect) {
 	kq := cast(^KQueue)io.impl_data
 
+	if endpoint.port == 0 {
+		callback(user, {}, net.Dial_Error.Port_Required)
+		return
+	}
+
+	family := net.family_from_endpoint(endpoint)
+	sock, err := net.create_socket(family, .TCP)
+	if err != nil {
+		callback(user, {}, err)
+		return
+	}
+
+	if err := prepare_socket(sock); err != nil {
+		callback(user, {}, err)
+		return
+	}
+
 	completion := new(Completion, kq.allocator)
-	completion.user_data = user_data
+	completion.user_data = user
 	completion.user_callback = rawptr(callback)
-	completion.operation = op
+	completion.operation = Op_Connect{
+		socket = sock.(net.TCP_Socket),
+		sockaddr = _endpoint_to_sockaddr(endpoint),
+	}
 
 	completion.callback = proc(kq: ^KQueue, completion: ^Completion) {
 		op := &completion.operation.(Op_Connect)
@@ -258,43 +294,51 @@ _connect :: proc(io: ^IO, op: Op_Connect, user_data: rawptr, callback: Connect_C
 
 		err: os.Errno
 		if op.initiated {
+			// We have already called os.connect, retrieve error number only.
 			os.getsockopt(op.socket, os.SOL_SOCKET, os.SO_ERROR, &err, size_of(os.Errno))
 		} else {
-			err = os.connect(op.socket, op.addr, op.len)
+			err = os.connect(os.Socket(op.socket), (^os.SOCKADDR)(&op.sockaddr), i32(op.sockaddr.len))
 			if err == os.EINPROGRESS {
 				append(&kq.io_pending, completion)
 				return
 			}
 		}
 
-		callback := cast(Connect_Callback)completion.user_callback
-		callback(completion.user_data, op.socket, err)
+		callback := cast(On_Connect)completion.user_callback
+		callback(completion.user_data, op.socket, net.Dial_Error(err))
 
 		free(completion, kq.allocator)
 	}
 	append(&kq.completed, completion)
 }
 
-// Wraps os.read_at using the kqueue.
-_read :: proc(io: ^IO, op: Op_Read, user_data: rawptr, callback: Read_Callback) {
+Op_Read :: struct {
+	fd:     Handle,
+	buf:    []byte,
+}
+
+_read :: proc(io: ^IO, fd: Handle, buf: []byte, user: rawptr, callback: On_Read) {
 	kq := cast(^KQueue)io.impl_data
 
 	completion := new(Completion, kq.allocator)
-	completion.user_data = user_data
+	completion.user_data = user
 	completion.user_callback = rawptr(callback)
-	completion.operation = op
+	completion.operation = Op_Read{
+		fd = fd,
+		buf = buf,
+	}
 
 	completion.callback = proc(kq: ^KQueue, completion: ^Completion) {
-		op := &completion.operation.(Op_Read)
+		op := completion.operation.(Op_Read)
 
-		read, err := os.read_at(op.fd, op.buf, op.offset)
+		read, err := os.read(op.fd, op.buf)
 		if err == os.EWOULDBLOCK {
 			append(&kq.io_pending, completion)
 			return
 		}
 
 
-		callback := cast(Read_Callback)completion.user_callback
+		callback := cast(On_Read)completion.user_callback
 		callback(completion.user_data, read, err)
 
 		free(completion, kq.allocator)
@@ -302,26 +346,49 @@ _read :: proc(io: ^IO, op: Op_Read, user_data: rawptr, callback: Read_Callback) 
 	append(&kq.completed, completion)
 }
 
-// Wraps os.recv using the kqueue.
-_recv :: proc(io: ^IO, op: Op_Recv, user_data: rawptr, callback: Recv_Callback) {
+Op_Recv :: struct {
+	socket: net.Any_Socket,
+	buf: []byte,
+}
+
+_recv :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, callback: On_Recv) {
 	kq := cast(^KQueue)io.impl_data
 
 	completion := new(Completion, kq.allocator)
-	completion.user_data = user_data
+	completion.user_data = user
 	completion.user_callback = rawptr(callback)
-	completion.operation = op
+	completion.operation = Op_Recv{
+		socket = socket,
+		buf = buf,
+	}
 
 	completion.callback = proc(kq: ^KQueue, completion: ^Completion) {
-		op := &completion.operation.(Op_Recv)
+		op := completion.operation.(Op_Recv)
 
-		received, err := os.recv(op.socket, op.buf, op.flags)
-		if err == os.EWOULDBLOCK {
-			append(&kq.io_pending, completion)
-			return
+		received: int
+		err: net.Network_Error
+		remote_endpoint: net.Endpoint
+		switch sock in op.socket {
+		case net.TCP_Socket:
+			received, err = net.recv_tcp(sock, op.buf)
+
+			// NOTE: Timeout is the name for EWOULDBLOCK in net package.
+			if err == net.TCP_Recv_Error.Timeout {
+				append(&kq.io_pending, completion)
+				return
+			}
+		case net.UDP_Socket:
+			received, remote_endpoint, err = net.recv_udp(sock, op.buf)
+
+			// NOTE: Timeout is the name for EWOULDBLOCK in net package.
+			if err == net.UDP_Recv_Error.Timeout {
+				append(&kq.io_pending, completion)
+				return
+			}
 		}
 
-		callback := cast(Recv_Callback)completion.user_callback
-		callback(completion.user_data, op.buf, received, err)
+		callback := cast(On_Recv)completion.user_callback
+		callback(completion.user_data, received, remote_endpoint, err)
 
 		free(completion, kq.allocator)
 	}
@@ -444,4 +511,27 @@ ev_err_to_os_err :: proc(err: kqueue.Event_Error) -> os.Errno {
 	case:
 		return os.ERROR_NONE
 	}
+}
+
+// Private proc in net package, verbatim copy.
+_endpoint_to_sockaddr :: proc(ep: net.Endpoint) -> (sockaddr: os.SOCKADDR_STORAGE_LH) {
+	switch a in ep.address {
+	case IP4_Address:
+		(^os.sockaddr_in)(&sockaddr)^ = os.sockaddr_in {
+			sin_port = u16be(ep.port),
+			sin_addr = transmute(os.in_addr) a,
+			sin_family = u8(os.AF_INET),
+			sin_len = size_of(os.sockaddr_in),
+		}
+		return
+	case IP6_Address:
+		(^os.sockaddr_in6)(&sockaddr)^ = os.sockaddr_in6 {
+			sin6_port = u16be(ep.port),
+			sin6_addr = transmute(os.in6_addr) a,
+			sin6_family = u8(os.AF_INET6),
+			sin6_len = size_of(os.sockaddr_in6),
+		}
+		return
+	}
+	unreachable()
 }

@@ -10,18 +10,6 @@ DEFAULT_ENTRIES :: 32
 @(private)
 NANOSECONDS_PER_SECOND :: 1e+9
 
-@(private)
-Operation :: union #no_nil {
-	Op_Accept,
-	Op_Close,
-	Op_Connect,
-	Op_Read,
-	Op_Recv,
-	Op_Send,
-	Op_Write,
-	Op_Timeout,
-}
-
 IO :: struct {
 	impl_data: rawptr,
 }
@@ -40,12 +28,14 @@ tick :: proc(io: ^IO) -> os.Errno {
 
 // TODO: set LINGER option.
 prepare_socket :: proc(socket: net.Any_Socket) -> net.Network_Error {
-	return _prepare_socket(socket)
+	_ = net.set_option(socket, .Reuse_Address, true)
+	net.set_blocking(socket, false) or_return
+	return nil
 }
 
 On_Accept :: proc(user: rawptr, client: net.TCP_Socket, source: net.Endpoint, err: net.Network_Error)
 
-accept :: proc(io: ^IO, socket: net.Tcp_Socket, user: rawptr, callback: On_Accept) {
+accept :: proc(io: ^IO, socket: net.TCP_Socket, user: rawptr, callback: On_Accept) {
 	_accept(io, socket, user, callback)
 }
 
@@ -55,24 +45,11 @@ close :: proc(io: ^IO, fd: Handle, user: rawptr, callback: On_Close) {
 	_close(io, fd, user, callback)
 }
 
-// Op_Connect :: struct {
-// 	socket:    os.Socket,
-// 	addr:      os.SOCKADDR_STORAGE_LH,
-// 	addr_len:  os.socklen_t,
-// 	initiated: bool,
-// }
+On_Connect :: proc(user: rawptr, socket: net.TCP_Socket, err: net.Network_Error)
 
-On_Connect :: proc(user: rawptr, err: net.Network_Error)
-
-connect :: proc(io: ^IO, socket: net.Tcp_Socket, endpoint: net.Endpoint, user: rawptr, callback: On_Connect) {
-	_connect(io, socket, endpoint, user, callback)
+connect :: proc(io: ^IO, endpoint: net.Endpoint, user: rawptr, callback: On_Connect) {
+	_connect(io, endpoint, user, callback)
 }
-
-// Op_Read :: struct {
-// 	fd:     os.Handle,
-// 	buf:    []byte,
-// 	offset: i64,
-// }
 
 On_Read :: proc(user: rawptr, read: int, err: os.Errno)
 
@@ -86,9 +63,10 @@ read :: proc(io: ^IO, fd: Handle, buf: []byte, user: rawptr, callback: On_Read) 
 // 	flags:  int, // TODO: remove?
 // }
 
-On_Recv :: proc(user: rawptr, received: int, err: net.Network_Error)
+// udp_remote is set if the socket is a UDP socket.
+On_Recv :: proc(user: rawptr, received: int, udp_remote: net.Endpoint, err: net.Network_Error)
 
-recv :: proc(io: ^IO, socket: net.TCP_Socket, buf: []byte, user: rawptr, callback: On_Recv) {
+recv :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, callback: On_Recv) {
 	_recv(io, socket, buf, user, callback)
 }
 
