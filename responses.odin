@@ -57,10 +57,9 @@ respond_file_content :: proc(using r: ^Response, path: string, content: []byte, 
 // Path traversal is detected and cleaned up.
 // The Content-Type is set based on the file extension, see the MimeType enum for known file extensions.
 respond_dir :: proc(using r: ^Response, base, target, request: string, send := true, allocator := context.temp_allocator) {
-	defer if send do respond(r)
-
 	if !strings.has_prefix(request, base) {
 		status = .NotFound
+		respond(r)
 		return
 	}
 
@@ -69,6 +68,7 @@ respond_dir :: proc(using r: ^Response, base, target, request: string, send := t
 	base_clean := filepath.clean(base, allocator)
 	if !strings.has_prefix(req_clean, base_clean) {
 		status = .NotFound
+		respond(r)
 		return
 	}
 
@@ -94,7 +94,7 @@ respond_json :: proc(using r: ^Response, v: any, opt: json.Marshal_Options = {},
 }
 
 // Sends the response back to the client, handlers should call this.
-respond :: proc(r: ^Response) {
+respond :: proc(r: ^Response, loc := #caller_location) {
 	conn := r._conn
 	req := conn.curr_req
 

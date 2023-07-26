@@ -125,7 +125,7 @@ response_send_got_body :: proc(using r: ^Response, will_close: bool) {
 @(private)
 on_response_sent :: proc(conn_: rawptr, sent: int, err: net.Network_Error) {
 	conn := cast(^Connection)conn_
-	res := conn.response.(Response_Inflight)
+	res := &conn.response.(Response_Inflight)
 
 	res.sent += sent
 	if len(res.buf) != res.sent {
