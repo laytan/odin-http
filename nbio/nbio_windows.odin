@@ -16,10 +16,6 @@ Handle :: union {
 	os.Handle,
 }
 
-_prepare_socket :: proc(socket: net.Any_Socket) -> net.Network_Error {
-	return net.set_blocking(socket, true)
-}
-
 Default :: struct {
 	allocator: mem.Allocator,
 	pool:      thread.Pool,

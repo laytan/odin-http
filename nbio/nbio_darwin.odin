@@ -222,7 +222,7 @@ _accept :: proc(io: ^IO, socket: net.TCP_Socket, user: rawptr, callback: On_Acce
 		}
 
 		if err == nil {
-			err = prepare_socket(client)
+			err = prepare(client)
 		}
 
 		callback := cast(On_Accept)completion.user_callback
@@ -278,7 +278,7 @@ _connect :: proc(io: ^IO, endpoint: net.Endpoint, user: rawptr, callback: On_Con
 		return
 	}
 
-	if err := prepare_socket(sock); err != nil {
+	if err := prepare(sock); err != nil {
 		callback(user, {}, err)
 		return
 	}
