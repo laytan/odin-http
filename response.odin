@@ -2,10 +2,10 @@ package http
 
 import "core:bytes"
 import "core:log"
-import "core:os"
 import "core:strconv"
 import "core:strings"
 import "core:time"
+import "core:net"
 
 import "nbio"
 
@@ -114,33 +114,26 @@ response_send_got_body :: proc(using r: ^Response, will_close: bool) {
 	if response_can_have_body(r, conn) do bytes.buffer_write(&res, bytes.buffer_to_bytes(&body))
 
 	buf := bytes.buffer_to_bytes(&res)
-	conn.response = Response_Inflight{buf = buf, will_close = will_close}
-	nbio.send(
-		&conn.server.io,
-		nbio.Op_Send{os.Socket(conn.socket), buf, 0},
-		conn,
-		on_response_sent,
-	)
+	conn.response = Response_Inflight {
+		buf        = buf,
+		will_close = will_close,
+	}
+	nbio.send(&conn.server.io, conn.socket, buf, conn, on_response_sent)
 }
 
 
 @(private)
-on_response_sent :: proc(conn_: rawptr, sent: u32, err: os.Errno) {
+on_response_sent :: proc(conn_: rawptr, sent: int, err: net.Network_Error) {
 	conn := cast(^Connection)conn_
 	res := conn.response.(Response_Inflight)
 
-	res.sent += int(sent)
+	res.sent += sent
 	if len(res.buf) != res.sent {
-		nbio.send(
-			&conn.server.io,
-			nbio.Op_Send{os.Socket(conn.socket), res.buf[res.sent:], 0},
-			conn,
-			on_response_sent,
-		)
+		nbio.send(&conn.server.io, conn.socket, res.buf[res.sent:], conn, on_response_sent)
 		return
 	}
 
-	if err != os.ERROR_NONE {
+	if err != nil {
 		log.errorf("could not send response: %v", err)
 	}
 

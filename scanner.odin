@@ -3,8 +3,9 @@ package http
 
 import "core:bufio"
 import "core:intrinsics"
-import "core:os"
 import "core:log"
+import "core:net"
+
 import "nbio"
 
 Scan_Callback :: proc(user_data: rawptr, token: []byte, err: bufio.Scanner_Error)
@@ -170,19 +171,19 @@ scanner_scan :: proc(
 
 	nbio.recv(
 		&s.connection.server.io,
-		nbio.Op_Recv{os.Socket(s.connection.socket), s.buf[s.end:len(s.buf)], 0},
+		s.connection.socket,
+		s.buf[s.end:len(s.buf)],
 		s,
 		scanner_on_read,
 	)
 }
 
-scanner_on_read :: proc(s_: rawptr, _: []byte, n_: u32, e: os.Errno) {
+scanner_on_read :: proc(s_: rawptr, n: int, _: net.Endpoint, e: net.Network_Error) {
 	s := cast(^Scanner)s_
-	n := int(n_)
 
 	// Basically all errors from recv are for exceptional cases and don't happen under normal circumstances.
 	err: bufio.Scanner_Error
-	if e != os.ERROR_NONE {
+	if e != nil {
 		log.errorf("Unexpected recv error from nbio: %v", e)
 		err = .Unknown
 	}

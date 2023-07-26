@@ -9,8 +9,8 @@ import "core:mem"
 import "core:mem/virtual"
 import "core:runtime"
 import "core:c/libc"
-import "core:c"
 import "core:os"
+
 import "nbio"
 
 Server_Opts :: struct {
@@ -96,7 +96,7 @@ server_serve :: proc(s: ^Server, handler: Handler) -> net.Network_Error {
 	defer nbio.destroy(&s.io)
 
 	log.debug("accepting connections")
-	nbio.accept(&s.io, os.Socket(s.tcp_sock), s, on_accept)
+	nbio.accept(&s.io, s.tcp_sock, s, on_accept)
 
 	log.debug("starting event loop")
 	for {
@@ -231,13 +231,13 @@ Connection_State :: enum {
 }
 
 Connection :: struct {
-	server:    ^Server,
-	socket:    net.TCP_Socket,
-	client:    net.Endpoint,
-	curr_req:  ^Request,
-	state:     Connection_State,
-	scanner:   Scanner,
-	response:  Maybe(Response_Inflight),
+	server:   ^Server,
+	socket:   net.TCP_Socket,
+	client:   net.Endpoint,
+	curr_req: ^Request,
+	state:    Connection_State,
+	scanner:  Scanner,
+	response: Maybe(Response_Inflight),
 }
 
 Response_Inflight :: struct {
@@ -275,32 +275,22 @@ connection_close :: proc(c: ^Connection) {
 }
 
 @(private)
-on_accept :: proc(
-	server: rawptr,
-	sock: os.Socket,
-	addr: os.SOCKADDR_STORAGE_LH,
-	addr_len: c.int,
-	err: os.Errno,
-) {
+on_accept :: proc(server: rawptr, sock: net.TCP_Socket, source: net.Endpoint, err: net.Network_Error) {
 	server := cast(^Server)server
-	addr := addr
 
 	// Accept next connection.
 	// TODO: is this how it should be done (performance wise)?
-	nbio.accept(&server.io, os.Socket(server.tcp_sock), server, on_accept)
-
-	ep := sockaddr_to_endpoint(&addr)
-	client := net.TCP_Socket(sock)
+	nbio.accept(&server.io, server.tcp_sock, server, on_accept)
 
 	c := new(Connection, server.conn_allocator)
 	c.state = .New
 	c.server = server
-	c.client = ep
-	c.socket = client
+	c.client = source
+	c.socket = sock
 
 	server.conns[c.socket] = c
 
-	log.infof("new connection with %v, got %d conns", ep, len(server.conns))
+	log.infof("new connection with %v, got %d conns", source, len(server.conns))
 	conn_handle_reqs(c)
 }
 
@@ -315,7 +305,10 @@ conn_handle_reqs :: proc(c: ^Connection) {
 	allocator := virtual.arena_allocator(&arena)
 	context.temp_allocator = allocator
 
-	log.debugf("started handling requests for connection with %s", net.endpoint_to_string(c.client, context.temp_allocator))
+	log.debugf(
+		"started handling requests for connection with %s",
+		net.endpoint_to_string(c.client, context.temp_allocator),
+	)
 	conn_handle_req(c)
 }
 
@@ -489,28 +482,4 @@ conn_handle_req :: proc(c: ^Connection) {
 
 	c.scanner.max_token_size = c.server.opts.limit_request_line
 	scanner_scan(&c.scanner, loop, on_rline1)
-}
-
-@(private)
-sockaddr_to_endpoint :: proc(native_addr: ^os.SOCKADDR_STORAGE_LH) -> (ep: net.Endpoint) {
-	addr := native_addr.family when ODIN_OS == .Darwin else native_addr.ss_family
-	switch addr {
-	case os.ADDRESS_FAMILY(os.AF_INET):
-		addr := cast(^os.sockaddr_in)native_addr
-		port := int(addr.sin_port)
-		ep = net.Endpoint {
-			address = net.IP4_Address(transmute([4]byte)addr.sin_addr),
-			port    = port,
-		}
-	case os.ADDRESS_FAMILY(os.AF_INET6):
-		addr := cast(^os.sockaddr_in6)native_addr
-		port := int(addr.sin6_port)
-		ep = net.Endpoint {
-			address = net.IP6_Address(transmute([8]u16be)addr.sin6_addr),
-			port    = port,
-		}
-	case:
-		panic("native_addr is neither IP4 or IP6 address")
-	}
-	return
 }
