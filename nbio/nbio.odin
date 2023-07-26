@@ -41,6 +41,7 @@ tick :: proc(io: ^IO) -> os.Errno {
 // Sockets returned/created from nbio (accept() for example) are prepared by nbio.
 prepare_socket :: proc(socket: net.Any_Socket) -> net.Network_Error {
 	_ = net.set_option(socket, .Reuse_Address, true)
+	_ = net.set_option(socket, .TCP_Nodelay, true)
 	net.set_blocking(socket, false) or_return
 	return nil
 }
@@ -112,4 +113,16 @@ On_Timeout :: proc(user: rawptr)
 
 timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout) {
 	_timeout(io, dur, user, callback)
+}
+
+@(private)
+Operation :: union #no_nil {
+	Op_Accept,
+	Op_Close,
+	Op_Connect,
+	Op_Read,
+	Op_Recv,
+	Op_Send,
+	Op_Write,
+	Op_Timeout,
 }

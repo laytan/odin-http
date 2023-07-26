@@ -11,17 +11,6 @@ import "../kqueue"
 
 Handle :: os.Handle
 
-Operation :: union #no_nil {
-	Op_Accept,
-	Op_Close,
-	Op_Connect,
-	Op_Read,
-	Op_Recv,
-	Op_Send,
-	Op_Write,
-	Op_Timeout,
-}
-
 KQueue :: struct {
 	fd:          os.Handle,
 	io_inflight: int,
