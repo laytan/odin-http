@@ -58,6 +58,8 @@ test_write_read_close :: proc(t: ^testing.T) {
 		expect(t, errno == os.ERROR_NONE, fmt.tprintf("open file error: %i", errno))
 		defer os.remove(path)
 
+		expect(t, prepare_handle(handle) == nil, "prepare_handle failed")
+
 		tctx.fd = handle
 
 		write(&io, handle, tctx.write_buf[:], &tctx, write_callback)
@@ -144,9 +146,6 @@ test_client_and_server_send_recv :: proc(t: ^testing.T) {
 
 		server, err := net.create_socket(.IP4, .TCP)
 		expect(t, err == nil, fmt.tprintf("create socket error: %s", err))
-
-		err = net.set_option(server, .Reuse_Address, true)
-		expect(t, err == nil, fmt.tprintf("set option error: %s", err))
 
 		err = prepare_socket(server)
 		expect(t, err == nil, fmt.tprintf("prepare socket err: %s", err))

@@ -33,11 +33,16 @@ tick :: proc(io: ^IO) -> os.Errno {
 	return _tick(io)
 }
 
-// TODO: set LINGER option.
+// TODO: set LINGER option?
 prepare_socket :: proc(socket: net.Any_Socket) -> net.Network_Error {
 	_ = net.set_option(socket, .Reuse_Address, true)
 	net.set_blocking(socket, false) or_return
 	return nil
+}
+
+prepare_handle :: proc(handle: Handle) -> net.Network_Error {
+	// NOTE: TCP_Socket gets cast to int right away in net, so this is safe to do.
+	return net.set_blocking(net.TCP_Socket(handle), true)
 }
 
 On_Accept :: proc(user: rawptr, client: net.TCP_Socket, source: net.Endpoint, err: net.Network_Error)

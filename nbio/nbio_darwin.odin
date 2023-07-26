@@ -204,8 +204,6 @@ flush_timeouts :: proc(kq: ^KQueue) -> (min_timeout: Maybe(i64)) {
 
 Op_Accept :: distinct net.TCP_Socket
 
-// TODO: maybe call this accept_tcp, or can we make it work with udp?
-// can you even accept from udp sockets?
 _accept :: proc(io: ^IO, socket: net.TCP_Socket, user: rawptr, callback: On_Accept) {
 	kq := cast(^KQueue)io.impl_data
 
@@ -221,6 +219,10 @@ _accept :: proc(io: ^IO, socket: net.TCP_Socket, user: rawptr, callback: On_Acce
 		if err == net.Accept_Error.Would_Block {
 			append(&kq.io_pending, completion)
 			return
+		}
+
+		if err == nil {
+			err = prepare_socket(client)
 		}
 
 		callback := cast(On_Accept)completion.user_callback
