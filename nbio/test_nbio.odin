@@ -4,7 +4,6 @@ import "core:testing"
 import "core:os"
 import "core:net"
 import "core:fmt"
-import "core:c"
 import "core:slice"
 import "core:mem"
 
@@ -44,28 +43,7 @@ test_write_read_close :: proc(t: ^testing.T) {
 		defer destroy(&io)
 
 		tctx := Test_Ctx {
-			write_buf = [20]byte{
-				1,
-				2,
-				3,
-				4,
-				5,
-				6,
-				7,
-				8,
-				9,
-				10,
-				11,
-				12,
-				13,
-				14,
-				15,
-				16,
-				17,
-				18,
-				19,
-				20,
-			},
+			write_buf = [20]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20},
 			read_buf = [20]byte{},
 		}
 		tctx.t = t
@@ -82,15 +60,15 @@ test_write_read_close :: proc(t: ^testing.T) {
 
 		tctx.fd = handle
 
-		write(&io, Op_Write{handle, tctx.write_buf[:], 0}, &tctx, write_callback)
+		write(&io, handle, tctx.write_buf[:], &tctx, write_callback)
 
 		for !tctx.done {
 			terr := tick(&io)
 			expect(t, terr == os.ERROR_NONE, fmt.tprintf("error ticking: %v", terr))
 		}
 
-		expect(t, tctx.read == 20)
-		expect(t, tctx.written == 20)
+		expect(t, tctx.read == 20, "expected to have read 20 bytes")
+		expect(t, tctx.written == 20, "expected to have written 20 bytes")
 		expect(t, slice.equal(tctx.write_buf[:], tctx.read_buf[:]))
 
 		write_callback :: proc(ctx: rawptr, written: int, err: os.Errno) {
@@ -99,7 +77,7 @@ test_write_read_close :: proc(t: ^testing.T) {
 
 			ctx.written = written
 
-			read(ctx.io, Op_Read{ctx.fd, ctx.read_buf[:], 0}, ctx, read_callback)
+			read(ctx.io, ctx.fd, ctx.read_buf[:], ctx, read_callback)
 		}
 
 		read_callback :: proc(ctx: rawptr, r: int, err: os.Errno) {
@@ -142,9 +120,9 @@ test_client_and_server_send_recv :: proc(t: ^testing.T) {
 			io:            ^IO,
 			send_buf:      []byte,
 			recv_buf:      []byte,
-			sent:          u32,
-			received:      u32,
-			accepted_sock: Maybe(os.Socket),
+			sent:          int,
+			received:      int,
+			accepted_sock: Maybe(net.TCP_Socket),
 			done:          bool,
 		}
 
@@ -163,6 +141,7 @@ test_client_and_server_send_recv :: proc(t: ^testing.T) {
 			address = net.IP4_Loopback,
 			port    = 3131,
 		}
+
 		server, err := net.create_socket(.IP4, .TCP)
 		expect(t, err == nil, fmt.tprintf("create socket error: %s", err))
 
@@ -178,27 +157,9 @@ test_client_and_server_send_recv :: proc(t: ^testing.T) {
 		errn := os.listen(os.Socket(server.(net.TCP_Socket)), 1000)
 		expect(t, errn == os.ERROR_NONE, fmt.tprintf("listen error: %i", errn))
 
-		accept(&io, os.Socket(server.(net.TCP_Socket)), &tctx, accept_callback)
+		accept(&io, server.(net.TCP_Socket), &tctx, accept_callback)
 
-		client, cerr := net.create_socket(.IP4, .TCP)
-		expect(t, cerr == nil, fmt.tprintf("create socket error: %s", cerr))
-
-		err = prepare_socket(client)
-		expect(t, err == nil, fmt.tprintf("client prepare socket err: %s", err))
-
-		sockaddr := os.sockaddr_in {
-			sin_port   = u16be(endpoint.port),
-			sin_addr   = transmute(os.in_addr)endpoint.address.(net.IP4_Address),
-			sin_family = os.ADDRESS_FAMILY(os.AF_INET),
-		}
-
-		ossockaddr := (^os.SOCKADDR)(&sockaddr)
-		op_connect := Op_Connect {
-			socket = os.Socket(client.(net.TCP_Socket)),
-			addr   = ossockaddr,
-			len    = size_of(os.SOCKADDR),
-		}
-		connect(&io, op_connect, &tctx, connect_callback)
+		connect(&io, endpoint, &tctx, connect_callback)
 
 		for !tctx.done {
 			terr := tick(&io)
@@ -208,64 +169,46 @@ test_client_and_server_send_recv :: proc(t: ^testing.T) {
 		expect(
 			t,
 			len(tctx.send_buf) == int(tctx.sent),
-			fmt.tprintf(
-				"expected sent to be length of buffer: %i != %i",
-				len(tctx.send_buf),
-				tctx.sent,
-			),
+			fmt.tprintf("expected sent to be length of buffer: %i != %i", len(tctx.send_buf), tctx.sent),
 		)
 		expect(
 			t,
 			len(tctx.recv_buf) == int(tctx.received),
-			fmt.tprintf(
-				"expected recv to be length of buffer: %i != %i",
-				len(tctx.recv_buf),
-				tctx.received,
-			),
+			fmt.tprintf("expected recv to be length of buffer: %i != %i", len(tctx.recv_buf), tctx.received),
 		)
 
 		expect(
 			t,
 			slice.equal(tctx.send_buf[:tctx.received], tctx.recv_buf),
-			fmt.tprintf(
-				"send and received not the same: %v != %v",
-				tctx.send_buf[:tctx.received],
-				tctx.recv_buf,
-			),
+			fmt.tprintf("send and received not the same: %v != %v", tctx.send_buf[:tctx.received], tctx.recv_buf),
 		)
 
-		connect_callback :: proc(ctx: rawptr, sock: os.Socket, err: os.Errno) {
+		connect_callback :: proc(ctx: rawptr, sock: net.TCP_Socket, err: net.Network_Error) {
 			ctx := cast(^Test_Ctx)ctx
-			expect(ctx.t, err == os.ERROR_NONE, fmt.tprintf("connect error: %i", err))
+			expect(ctx.t, err == nil, fmt.tprintf("connect error: %i", err))
 
-			send(ctx.io, Op_Send{sock, ctx.send_buf, 0}, ctx, send_callback)
+			send(ctx.io, sock, ctx.send_buf, ctx, send_callback)
 		}
 
-		send_callback :: proc(ctx: rawptr, res: u32, err: os.Errno) {
+		send_callback :: proc(ctx: rawptr, res: int, err: net.Network_Error) {
 			ctx := cast(^Test_Ctx)ctx
-			expect(ctx.t, err == os.ERROR_NONE, fmt.tprintf("send error: %i", err))
+			expect(ctx.t, err == nil, fmt.tprintf("send error: %i", err))
 
 			ctx.sent = res
 		}
 
-		accept_callback :: proc(
-			ctx: rawptr,
-			sock: os.Socket,
-			addr: os.SOCKADDR_STORAGE_LH,
-			addr_len: c.int,
-			err: os.Errno,
-		) {
+		accept_callback :: proc(ctx: rawptr, client: net.TCP_Socket, source: net.Endpoint, err: net.Network_Error) {
 			ctx := cast(^Test_Ctx)ctx
-			expect(ctx.t, err == os.ERROR_NONE, fmt.tprintf("accept error: %i", err))
+			expect(ctx.t, err == nil, fmt.tprintf("accept error: %i", err))
 
-			ctx.accepted_sock = sock
+			ctx.accepted_sock = client
 
-			recv(ctx.io, Op_Recv{sock, ctx.recv_buf, 0}, ctx, recv_callback)
+			recv(ctx.io, client, ctx.recv_buf, ctx, recv_callback)
 		}
 
-		recv_callback :: proc(ctx: rawptr, buf: []byte, received: u32, err: os.Errno) {
+		recv_callback :: proc(ctx: rawptr, received: int, _: net.Endpoint, err: net.Network_Error) {
 			ctx := cast(^Test_Ctx)ctx
-			expect(ctx.t, err == os.ERROR_NONE, fmt.tprintf("recv error: %i", err))
+			expect(ctx.t, err == nil, fmt.tprintf("recv error: %i", err))
 
 			ctx.received = received
 			ctx.done = true

@@ -14,7 +14,14 @@ IO :: struct {
 	impl_data: rawptr,
 }
 
-init :: proc(io: ^IO, entries: u32 = DEFAULT_ENTRIES, flags: u32 = 0, allocator := context.allocator) -> (err: os.Errno) {
+init :: proc(
+	io: ^IO,
+	entries: u32 = DEFAULT_ENTRIES,
+	flags: u32 = 0,
+	allocator := context.allocator,
+) -> (
+	err: os.Errno,
+) {
 	return _init(io, entries, flags, allocator)
 }
 
@@ -57,12 +64,6 @@ read :: proc(io: ^IO, fd: Handle, buf: []byte, user: rawptr, callback: On_Read) 
 	_read(io, fd, buf, user, callback)
 }
 
-// Op_Recv :: struct {
-// 	socket: os.Socket,
-// 	buf:    []byte,
-// 	flags:  int, // TODO: remove?
-// }
-
 // udp_remote is set if the socket is a UDP socket.
 On_Recv :: proc(user: rawptr, received: int, udp_remote: net.Endpoint, err: net.Network_Error)
 
@@ -70,23 +71,19 @@ recv :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, callbac
 	_recv(io, socket, buf, user, callback)
 }
 
-// Op_Send :: struct {
-// 	socket: os.Socket,
-// 	buf:    []byte,
-// 	flags:  int,
-// }
-
 On_Sent :: proc(user: rawptr, sent: int, err: net.Network_Error)
 
-send :: proc(io: ^IO, socket: net.TCP_Socket, buf: []byte, user: rawptr, callback: On_Sent) {
+// set endpoint if the socket is a UDP socket.
+send :: proc(
+	io: ^IO,
+	socket: net.Any_Socket,
+	buf: []byte,
+	user: rawptr,
+	callback: On_Sent,
+	endpoint: Maybe(net.Endpoint) = nil,
+) {
 	_send(io, socket, buf, user, callback)
 }
-
-// Op_Write :: struct {
-// 	fd:     os.Handle,
-// 	buf:    []byte,
-// 	offset: i64,
-// }
 
 On_Write :: proc(user: rawptr, written: int, err: os.Errno)
 
@@ -94,11 +91,6 @@ write :: proc(io: ^IO, fd: Handle, buf: []byte, user: rawptr, callback: On_Write
 	_write(io, fd, buf, user, callback)
 }
 
-// Op_Timeout :: struct {
-// 	expires: time.Time,
-// }
-
-// TODO: probably error too.
 On_Timeout :: proc(user: rawptr)
 
 timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout) {

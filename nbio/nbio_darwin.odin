@@ -25,6 +25,7 @@ Operation :: union #no_nil {
 KQueue :: struct {
 	fd:          os.Handle,
 	io_inflight: int,
+	// TODO(perf): make completions use an object pool.
 	timeouts:    [dynamic]^Completion,
 	completed:   [dynamic]^Completion,
 	io_pending:  [dynamic]^Completion,
@@ -106,7 +107,7 @@ flush :: proc(io: ^IO, wait_for_completions: bool) -> os.Errno {
 		new_events, err := kqueue.kevent(kq.fd, events[:change_events], events[:], &ts)
 		if err != .None do return ev_err_to_os_err(err)
 
-		for _ in 0..<change_events {
+		for _ in 0 ..< change_events {
 			unordered_remove(&kq.io_pending, 0)
 		}
 
@@ -138,7 +139,7 @@ flush_io :: proc(kq: ^KQueue, events: []kqueue.KEvent) -> int {
 
 		switch op in completion.operation {
 		case Op_Accept:
-			event.ident = uintptr(op.socket)
+			event.ident = uintptr(os.Socket(op))
 			event.filter = kqueue.EVFILT_READ
 		case Op_Connect:
 			event.ident = uintptr(op.socket)
@@ -150,12 +151,12 @@ flush_io :: proc(kq: ^KQueue, events: []kqueue.KEvent) -> int {
 			event.ident = uintptr(op.fd)
 			event.filter = kqueue.EVFILT_WRITE
 		case Op_Recv:
-			event.ident = uintptr(op.socket)
+			event.ident = uintptr(os.Socket(net.any_socket_to_socket(op.socket)))
 			event.filter = kqueue.EVFILT_READ
 		case Op_Send:
-			event.ident = uintptr(op.socket)
+			event.ident = uintptr(os.Socket(net.any_socket_to_socket(op.socket)))
 			event.filter = kqueue.EVFILT_WRITE
-		case:
+		case Op_Timeout, Op_Close:
 			panic("invalid completion operation queued")
 		}
 
@@ -217,7 +218,7 @@ _accept :: proc(io: ^IO, socket: net.TCP_Socket, user: rawptr, callback: On_Acce
 		op := completion.operation.(Op_Accept)
 
 		client, source, err := net.accept_tcp(net.TCP_Socket(op))
-		if err == net.Accept_Error.WouldBlock {
+		if err == net.Accept_Error.Would_Block {
 			append(&kq.io_pending, completion)
 			return
 		}
@@ -254,8 +255,8 @@ _close :: proc(io: ^IO, fd: Handle, user: rawptr, callback: On_Close) {
 }
 
 Op_Connect :: struct {
-	socket: net.TCP_Socket,
-	sockaddr: os.SOCKADDR_STORAGE_LH,
+	socket:    net.TCP_Socket,
+	sockaddr:  os.SOCKADDR_STORAGE_LH,
 	initiated: bool,
 }
 
@@ -283,8 +284,8 @@ _connect :: proc(io: ^IO, endpoint: net.Endpoint, user: rawptr, callback: On_Con
 	completion := new(Completion, kq.allocator)
 	completion.user_data = user
 	completion.user_callback = rawptr(callback)
-	completion.operation = Op_Connect{
-		socket = sock.(net.TCP_Socket),
+	completion.operation = Op_Connect {
+		socket   = sock.(net.TCP_Socket),
 		sockaddr = _endpoint_to_sockaddr(endpoint),
 	}
 
@@ -295,7 +296,7 @@ _connect :: proc(io: ^IO, endpoint: net.Endpoint, user: rawptr, callback: On_Con
 		err: os.Errno
 		if op.initiated {
 			// We have already called os.connect, retrieve error number only.
-			os.getsockopt(op.socket, os.SOL_SOCKET, os.SO_ERROR, &err, size_of(os.Errno))
+			os.getsockopt(os.Socket(op.socket), os.SOL_SOCKET, os.SO_ERROR, &err, size_of(os.Errno))
 		} else {
 			err = os.connect(os.Socket(op.socket), (^os.SOCKADDR)(&op.sockaddr), i32(op.sockaddr.len))
 			if err == os.EINPROGRESS {
@@ -313,8 +314,8 @@ _connect :: proc(io: ^IO, endpoint: net.Endpoint, user: rawptr, callback: On_Con
 }
 
 Op_Read :: struct {
-	fd:     Handle,
-	buf:    []byte,
+	fd:  Handle,
+	buf: []byte,
 }
 
 _read :: proc(io: ^IO, fd: Handle, buf: []byte, user: rawptr, callback: On_Read) {
@@ -323,15 +324,17 @@ _read :: proc(io: ^IO, fd: Handle, buf: []byte, user: rawptr, callback: On_Read)
 	completion := new(Completion, kq.allocator)
 	completion.user_data = user
 	completion.user_callback = rawptr(callback)
-	completion.operation = Op_Read{
-		fd = fd,
+	completion.operation = Op_Read {
+		fd  = fd,
 		buf = buf,
 	}
 
 	completion.callback = proc(kq: ^KQueue, completion: ^Completion) {
 		op := completion.operation.(Op_Read)
 
-		read, err := os.read(op.fd, op.buf)
+		// NOTE: os.read returned 0, 0 immediately,
+		// while read_at worked as expected, not sure why.
+		read, err := os.read_at(op.fd, op.buf, 0)
 		if err == os.EWOULDBLOCK {
 			append(&kq.io_pending, completion)
 			return
@@ -348,7 +351,7 @@ _read :: proc(io: ^IO, fd: Handle, buf: []byte, user: rawptr, callback: On_Read)
 
 Op_Recv :: struct {
 	socket: net.Any_Socket,
-	buf: []byte,
+	buf:    []byte,
 }
 
 _recv :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, callback: On_Recv) {
@@ -357,9 +360,9 @@ _recv :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, callba
 	completion := new(Completion, kq.allocator)
 	completion.user_data = user
 	completion.user_callback = rawptr(callback)
-	completion.operation = Op_Recv{
+	completion.operation = Op_Recv {
 		socket = socket,
-		buf = buf,
+		buf    = buf,
 	}
 
 	completion.callback = proc(kq: ^KQueue, completion: ^Completion) {
@@ -395,73 +398,118 @@ _recv :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, callba
 	append(&kq.completed, completion)
 }
 
-// Wraps os.send using the kqueue.
-_send :: proc(io: ^IO, op: Op_Send, user_data: rawptr, callback: Send_Callback) {
+Op_Send :: struct {
+	socket:   net.Any_Socket,
+	buf:      []byte,
+	endpoint: Maybe(net.Endpoint),
+}
+
+_send :: proc(
+	io: ^IO,
+	socket: net.Any_Socket,
+	buf: []byte,
+	user: rawptr,
+	callback: On_Sent,
+	endpoint: Maybe(net.Endpoint) = nil,
+) {
 	kq := cast(^KQueue)io.impl_data
 
+	if _, ok := socket.(net.UDP_Socket); ok {
+		assert(endpoint != nil)
+	}
+
 	completion := new(Completion, kq.allocator)
-	completion.user_data = user_data
+	completion.user_data = user
 	completion.user_callback = rawptr(callback)
-	completion.operation = op
+	completion.operation = Op_Send {
+		socket   = socket,
+		buf      = buf,
+		endpoint = endpoint,
+	}
 
 	completion.callback = proc(kq: ^KQueue, completion: ^Completion) {
-		op := &completion.operation.(Op_Send)
+		op := completion.operation.(Op_Send)
 
-		sent, err := os.send(op.socket, op.buf, op.flags)
-		if err == os.EWOULDBLOCK {
+		sent: u32
+		errno: os.Errno
+		err: net.Network_Error
+
+		switch sock in op.socket {
+		case net.TCP_Socket:
+			sent, errno = os.send(os.Socket(sock), op.buf, 0)
+			err = net.TCP_Send_Error(errno)
+
+		case net.UDP_Socket:
+			toaddr := _endpoint_to_sockaddr(op.endpoint.(net.Endpoint))
+			sent, errno = os.sendto(os.Socket(sock), op.buf, 0, cast(^os.SOCKADDR)&toaddr, i32(toaddr.len))
+			err = net.UDP_Send_Error(errno)
+		}
+
+		if errno == os.EWOULDBLOCK {
 			append(&kq.io_pending, completion)
 			return
 		}
 
-		callback := cast(Send_Callback)completion.user_callback
-		callback(completion.user_data, sent, err)
+		callback := cast(On_Sent)completion.user_callback
+		callback(completion.user_data, int(sent), err)
 
 		free(completion, kq.allocator)
 	}
 	append(&kq.completed, completion)
 }
 
-// Wraps os.write using the kqueue.
-_write :: proc(io: ^IO, op: Op_Write, user_data: rawptr, callback: Write_Callback) {
+Op_Write :: struct {
+	fd:  Handle,
+	buf: []byte,
+}
+
+_write :: proc(io: ^IO, fd: Handle, buf: []byte, user: rawptr, callback: On_Write) {
 	kq := cast(^KQueue)io.impl_data
 
 	completion := new(Completion, kq.allocator)
-	completion.user_data = user_data
+	completion.user_data = user
 	completion.user_callback = rawptr(callback)
-	completion.operation = op
-	completion.callback = proc(kq: ^KQueue, completion: ^Completion) {
-		op := &completion.operation.(Op_Write)
+	completion.operation = Op_Write {
+		fd  = fd,
+		buf = buf,
+	}
 
-		read, err := os.write_at(op.fd, op.buf, op.offset)
+	completion.callback = proc(kq: ^KQueue, completion: ^Completion) {
+		op := completion.operation.(Op_Write)
+
+		written, err := os.write(op.fd, op.buf)
 		if err == os.EWOULDBLOCK {
 			append(&kq.io_pending, completion)
 			return
 		}
 
-		callback := cast(Write_Callback)completion.user_callback
-		callback(completion.user_data, read, err)
+		callback := cast(On_Write)completion.user_callback
+		callback(completion.user_data, written, err)
 
 		free(completion, kq.allocator)
 	}
 
 	append(&kq.completed, completion)
+}
+
+Op_Timeout :: struct {
+	expires: time.Time,
 }
 
 // Runs the callback after the timeout, using the kqueue.
-_timeout :: proc(io: ^IO, dur: time.Duration, user_data: rawptr, callback: Timeout_Callback) {
+_timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout) {
 	kq := cast(^KQueue)io.impl_data
 
 	completion := new(Completion, kq.allocator)
-	completion.user_data = user_data
+	completion.user_data = user
 	completion.user_callback = rawptr(callback)
 	completion.operation = Op_Timeout {
 		expires = time.time_add(time.now(), dur),
 	}
 
 	completion.callback = proc(kq: ^KQueue, completion: ^Completion) {
-		callback := cast(Timeout_Callback)completion.user_callback
+		callback := cast(On_Timeout)completion.user_callback
 		callback(completion.user_data)
-
 		free(completion, kq.allocator)
 	}
 	append(&kq.timeouts, completion)
@@ -516,20 +564,20 @@ ev_err_to_os_err :: proc(err: kqueue.Event_Error) -> os.Errno {
 // Private proc in net package, verbatim copy.
 _endpoint_to_sockaddr :: proc(ep: net.Endpoint) -> (sockaddr: os.SOCKADDR_STORAGE_LH) {
 	switch a in ep.address {
-	case IP4_Address:
+	case net.IP4_Address:
 		(^os.sockaddr_in)(&sockaddr)^ = os.sockaddr_in {
-			sin_port = u16be(ep.port),
-			sin_addr = transmute(os.in_addr) a,
+			sin_port   = u16be(ep.port),
+			sin_addr   = transmute(os.in_addr)a,
 			sin_family = u8(os.AF_INET),
-			sin_len = size_of(os.sockaddr_in),
+			sin_len    = size_of(os.sockaddr_in),
 		}
 		return
-	case IP6_Address:
+	case net.IP6_Address:
 		(^os.sockaddr_in6)(&sockaddr)^ = os.sockaddr_in6 {
-			sin6_port = u16be(ep.port),
-			sin6_addr = transmute(os.in6_addr) a,
+			sin6_port   = u16be(ep.port),
+			sin6_addr   = transmute(os.in6_addr)a,
 			sin6_family = u8(os.AF_INET6),
-			sin6_len = size_of(os.sockaddr_in6),
+			sin6_len    = size_of(os.sockaddr_in6),
 		}
 		return
 	}
