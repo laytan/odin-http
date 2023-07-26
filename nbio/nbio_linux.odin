@@ -11,10 +11,6 @@ import "../io_uring"
 
 Handle :: os.Handle
 
-_prepare_socket :: proc(socket: net.Any_Socket) -> net.Network_Error {
-	return net.set_blocking(socket, false)
-}
-
 Linux :: struct {
 	ring:          io_uring.IO_Uring,
 
@@ -193,7 +189,6 @@ _accept :: proc(io: ^IO, socket: os.Socket, user_data: rawptr, callback: Accept_
 	accept_enqueue(lx, completion)
 }
 
-@(private = "file")
 accept_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
 	op := &completion.operation.(Op_Accept)
 
@@ -212,7 +207,6 @@ accept_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
 	lx.ios_queued += 1
 }
 
-@(private = "file")
 accept_callback :: proc(lx: ^Linux, completion: ^Completion) {
 	op := &completion.operation.(Op_Accept)
 	callback := cast(Accept_Callback)completion.user_callback
@@ -245,7 +239,6 @@ _close :: proc(io: ^IO, fd: os.Handle, user_data: rawptr, callback: Close_Callba
 	close_enqueue(lx, completion)
 }
 
-@(private = "file")
 close_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
 	op := &completion.operation.(Op_Close)
 
@@ -258,7 +251,6 @@ close_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
 	lx.ios_queued += 1
 }
 
-@(private = "file")
 close_callback :: proc(lx: ^Linux, completion: ^Completion) {
 	callback := cast(Close_Callback)completion.user_callback
 
@@ -282,7 +274,6 @@ _connect :: proc(io: ^IO, op: Op_Connect, user_data: rawptr, callback: Connect_C
 	connect_enqueue(lx, completion)
 }
 
-@(private = "file")
 connect_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
 	op := &completion.operation.(Op_Connect)
 
@@ -295,7 +286,6 @@ connect_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
 	lx.ios_queued += 1
 }
 
-@(private = "file")
 connect_callback :: proc(lx: ^Linux, completion: ^Completion) {
 	op := &completion.operation.(Op_Connect)
 	callback := cast(Connect_Callback)completion.user_callback
@@ -323,7 +313,6 @@ _read :: proc(io: ^IO, op: Op_Read, user_data: rawptr, callback: Read_Callback) 
 	read_enqueue(lx, completion)
 }
 
-@(private = "file")
 read_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
 	op := &completion.operation.(Op_Read)
 
@@ -336,7 +325,6 @@ read_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
 	lx.ios_queued += 1
 }
 
-@(private = "file")
 read_callback :: proc(lx: ^Linux, completion: ^Completion) {
 	callback := cast(Read_Callback)completion.user_callback
 
@@ -368,7 +356,6 @@ _recv :: proc(io: ^IO, op: Op_Recv, user_data: rawptr, callback: Recv_Callback) 
 	recv_enqueue(lx, completion)
 }
 
-@(private = "file")
 recv_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
 	op := &completion.operation.(Op_Recv)
 
@@ -382,7 +369,6 @@ recv_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
 	lx.ios_queued += 1
 }
 
-@(private = "file")
 recv_callback :: proc(lx: ^Linux, completion: ^Completion) {
 	op := &completion.operation.(Op_Recv)
 	callback := cast(Recv_Callback)completion.user_callback
@@ -415,7 +401,6 @@ _send :: proc(io: ^IO, op: Op_Send, user_data: rawptr, callback: Send_Callback) 
 	send_enqueue(lx, completion)
 }
 
-@(private = "file")
 send_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
 	op := &completion.operation.(Op_Send)
 
@@ -428,7 +413,6 @@ send_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
 	lx.ios_queued += 1
 }
 
-@(private = "file")
 send_callback :: proc(lx: ^Linux, completion: ^Completion) {
 	callback := cast(Send_Callback)completion.user_callback
 
@@ -460,7 +444,6 @@ _write :: proc(io: ^IO, op: Op_Write, user_data: rawptr, callback: Write_Callbac
 	write_enqueue(lx, completion)
 }
 
-@(private = "file")
 write_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
 	op := &completion.operation.(Op_Write)
 
@@ -473,7 +456,6 @@ write_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
 	lx.ios_queued += 1
 }
 
-@(private = "file")
 write_callback :: proc(lx: ^Linux, completion: ^Completion) {
 	callback := cast(Write_Callback)completion.user_callback
 
@@ -507,7 +489,6 @@ _timeout :: proc(io: ^IO, dur: time.Duration, user_data: rawptr, callback: Timeo
 	timeout_enqueue(lx, completion)
 }
 
-@(private = "file")
 timeout_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
 	op := &completion.operation.(Op_Timeout)
 
@@ -526,7 +507,6 @@ timeout_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
 	lx.ios_queued += 1
 }
 
-@(private = "file")
 timeout_callback :: proc(lx: ^Linux, completion: ^Completion) {
 	callback := cast(Timeout_Callback)completion.user_callback
 
@@ -537,6 +517,8 @@ timeout_callback :: proc(lx: ^Linux, completion: ^Completion) {
 	}
 
 	// TODO: we are swallowing the returned error here.
+	assert(errno == os.ERROR_NONE)
+
 	callback(completion.user_data)
 	free(completion, lx.allocator)
 }
