@@ -10,7 +10,7 @@ import "core:thread"
 import "core:time"
 import win "core:sys/windows"
 
-Handle :: distinct uintptr
+Handle :: os.Handle
 
 Default :: struct {
 	allocator: mem.Allocator,
@@ -64,6 +64,13 @@ _tick :: proc(io: ^IO) -> (err: os.Errno) {
 	// PERF: ideally the thread pool does not keep track of tasks that are done, we don't care.
 	for _ in thread.pool_pop_done(&df.pool) {}
 
+	return
+}
+
+_listen :: proc(socket: net.TCP_Socket, backlog := 1000) -> (err: net.Network_Error) {
+	if res := win.listen(win.SOCKET(socket), i32(backlog)); res == win.SOCKET_ERROR {
+		err = net.Listen_Error(win.WSAGetLastError())
+	}
 	return
 }
 

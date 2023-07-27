@@ -176,6 +176,11 @@ flush_submissions :: proc(lx: ^Linux, wait_nr: u32, timeouts: ^uint, etime: ^boo
 	return os.ERROR_NONE
 }
 
+_listen :: proc(socket: net.TCP_Socket, backlog := 1000) -> net.Network_Error {
+	errno := os.listen(os.Socket(socket), backlog)
+	return net.Listen_Error(errno)
+}
+
 Op_Accept :: struct {
 	socket:      net.TCP_Socket,
 	sockaddr:    os.SOCKADDR_STORAGE_LH,

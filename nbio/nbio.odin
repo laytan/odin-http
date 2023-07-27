@@ -66,6 +66,13 @@ prepare :: proc {
 	prepare_handle,
 }
 
+// Not a non-blocking call,
+// but provided for convenience because net.listen_tcp does more than just listening.
+// and os.listen is not there in windows.
+listen :: proc(socket: net.TCP_Socket, backlog := 1000) -> net.Network_Error {
+	return _listen(socket, backlog)
+}
+
 On_Accept :: proc(user: rawptr, client: net.TCP_Socket, source: net.Endpoint, err: net.Network_Error)
 
 accept :: proc(io: ^IO, socket: net.TCP_Socket, user: rawptr, callback: On_Accept) {

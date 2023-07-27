@@ -53,7 +53,7 @@ test_write_read_close :: proc(t: ^testing.T) {
 		handle, errno := os.open(
 			path,
 			os.O_RDWR | os.O_CREATE | os.O_TRUNC,
-			os.S_IRUSR | os.S_IWUSR | os.S_IRGRP | os.S_IROTH,
+			os.S_IRUSR | os.S_IWUSR | os.S_IRGRP | os.S_IROTH when ODIN_OS != .Windows else 0,
 		)
 		expect(t, errno == os.ERROR_NONE, fmt.tprintf("open file error: %i", errno))
 		defer os.remove(path)
@@ -153,8 +153,8 @@ test_client_and_server_send_recv :: proc(t: ^testing.T) {
 		err = net.bind(server, endpoint)
 		expect(t, err == nil, fmt.tprintf("bind error: %s", err))
 
-		errn := os.listen(os.Socket(server.(net.TCP_Socket)), 1000)
-		expect(t, errn == os.ERROR_NONE, fmt.tprintf("listen error: %i", errn))
+		err = listen(server.(net.TCP_Socket))
+		expect(t, err == nil, fmt.tprintf("listen error: %s", err))
 
 		accept(&io, server.(net.TCP_Socket), &tctx, accept_callback)
 
