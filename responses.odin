@@ -27,7 +27,7 @@ respond_plain :: proc(using r: ^Response, text: string, send := true) {
 
 // Sets the response to one that sends the contents of the file at the given path.
 // Content-Type header is set based on the file extension, see the MimeType enum for known file extensions.
-respond_file :: proc(using r: ^Response, path: string, send := true, allocator := context.temp_allocator) {
+respond_file :: proc(using r: ^Response, path: string, send := true) {
 	bs, ok := os.read_entire_file(path, allocator)
 	if !ok {
 		status = .NotFound
@@ -56,7 +56,7 @@ respond_file_content :: proc(using r: ^Response, path: string, content: []byte, 
 //
 // Path traversal is detected and cleaned up.
 // The Content-Type is set based on the file extension, see the MimeType enum for known file extensions.
-respond_dir :: proc(using r: ^Response, base, target, request: string, send := true, allocator := context.temp_allocator) {
+respond_dir :: proc(using r: ^Response, base, target, request: string, send := true) {
 	if !strings.has_prefix(request, base) {
 		status = .NotFound
 		respond(r)
@@ -94,7 +94,7 @@ respond_json :: proc(using r: ^Response, v: any, opt: json.Marshal_Options = {},
 }
 
 // Sends the response back to the client, handlers should call this.
-respond :: proc(r: ^Response, loc := #caller_location) {
+respond :: proc(r: ^Response) {
 	conn := r._conn
 	req := conn.curr_req
 
@@ -103,5 +103,5 @@ respond :: proc(r: ^Response, loc := #caller_location) {
 		rline.method = .Head
 	}
 
-	response_send(r, conn, req.allocator)
+	response_send(r, conn)
 }

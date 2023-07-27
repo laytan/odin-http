@@ -21,7 +21,7 @@ Request :: struct {
 	// Route params/captures.
 	url_params:      []string,
 
-	// Allocator that is freed after the request.
+	// A growing arena where allocations are freed after the response is sent.
 	allocator:       mem.Allocator,
 
 	// Body memoization and scanner.
@@ -30,7 +30,7 @@ Request :: struct {
 	_body_was_alloc: bool,
 }
 
-request_init :: proc(r: ^Request, allocator: mem.Allocator = context.allocator) {
+request_init :: proc(r: ^Request, allocator := context.allocator) {
 	r.headers = make(Headers, 3, allocator)
 	r.allocator = allocator
 }
@@ -152,7 +152,12 @@ request_body :: proc(
 		state := cast(^Request_Body_State)state
 		state.req._body = body
 		state.req._body_was_alloc = was_allocation
-		state.cb(body, was_allocation, state.user_data)
+
+		cb := state.cb
+		ud := state.user_data
+		free(state, state.req.allocator)
+
+		cb(body, was_allocation, ud)
 	}
 
 	state := new(Request_Body_State, req.allocator)

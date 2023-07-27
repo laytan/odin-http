@@ -3,6 +3,7 @@ package main
 import "core:net"
 import "core:fmt"
 import "core:log"
+import "core:mem"
 
 import http "../.."
 
@@ -10,11 +11,26 @@ import http "../.."
 main :: proc() {
 	context.logger = log.create_console_logger()
 
+	track: mem.Tracking_Allocator
+	mem.tracking_allocator_init(&track, context.allocator)
+	context.allocator = mem.tracking_allocator(&track)
+
 	s: http.Server
 
-	handler := http.handler(proc(req: ^http.Request, res: ^http.Response) {
-		http.respond_plain(res, "Hello, Odin!")
+	handler := http.handler(proc(_: ^http.Request, res: ^http.Response) {
+		res.status = .Ok
+		http.respond(res)
 	})
 
+	http.server_shutdown_on_interrupt(&s)
+
 	fmt.printf("Server stopped: %s", http.listen_and_serve(&s, handler))
+
+	for _, leak in track.allocation_map {
+		fmt.printf("%v leaked %v bytes\n", leak.location, leak.size)
+	}
+
+	for bad_free in track.bad_free_array {
+		fmt.printf("%v allocation %p was freed badly\n", bad_free.location, bad_free.memory)
+	}
 }

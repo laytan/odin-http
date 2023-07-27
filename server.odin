@@ -42,13 +42,22 @@ Default_Server_Opts :: Server_Opts {
 	limit_headers        = 8000,
 }
 
+Server_State :: enum {
+	Idle,
+	Listening,
+	Serving,
+	Running,
+	Closing,
+	Cleaning,
+	Closed,
+}
+
 Server :: struct {
 	opts:           Server_Opts,
 	tcp_sock:       net.TCP_Socket,
 	conn_allocator: mem.Allocator,
 	conns:          map[net.TCP_Socket]^Connection,
-	shutting_down:  bool,
-	shut_down:      bool,
+	state:          Server_State,
 	handler:        Handler,
 	io:             nbio.IO,
 }
@@ -77,6 +86,8 @@ server_listen :: proc(
 ) -> (
 	err: net.Network_Error,
 ) {
+	defer s.state = .Listening
+
 	s.opts = opts
 	s.tcp_sock, err = net.listen_tcp(endpoint)
 	return
@@ -99,17 +110,16 @@ server_serve :: proc(s: ^Server, handler: Handler) -> net.Network_Error {
 	nbio.accept(&s.io, s.tcp_sock, s, on_accept)
 
 	log.debug("starting event loop")
+	s.state = .Serving
 	for {
-		if s.shutting_down {
-			time.sleep(SHUTDOWN_INTERVAL)
-			continue
-		}
-
-		if s.shut_down do break
+		if s.state == .Closed   do break
+		if s.state == .Cleaning do continue
 
 		errno = nbio.tick(&s.io)
-		// TODO: error handling.
-		assert(errno == os.ERROR_NONE)
+		if errno != os.ERROR_NONE {
+			log.errorf("non-blocking io tick error: %v", errno)
+			break
+		}
 	}
 
 	log.debug("event loop end")
@@ -131,9 +141,7 @@ SHUTDOWN_INTERVAL :: time.Millisecond * 100
 // 4. Close the main socket.
 // 5. Signal 'server_start' it can return.
 server_shutdown :: proc(using s: ^Server) {
-	shutting_down = true
-	defer shutting_down = false
-	defer shut_down = true
+	s.state = .Closing
 	defer delete(conns)
 
 	for {
@@ -147,7 +155,7 @@ server_shutdown :: proc(using s: ^Server) {
 			case .Closing:
 				log.debugf("shutdown: connection %i is closing", sock)
 			case .Closed:
-				assert(false, "closed connections are not in this map")
+				log.warn("closed connection in connections map, maybe a race or logic error")
 			}
 		}
 
@@ -158,9 +166,10 @@ server_shutdown :: proc(using s: ^Server) {
 		time.sleep(SHUTDOWN_INTERVAL)
 	}
 
+	s.state = .Cleaning
 	net.close(tcp_sock)
-
 	nbio.destroy(&io)
+	s.state = .Closed
 
 	log.info("shutdown: done")
 }
@@ -192,7 +201,7 @@ server_shutdown_on_interrupt :: proc(using s: ^Server) {
 	libc.signal(libc.SIGINT, proc "cdecl" (_: i32) {
 		context = on_interrupt_context
 
-		if on_interrupt_server.shutting_down {
+		if on_interrupt_server.state == .Closing {
 			server_shutdown_force(on_interrupt_server)
 			return
 		}
@@ -203,8 +212,10 @@ server_shutdown_on_interrupt :: proc(using s: ^Server) {
 
 @(private)
 server_on_connection_close :: proc(using s: ^Server, c: ^Connection) {
-	free(c, conn_allocator)
+	scanner_destroy(&c.scanner)
+	virtual.arena_destroy(&c.arena)
 	delete_key(&s.conns, c.socket)
+	free(c, conn_allocator)
 
 	// TODO: clean up c.response inflight.
 }
@@ -237,6 +248,7 @@ Connection :: struct {
 	curr_req: ^Request,
 	state:    Connection_State,
 	scanner:  Scanner,
+	arena:    virtual.Arena,
 	response: Maybe(Response_Inflight),
 }
 
@@ -298,18 +310,17 @@ on_accept :: proc(server: rawptr, sock: net.TCP_Socket, source: net.Endpoint, er
 conn_handle_reqs :: proc(c: ^Connection) {
 	scanner_init(&c.scanner, c, c.server.conn_allocator)
 
-	arena: virtual.Arena
-	if err := virtual.arena_init_growing(&arena); err != nil {
+	if err := virtual.arena_init_growing(&c.arena); err != nil {
 		panic("could not create memory arena")
 	}
-	allocator := virtual.arena_allocator(&arena)
-	context.temp_allocator = allocator
+
+	allocator := virtual.arena_allocator(&c.arena)
 
 	log.debugf(
 		"started handling requests for connection with %s",
-		net.endpoint_to_string(c.client, context.temp_allocator),
+		net.endpoint_to_string(c.client, allocator),
 	)
-	conn_handle_req(c)
+	conn_handle_req(c, allocator)
 }
 
 // Loop/request cycle state.
@@ -321,16 +332,20 @@ Loop :: struct {
 }
 
 @(private)
-conn_handle_req :: proc(c: ^Connection) {
+conn_handle_req :: proc(c: ^Connection, allocator := context.allocator) {
 	on_rline1 :: proc(loop: rawptr, token: []byte, err: bufio.Scanner_Error) {
-		context.allocator = context.temp_allocator
 		loop := cast(^Loop)loop
 		using loop
 
 		conn.state = .Active
 
 		if err != nil {
-			log.warnf("request scanning error: %v", err)
+			if err == .EOF {
+				log.debugf("client disconnected (EOF)")
+			} else {
+				log.warnf("request scanner error: %v", err)
+			}
+
 			clean_request_loop(conn, close = true)
 			return
 		}
@@ -348,7 +363,6 @@ conn_handle_req :: proc(c: ^Connection) {
 	}
 
 	on_rline2 :: proc(loop: rawptr, token: []byte, err: bufio.Scanner_Error) {
-		context.allocator = context.temp_allocator
 		loop := cast(^Loop)loop
 		using loop
 
@@ -358,7 +372,7 @@ conn_handle_req :: proc(c: ^Connection) {
 			return
 		}
 
-		rline, err := requestline_parse(string(token))
+		rline, err := requestline_parse(string(token), req.allocator)
 		switch err {
 		case .Method_Not_Implemented:
 			log.infof("request-line %q invalid method", string(token))
@@ -383,14 +397,13 @@ conn_handle_req :: proc(c: ^Connection) {
 			return
 		}
 
-		req.url = url_parse(rline.target)
+		req.url = url_parse(rline.target, req.allocator)
 
 		conn.scanner.max_token_size = conn.server.opts.limit_headers
 		scanner_scan(&conn.scanner, loop, on_header_line)
 	}
 
 	on_header_line :: proc(loop: rawptr, token: []byte, err: bufio.Scanner_Error) {
-		context.allocator = context.temp_allocator
 		loop := cast(^Loop)loop
 		using loop
 
@@ -406,7 +419,7 @@ conn_handle_req :: proc(c: ^Connection) {
 			return
 		}
 
-		if _, ok := header_parse(&req.headers, string(token)); !ok {
+		if _, ok := header_parse(&req.headers, string(token), req.allocator); !ok {
 			log.warnf("header-line %s is invalid", string(token))
 			res.headers["connection"] = "close"
 			res.status = .Bad_Request
@@ -469,16 +482,15 @@ conn_handle_req :: proc(c: ^Connection) {
 		}
 	}
 
-	loop := new(Loop, context.temp_allocator)
+
+	loop := new(Loop, allocator)
 	loop.conn = c
+	request_init(&loop.req, allocator)
+	response_init(&loop.res, allocator)
 	loop.res._conn = c
-
-	request_init(&loop.req)
-	response_init(&loop.res)
-
 	c.curr_req = &loop.req
 
-	log.debugf("waiting for next request on %s", net.endpoint_to_string(c.client, context.temp_allocator))
+	log.debugf("waiting for next request on %s", net.endpoint_to_string(c.client, allocator))
 
 	c.scanner.max_token_size = c.server.opts.limit_request_line
 	scanner_scan(&c.scanner, loop, on_rline1)

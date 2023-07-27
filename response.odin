@@ -6,10 +6,13 @@ import "core:strconv"
 import "core:strings"
 import "core:time"
 import "core:net"
+import "core:mem"
 
 import "nbio"
 
 Response :: struct {
+	// A growing arena where allocations are freed after the response is sent.
+	allocator: mem.Allocator,
 	status:  Status,
 	headers: Headers,
 	cookies: [dynamic]Cookie,
@@ -18,6 +21,7 @@ Response :: struct {
 }
 
 response_init :: proc(r: ^Response, allocator := context.allocator) {
+	r.allocator = allocator
 	r.status = .NotFound
 	r.headers = make(Headers, 3, allocator)
 	r.headers["server"] = "Odin"
@@ -28,9 +32,7 @@ response_init :: proc(r: ^Response, allocator := context.allocator) {
 // Frees the allocator (should be a request scoped allocator).
 // Closes the connection or starts the handling of the next request.
 @(private)
-response_send :: proc(using r: ^Response, conn: ^Connection, allocator := context.allocator) {
-	context.allocator = allocator
-
+response_send :: proc(using r: ^Response, conn: ^Connection) {
 	check_body := proc(body: Body_Type, was_alloc: bool, res: rawptr) {
 		res := cast(^Response)res
 		will_close: bool
@@ -68,7 +70,7 @@ response_send_got_body :: proc(using r: ^Response, will_close: bool) {
 	res: bytes.Buffer
 	// Responses are on average at least 100 bytes, so lets start there, but add the body's length.
 	initial_buf_cap := response_needs_content_length(r, conn) ? 100 + bytes.buffer_length(&body) : 100
-	bytes.buffer_init_allocator(&res, 0, initial_buf_cap)
+	bytes.buffer_init_allocator(&res, 0, initial_buf_cap, allocator)
 
 	bytes.buffer_write_string(&res, "HTTP/1.1 ")
 	bytes.buffer_write_string(&res, status_string(status))
@@ -76,7 +78,7 @@ response_send_got_body :: proc(using r: ^Response, will_close: bool) {
 
 	// Per RFC 9910 6.6.1 a Date header must be added in 2xx, 3xx, 4xx responses.
 	if status >= .Ok && status <= .Internal_Server_Error && "date" not_in headers {
-		headers["date"] = format_date_header(time.now())
+		headers["date"] = format_date_header(time.now(), allocator)
 	}
 
 	// Write the status code as the body, if there is no body set by the handlers.
@@ -86,7 +88,7 @@ response_send_got_body :: proc(using r: ^Response, will_close: bool) {
 	}
 
 	if "content-length" not_in headers && response_needs_content_length(r, conn) {
-		buf := make([]byte, 32)
+		buf := make([]byte, 32, allocator)
 		headers["content-length"] = strconv.itoa(buf, bytes.buffer_length(&body))
 	}
 
@@ -97,14 +99,14 @@ response_send_got_body :: proc(using r: ^Response, will_close: bool) {
 		// Escape newlines in headers, if we don't, an attacker can find an endpoint
 		// that returns a header with user input, and inject headers into the response.
 		// PERF: probably slow.
-		esc_value, _ := strings.replace_all(value, "\n", "\\n")
+		esc_value, _ := strings.replace_all(value, "\n", "\\n", allocator)
 		bytes.buffer_write_string(&res, esc_value)
 
 		bytes.buffer_write_string(&res, "\r\n")
 	}
 
 	for cookie in cookies {
-		bytes.buffer_write_string(&res, cookie_string(cookie))
+		bytes.buffer_write_string(&res, cookie_string(cookie, allocator))
 		bytes.buffer_write_string(&res, "\r\n")
 	}
 
@@ -152,7 +154,7 @@ clean_request_loop :: proc(conn: ^Connection, close: bool = false) {
 		connection_close(conn)
 	case:
 		conn.state = .Idle
-		conn_handle_req(conn)
+		conn_handle_req(conn, conn.curr_req.allocator)
 	}
 }
 

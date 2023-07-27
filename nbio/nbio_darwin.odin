@@ -6,6 +6,7 @@ import "core:os"
 import "core:time"
 import "core:mem"
 import "core:net"
+import "core:log"
 
 import "../kqueue"
 
@@ -58,10 +59,15 @@ _destroy :: proc(io: ^IO) {
 	for timeout in kq.timeouts do free(timeout, kq.allocator)
 	for completed in kq.completed do free(completed, kq.allocator)
 	for pending in kq.io_pending do free(pending, kq.allocator)
+
+	// TODO: for some reason these delete calls are bad frees.
 	delete(kq.timeouts)
 	delete(kq.completed)
 	delete(kq.io_pending)
+
 	os.close(kq.fd)
+
+	// TODO: for some reason this is a bad free.
 	free(kq, kq.allocator)
 }
 
