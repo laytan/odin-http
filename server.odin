@@ -143,7 +143,7 @@ server_shutdown :: proc(using s: ^Server) {
 				log.infof("shutdown: connection %i still active", sock)
 			case .New, .Idle, .Pending:
 				log.infof("shutdown: closing connection %i", sock)
-				thread.run_with_poly_data(conn, connection_close, context)
+				connection_close(conn)
 			case .Closing:
 				log.debugf("shutdown: connection %i is closing", sock)
 			case .Closed:
@@ -254,24 +254,24 @@ connection_close :: proc(c: ^Connection) {
 	}
 
 	log.infof("closing connection: %i", c.socket)
-	defer log.infof("closed connection: %i", c.socket)
 
 	c.state = .Closing
 
-	// TODO: non blocking.
+	// TODO: non blocking net.shutdown and net.close?
 
 	// Close read side of the connection, then wait a little bit, allowing the client
 	// to process the closing and receive any remaining data.
 	net.shutdown(c.socket, net.Shutdown_Manner.Send)
 
-	// This will block the whole thread, but we have one thread per connection anyway,
-	// so should not matter as long as this is done after sending everything.
-	time.sleep(Conn_Close_Delay)
-	net.close(c.socket)
+	nbio.timeout(&c.server.io, Conn_Close_Delay, c, proc(_c: rawptr) {
+		c := cast(^Connection)_c
+		defer log.infof("closed connection: %i", c.socket)
 
-	c.state = .Closed
+		net.close(c.socket)
+		c.state = .Closed
 
-	server_on_connection_close(c.server, c)
+		server_on_connection_close(c.server, c)
+	})
 }
 
 @(private)
