@@ -159,21 +159,15 @@ flush_io :: proc(kq: ^KQueue, events: []kqueue.KEvent) -> int {
 flush_timeouts :: proc(kq: ^KQueue) -> (min_timeout: Maybe(i64)) {
 	now := time.to_unix_nanoseconds(time.now())
 
-	// PERF(laytan): probably to be optimized later.
-	to_remove := make([dynamic]int, 0, len(kq.timeouts))
-	defer {
-		for i in to_remove {
-			unordered_remove(&kq.timeouts, i)
-		}
-	}
+	for i := len(kq.timeouts)-1; i >= 0; i -= 1 {
+		completion := kq.timeouts[i]
 
-	for completion, i in kq.timeouts {
 		timeout, ok := completion.operation.(Op_Timeout)
 		if !ok do panic("non-timeout operation found in the timeouts queue")
 
 		expires := time.to_unix_nanoseconds(timeout.expires)
 		if now >= expires {
-			append(&to_remove, i)
+			ordered_remove(&kq.timeouts, i)
 			append(&kq.completed, completion)
 			continue
 		}
