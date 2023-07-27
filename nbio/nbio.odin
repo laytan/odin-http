@@ -55,7 +55,7 @@ prepare_socket :: proc(socket: net.Any_Socket) -> net.Network_Error {
 prepare_handle :: proc(handle: Handle) -> net.Network_Error {
 	when ODIN_OS != .Windows {
 		// NOTE: TCP_Socket gets cast to int right away in net, so this is safe to do.
-		return net.set_blocking(net.TCP_Socket(handle), true)
+		return net.set_blocking(net.TCP_Socket(handle), false)
 	} else {
 		return nil
 	}
