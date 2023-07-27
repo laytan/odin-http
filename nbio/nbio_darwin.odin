@@ -328,9 +328,7 @@ _read :: proc(io: ^IO, fd: Handle, buf: []byte, user: rawptr, callback: On_Read)
 	completion.callback = proc(kq: ^KQueue, completion: ^Completion) {
 		op := completion.operation.(Op_Read)
 
-		// NOTE: os.read returned 0, 0 immediately,
-		// while read_at worked as expected, not sure why.
-		read, err := os.read_at(op.fd, op.buf, 0)
+		read, err := os.read(op.fd, op.buf)
 		if err == os.EWOULDBLOCK {
 			append(&kq.io_pending, completion)
 			return

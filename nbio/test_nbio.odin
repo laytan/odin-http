@@ -11,32 +11,6 @@ expect :: testing.expect
 log :: testing.log
 
 @(test)
-test_blocking_read_write :: proc(t: ^testing.T) {
-	write_buf: [20]byte
-	read_buf:  [20]byte
-
-	path := "test_blocking_read_write"
-	handle, errno := os.open(
-		path,
-		os.O_RDWR | os.O_CREATE | os.O_TRUNC,
-		os.S_IRUSR | os.S_IWUSR | os.S_IRGRP | os.S_IROTH when ODIN_OS != .Windows else 0,
-	)
-	expect(t, errno == os.ERROR_NONE, fmt.tprintf("open failed: %i", errno))
-
-	written: int
-	written, errno = os.write(handle, write_buf[:])
-	expect(t, errno == os.ERROR_NONE, fmt.tprintf("write failed: %i", errno))
-	expect(t, written == 20, fmt.tprintf("written not 20 but %i", written))
-
-	read: int
-	read, errno = os.read(handle, read_buf[:])
-	expect(t, errno == os.ERROR_NONE, fmt.tprintf("read failed: %i", errno))
-	expect(t, read == 20, fmt.tprintf("read not 20 but %i", read))
-
-	expect(t, write_buf == read_buf, fmt.tprintf("write buf: %v is not equal to read buf: %v", write_buf, read_buf))
-}
-
-@(test)
 test_write_read_close :: proc(t: ^testing.T) {
 	track: mem.Tracking_Allocator
 	mem.tracking_allocator_init(&track, context.allocator)
@@ -104,6 +78,11 @@ test_write_read_close :: proc(t: ^testing.T) {
 			expect(ctx.t, err == os.ERROR_NONE, fmt.tprintf("write error: %i", err))
 
 			ctx.written = written
+
+			// NOTE: need to seek back because writing puts cursor at the end.
+			// So read will start from beginning again.
+			_, errno := os.seek(ctx.fd, 0, 0)
+			expect(ctx.t, errno == os.ERROR_NONE, fmt.tprintf("seek failed: %i", errno))
 
 			read(ctx.io, ctx.fd, ctx.read_buf[:], ctx, read_callback)
 		}

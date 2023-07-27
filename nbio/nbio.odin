@@ -93,6 +93,7 @@ connect :: proc(io: ^IO, endpoint: net.Endpoint, user: rawptr, callback: On_Conn
 
 On_Read :: proc(user: rawptr, read: int, err: os.Errno)
 
+// TODO: accept and use offset.
 read :: proc(io: ^IO, fd: Handle, buf: []byte, user: rawptr, callback: On_Read) {
 	_read(io, fd, buf, user, callback)
 }
