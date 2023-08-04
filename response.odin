@@ -145,6 +145,7 @@ on_response_sent :: proc(conn_: rawptr, sent: int, err: net.Network_Error) {
 // Response has been sent, clean up and close/handle next.
 @(private)
 clean_request_loop :: proc(conn: ^Connection, close: bool = false) {
+	allocator := conn.curr_req.allocator
 	free_all(conn.curr_req.allocator)
 	conn.response = nil
 
@@ -154,7 +155,7 @@ clean_request_loop :: proc(conn: ^Connection, close: bool = false) {
 		connection_close(conn)
 	case:
 		conn.state = .Idle
-		conn_handle_req(conn, conn.curr_req.allocator)
+		conn_handle_req(conn, allocator)
 	}
 }
 
