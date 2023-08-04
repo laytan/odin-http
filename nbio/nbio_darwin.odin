@@ -13,13 +13,13 @@ import "../kqueue"
 Handle :: os.Handle
 
 KQueue :: struct {
-	fd:          os.Handle,
-	io_inflight: int,
-	// TODO(perf): make completions use an object pool.
-	timeouts:    [dynamic]^Completion,
-	completed:   [dynamic]^Completion,
-	io_pending:  [dynamic]^Completion,
-	allocator:   mem.Allocator,
+	fd:              os.Handle,
+	io_inflight:     int,
+	completion_pool: Pool(Completion),
+	timeouts:        [dynamic]^Completion,
+	completed:       [dynamic]^Completion,
+	io_pending:      [dynamic]^Completion,
+	allocator:       mem.Allocator,
 }
 
 Completion :: struct {
@@ -44,6 +44,8 @@ _init :: proc(
 	kq.fd, qerr = kqueue.kqueue()
 	if qerr != .None do return kq_err_to_os_err(qerr)
 
+	pool_init(&kq.completion_pool, allocator = allocator)
+
 	kq.timeouts = make([dynamic]^Completion, allocator)
 	kq.completed = make([dynamic]^Completion, allocator)
 	kq.io_pending = make([dynamic]^Completion, allocator)
@@ -56,18 +58,15 @@ _init :: proc(
 
 _destroy :: proc(io: ^IO) {
 	kq := cast(^KQueue)io.impl_data
-	for timeout in kq.timeouts do free(timeout, kq.allocator)
-	for completed in kq.completed do free(completed, kq.allocator)
-	for pending in kq.io_pending do free(pending, kq.allocator)
 
-	// TODO: for some reason these delete calls are bad frees.
 	delete(kq.timeouts)
 	delete(kq.completed)
 	delete(kq.io_pending)
 
 	os.close(kq.fd)
 
-	// TODO: for some reason this is a bad free.
+	pool_destroy(&kq.completion_pool)
+
 	free(kq, kq.allocator)
 }
 
@@ -165,7 +164,7 @@ flush_io :: proc(kq: ^KQueue, events: []kqueue.KEvent) -> int {
 flush_timeouts :: proc(kq: ^KQueue) -> (min_timeout: Maybe(i64)) {
 	now := time.to_unix_nanoseconds(time.now())
 
-	for i := len(kq.timeouts)-1; i >= 0; i -= 1 {
+	for i := len(kq.timeouts) - 1; i >= 0; i -= 1 {
 		completion := kq.timeouts[i]
 
 		timeout, ok := completion.operation.(Op_Timeout)
@@ -201,7 +200,7 @@ Op_Accept :: distinct net.TCP_Socket
 _accept :: proc(io: ^IO, socket: net.TCP_Socket, user: rawptr, callback: On_Accept) {
 	kq := cast(^KQueue)io.impl_data
 
-	completion := new(Completion, kq.allocator)
+	completion := pool_get(&kq.completion_pool)
 	completion.user_data = user
 	completion.user_callback = rawptr(callback)
 	completion.operation = Op_Accept(socket)
@@ -222,8 +221,9 @@ _accept :: proc(io: ^IO, socket: net.TCP_Socket, user: rawptr, callback: On_Acce
 		callback := cast(On_Accept)completion.user_callback
 		callback(completion.user_data, client, source, err)
 
-		free(completion, kq.allocator)
+		pool_put(&kq.completion_pool, completion)
 	}
+
 	append(&kq.completed, completion)
 }
 
@@ -233,7 +233,7 @@ Op_Close :: distinct Handle
 _close :: proc(io: ^IO, fd: Handle, user: rawptr, callback: On_Close) {
 	kq := cast(^KQueue)io.impl_data
 
-	completion := new(Completion, kq.allocator)
+	completion := pool_get(&kq.completion_pool)
 	completion.user_data = user
 	completion.user_callback = rawptr(callback)
 	completion.operation = Op_Close(fd)
@@ -245,8 +245,9 @@ _close :: proc(io: ^IO, fd: Handle, user: rawptr, callback: On_Close) {
 		callback := cast(On_Close)completion.user_callback
 		callback(completion.user_data, ok)
 
-		free(completion, kq.allocator)
+		pool_put(&kq.completion_pool, completion)
 	}
+
 	append(&kq.completed, completion)
 }
 
@@ -277,7 +278,7 @@ _connect :: proc(io: ^IO, endpoint: net.Endpoint, user: rawptr, callback: On_Con
 		return
 	}
 
-	completion := new(Completion, kq.allocator)
+	completion := pool_get(&kq.completion_pool)
 	completion.user_data = user
 	completion.user_callback = rawptr(callback)
 	completion.operation = Op_Connect {
@@ -304,8 +305,9 @@ _connect :: proc(io: ^IO, endpoint: net.Endpoint, user: rawptr, callback: On_Con
 		callback := cast(On_Connect)completion.user_callback
 		callback(completion.user_data, op.socket, net.Dial_Error(err))
 
-		free(completion, kq.allocator)
+		pool_put(&kq.completion_pool, completion)
 	}
+
 	append(&kq.completed, completion)
 }
 
@@ -317,7 +319,7 @@ Op_Read :: struct {
 _read :: proc(io: ^IO, fd: Handle, buf: []byte, user: rawptr, callback: On_Read) {
 	kq := cast(^KQueue)io.impl_data
 
-	completion := new(Completion, kq.allocator)
+	completion := pool_get(&kq.completion_pool)
 	completion.user_data = user
 	completion.user_callback = rawptr(callback)
 	completion.operation = Op_Read {
@@ -338,8 +340,9 @@ _read :: proc(io: ^IO, fd: Handle, buf: []byte, user: rawptr, callback: On_Read)
 		callback := cast(On_Read)completion.user_callback
 		callback(completion.user_data, read, err)
 
-		free(completion, kq.allocator)
+		pool_put(&kq.completion_pool, completion)
 	}
+
 	append(&kq.completed, completion)
 }
 
@@ -351,7 +354,7 @@ Op_Recv :: struct {
 _recv :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, callback: On_Recv) {
 	kq := cast(^KQueue)io.impl_data
 
-	completion := new(Completion, kq.allocator)
+	completion := pool_get(&kq.completion_pool)
 	completion.user_data = user
 	completion.user_callback = rawptr(callback)
 	completion.operation = Op_Recv {
@@ -387,8 +390,9 @@ _recv :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, callba
 		callback := cast(On_Recv)completion.user_callback
 		callback(completion.user_data, received, remote_endpoint, err)
 
-		free(completion, kq.allocator)
+		pool_put(&kq.completion_pool, completion)
 	}
+
 	append(&kq.completed, completion)
 }
 
@@ -412,7 +416,7 @@ _send :: proc(
 		assert(endpoint != nil)
 	}
 
-	completion := new(Completion, kq.allocator)
+	completion := pool_get(&kq.completion_pool)
 	completion.user_data = user
 	completion.user_callback = rawptr(callback)
 	completion.operation = Op_Send {
@@ -447,8 +451,9 @@ _send :: proc(
 		callback := cast(On_Sent)completion.user_callback
 		callback(completion.user_data, int(sent), err)
 
-		free(completion, kq.allocator)
+		pool_put(&kq.completion_pool, completion)
 	}
+
 	append(&kq.completed, completion)
 }
 
@@ -460,7 +465,7 @@ Op_Write :: struct {
 _write :: proc(io: ^IO, fd: Handle, buf: []byte, user: rawptr, callback: On_Write) {
 	kq := cast(^KQueue)io.impl_data
 
-	completion := new(Completion, kq.allocator)
+	completion := pool_get(&kq.completion_pool)
 	completion.user_data = user
 	completion.user_callback = rawptr(callback)
 	completion.operation = Op_Write {
@@ -480,7 +485,7 @@ _write :: proc(io: ^IO, fd: Handle, buf: []byte, user: rawptr, callback: On_Writ
 		callback := cast(On_Write)completion.user_callback
 		callback(completion.user_data, written, err)
 
-		free(completion, kq.allocator)
+		pool_put(&kq.completion_pool, completion)
 	}
 
 	append(&kq.completed, completion)
@@ -494,7 +499,7 @@ Op_Timeout :: struct {
 _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout) {
 	kq := cast(^KQueue)io.impl_data
 
-	completion := new(Completion, kq.allocator)
+	completion := pool_get(&kq.completion_pool)
 	completion.user_data = user
 	completion.user_callback = rawptr(callback)
 	completion.operation = Op_Timeout {
@@ -504,8 +509,9 @@ _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout
 	completion.callback = proc(kq: ^KQueue, completion: ^Completion) {
 		callback := cast(On_Timeout)completion.user_callback
 		callback(completion.user_data)
-		free(completion, kq.allocator)
+		pool_put(&kq.completion_pool, completion)
 	}
+
 	append(&kq.timeouts, completion)
 }
 

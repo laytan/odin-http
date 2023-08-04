@@ -13,10 +13,11 @@ import win "core:sys/windows"
 Handle :: os.Handle
 
 Default :: struct {
-	allocator: mem.Allocator,
-	pool:      thread.Pool,
-	pending:   [dynamic]^Completion,
-	started:   bool,
+	allocator:       mem.Allocator,
+	pool:            thread.Pool,
+	completion_pool: Pool(Completion),
+	pending:         [dynamic]^Completion,
+	started:         bool,
 }
 
 Completion :: struct {
@@ -39,6 +40,8 @@ _init :: proc(
 	df.allocator = allocator
 	df.pending = make([dynamic]^Completion, allocator)
 
+	pool_init(&df.completion_pool, allocator = allocator)
+
 	thread.pool_init(&df.pool, allocator, int(entries))
 	thread.pool_start(&df.pool)
 
@@ -51,8 +54,9 @@ _destroy :: proc(io: ^IO) {
 	thread.pool_finish(&df.pool)
 	thread.pool_destroy(&df.pool)
 
-	for c in &df.pending do free(c, df.allocator)
 	delete(df.pending)
+
+	pool_destroy(&df.completion_pool)
 
 	free(df, df.allocator)
 }
@@ -88,8 +92,7 @@ _accept :: proc(io: ^IO, socket: net.TCP_Socket, user: rawptr, callback: On_Acce
 
 		callback := cast(On_Accept)completion.user_callback
 		callback(completion.user_data, client, source, err)
-
-		free(completion, completion.df.allocator)
+		pool_put(&completion.df.completion_pool, completion)
 	})
 }
 
@@ -104,8 +107,7 @@ _close :: proc(io: ^IO, fd: Handle, user: rawptr, callback: On_Close) {
 
 		callback := cast(On_Close)completion.user_callback
 		callback(completion.user_data, errno == os.ERROR_NONE)
-
-		free(completion, completion.df.allocator)
+		pool_put(&completion.df.completion_pool, completion)
 	})
 }
 
@@ -126,11 +128,13 @@ _connect :: proc(io: ^IO, endpoint: net.Endpoint, user: rawptr, callback: On_Con
 		sock, err := net.create_socket(family, .TCP)
 		if err != nil {
 			callback(completion.user_data, {}, err)
+			pool_put(&completion.df.completion_pool, completion)
 			return
 		}
 
 		if err := prepare(sock); err != nil {
 			callback(completion.user_data, {}, err)
+			pool_put(&completion.df.completion_pool, completion)
 			return
 		}
 
@@ -143,8 +147,7 @@ _connect :: proc(io: ^IO, endpoint: net.Endpoint, user: rawptr, callback: On_Con
 		}
 
 		callback(completion.user_data, socket, err)
-
-		free(completion, completion.df.allocator)
+		pool_put(&completion.df.completion_pool, completion)
 	})
 }
 
@@ -162,14 +165,13 @@ _read :: proc(io: ^IO, fd: Handle, buf: []byte, user: rawptr, callback: On_Read)
 
 		callback := cast(On_Read)completion.user_callback
 		callback(completion.user_data, read, err)
-
-		free(completion, completion.df.allocator)
+		pool_put(&completion.df.completion_pool, completion)
 	})
 }
 
 Op_Recv :: struct {
 	socket: net.Any_Socket,
-	buf: []byte,
+	buf:    []byte,
 }
 
 _recv :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, callback: On_Recv) {
@@ -189,8 +191,7 @@ _recv :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, callba
 
 		callback := cast(On_Recv)completion.user_callback
 		callback(completion.user_data, received, remote_endpoint, err)
-
-		free(completion, completion.df.allocator)
+		pool_put(&completion.df.completion_pool, completion)
 	})
 }
 
@@ -212,36 +213,41 @@ _send :: proc(
 		assert(endpoint != nil)
 	}
 
-	add_completion(io, user, rawptr(callback), Op_Send{socket = socket, buf = buf, endpoint = endpoint}, proc(t: thread.Task) {
-		completion := cast(^Completion)t.data
-		op := completion.operation.(Op_Send)
+	add_completion(
+		io,
+		user,
+		rawptr(callback),
+		Op_Send{socket = socket, buf = buf, endpoint = endpoint},
+		proc(t: thread.Task) {
+			completion := cast(^Completion)t.data
+			op := completion.operation.(Op_Send)
 
-		sent: int
-		err: net.Network_Error
-		switch sock in op.socket {
-		case net.TCP_Socket:
-			res := win.send(win.SOCKET(sock), raw_data(op.buf), c.int(len(op.buf)), 0)
-			if res < 0 {
-				err = net.TCP_Send_Error(win.WSAGetLastError())
-			} else {
-				sent = int(res)
+			sent: int
+			err: net.Network_Error
+			switch sock in op.socket {
+			case net.TCP_Socket:
+				res := win.send(win.SOCKET(sock), raw_data(op.buf), c.int(len(op.buf)), 0)
+				if res < 0 {
+					err = net.TCP_Send_Error(win.WSAGetLastError())
+				} else {
+					sent = int(res)
+				}
+
+			case net.UDP_Socket:
+				toaddr := _endpoint_to_sockaddr(op.endpoint.(net.Endpoint))
+				res := win.sendto(win.SOCKET(sock), raw_data(op.buf), c.int(len(op.buf)), 0, &toaddr, size_of(toaddr))
+				if res < 0 {
+					err = net.UDP_Send_Error(win.WSAGetLastError())
+				} else {
+					sent = int(res)
+				}
 			}
 
-		case net.UDP_Socket:
-			toaddr := _endpoint_to_sockaddr(op.endpoint.(net.Endpoint))
-			res := win.sendto(win.SOCKET(sock), raw_data(op.buf), c.int(len(op.buf)), 0, &toaddr, size_of(toaddr))
-			if res < 0 {
-				err = net.UDP_Send_Error(win.WSAGetLastError())
-			} else {
-				sent = int(res)
-			}
-		}
-
-		callback := cast(On_Sent)completion.user_callback
-		callback(completion.user_data, sent, err)
-
-		free(completion, completion.df.allocator)
-	})
+			callback := cast(On_Sent)completion.user_callback
+			callback(completion.user_data, sent, err)
+			pool_put(&completion.df.completion_pool, completion)
+		},
+	)
 }
 
 Op_Write :: struct {
@@ -258,8 +264,7 @@ _write :: proc(io: ^IO, fd: Handle, buf: []byte, user: rawptr, callback: On_Writ
 
 		callback := cast(On_Write)completion.user_callback
 		callback(completion.user_data, written, err)
-
-		free(completion, completion.df.allocator)
+		pool_put(&completion.df.completion_pool, completion)
 	})
 }
 
@@ -283,14 +288,13 @@ _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout
 
 		callback := cast(On_Timeout)completion.user_callback
 		callback(completion.user_data)
-
-		free(completion, completion.df.allocator)
+		pool_put(&completion.df.completion_pool, completion)
 	})
 }
 
 add_completion :: proc(io: ^IO, user_data: rawptr, callback: rawptr, op: Operation, task: thread.Task_Proc) {
 	df := cast(^Default)io.impl_data
-	c := new(Completion, df.allocator)
+	c := pool_get(&df.completion_pool)
 	c.df = df
 	c.user_callback = callback
 	c.user_data = user_data
@@ -302,15 +306,15 @@ _endpoint_to_sockaddr :: proc(ep: net.Endpoint) -> (sockaddr: win.SOCKADDR_STORA
 	switch a in ep.address {
 	case net.IP4_Address:
 		(^win.sockaddr_in)(&sockaddr)^ = win.sockaddr_in {
-			sin_port = u16be(win.USHORT(ep.port)),
-			sin_addr = transmute(win.in_addr) a,
+			sin_port   = u16be(win.USHORT(ep.port)),
+			sin_addr   = transmute(win.in_addr)a,
 			sin_family = u16(win.AF_INET),
 		}
 		return
 	case net.IP6_Address:
 		(^win.sockaddr_in6)(&sockaddr)^ = win.sockaddr_in6 {
-			sin6_port = u16be(win.USHORT(ep.port)),
-			sin6_addr = transmute(win.in6_addr) a,
+			sin6_port   = u16be(win.USHORT(ep.port)),
+			sin6_addr   = transmute(win.in6_addr)a,
 			sin6_family = u16(win.AF_INET6),
 		}
 		return

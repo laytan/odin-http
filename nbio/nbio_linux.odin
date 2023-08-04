@@ -13,17 +13,16 @@ import "../io_uring"
 Handle :: os.Handle
 
 Linux :: struct {
-	ring:          io_uring.IO_Uring,
+	ring:            io_uring.IO_Uring,
 
-	// TODO: completion object pool.
-
+	completion_pool: Pool(Completion),
 	// Ready to be submitted to kernel.
-	unqueued:      queue.Queue(^Completion),
+	unqueued:        queue.Queue(^Completion),
 	// Ready to run callbacks.
-	completed:     queue.Queue(^Completion),
-	ios_queued:    u64,
-	ios_in_kernel: u64,
-	allocator:     mem.Allocator,
+	completed:       queue.Queue(^Completion),
+	ios_queued:      u64,
+	ios_in_kernel:   u64,
+	allocator:       mem.Allocator,
 }
 
 Completion :: struct {
@@ -40,6 +39,8 @@ _init :: proc(io: ^IO, entries: u32 = DEFAULT_ENTRIES, flags: u32 = 0, alloc := 
 	io.impl_data = lx
 
 	lx.allocator = alloc
+
+	pool_init(&lx.completion_pool, allocator = alloc)
 
 	params: io_uring.io_uring_params
 	ring, rerr := io_uring.io_uring_make(&params, entries, flags)
@@ -59,6 +60,7 @@ _destroy :: proc(io: ^IO) {
 	lx := cast(^Linux)io.impl_data
 	queue.destroy(&lx.unqueued)
 	queue.destroy(&lx.completed)
+	pool_destroy(&lx.completion_pool)
 	free(lx, lx.allocator)
 }
 
@@ -190,7 +192,7 @@ Op_Accept :: struct {
 _accept :: proc(io: ^IO, socket: net.TCP_Socket, user: rawptr, callback: On_Accept) {
 	lx := cast(^Linux)io.impl_data
 
-	completion := new(Completion, lx.allocator)
+	completion := pool_get(&lx.completion_pool)
 	completion.user_data = user
 	completion.user_callback = rawptr(callback)
 	completion.operation = Op_Accept {
@@ -210,16 +212,16 @@ _accept :: proc(io: ^IO, socket: net.TCP_Socket, user: rawptr, callback: On_Acce
 			}
 
 			callback(completion.user_data, 0, {}, net.Accept_Error(errno))
-			free(completion, lx.allocator)
+			pool_put(&lx.completion_pool, completion)
 			return
 		}
 
 		client := net.TCP_Socket(completion.result)
 		err := prepare(client)
 		source := _sockaddr_storage_to_endpoint(&op.sockaddr)
-		callback(completion.user_data, client, source, err)
 
-		free(completion, lx.allocator)
+		callback(completion.user_data, client, source, err)
+		pool_put(&lx.completion_pool, completion)
 	}
 
 	accept_enqueue(lx, completion)
@@ -248,7 +250,7 @@ Op_Close :: distinct Handle
 _close :: proc(io: ^IO, fd: Handle, user: rawptr, callback: On_Close) {
 	lx := cast(^Linux)io.impl_data
 
-	completion := new(Completion, lx.allocator)
+	completion := pool_get(&lx.completion_pool)
 	completion.user_data = user
 	completion.user_callback = rawptr(callback)
 	completion.operation = Op_Close(fd)
@@ -261,7 +263,7 @@ _close :: proc(io: ^IO, fd: Handle, user: rawptr, callback: On_Close) {
 		// In particular close() should not be retried after an EINTR
 		// since this may cause a reused descriptor from another thread to be closed.
 		callback(completion.user_data, errno == os.ERROR_NONE || errno == os.EINTR)
-		free(completion, lx.allocator)
+		pool_put(&lx.completion_pool, completion)
 	}
 
 	close_enqueue(lx, completion)
@@ -304,7 +306,7 @@ _connect :: proc(io: ^IO, endpoint: net.Endpoint, user: rawptr, callback: On_Con
 		return
 	}
 
-	completion := new(Completion, lx.allocator)
+	completion := pool_get(&lx.completion_pool)
 	completion.user_data = user
 	completion.user_callback = rawptr(callback)
 	completion.operation = Op_Connect {
@@ -323,7 +325,7 @@ _connect :: proc(io: ^IO, endpoint: net.Endpoint, user: rawptr, callback: On_Con
 		}
 
 		callback(completion.user_data, op.socket, net.Dial_Error(errno))
-		free(completion, lx.allocator)
+		pool_put(&lx.completion_pool, completion)
 	}
 
 	connect_enqueue(lx, completion)
@@ -355,7 +357,7 @@ Op_Read :: struct {
 _read :: proc(io: ^IO, fd: Handle, buf: []byte, user: rawptr, callback: On_Read) {
 	lx := cast(^Linux)io.impl_data
 
-	completion := new(Completion, lx.allocator)
+	completion := pool_get(&lx.completion_pool)
 	completion.user_data = user
 	completion.user_callback = rawptr(callback)
 	completion.operation = Op_Read {
@@ -374,12 +376,12 @@ _read :: proc(io: ^IO, fd: Handle, buf: []byte, user: rawptr, callback: On_Read)
 			}
 
 			callback(completion.user_data, 0, errno)
-			free(completion, lx.allocator)
+			pool_put(&lx.completion_pool, completion)
 			return
 		}
 
 		callback(completion.user_data, int(completion.result), os.ERROR_NONE)
-		free(completion, lx.allocator)
+		pool_put(&lx.completion_pool, completion)
 	}
 
 	read_enqueue(lx, completion)
@@ -405,7 +407,7 @@ Op_Recv :: struct {
 _recv :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, callback: On_Recv) {
 	lx := cast(^Linux)io.impl_data
 
-	completion := new(Completion, lx.allocator)
+	completion := pool_get(&lx.completion_pool)
 	completion.user_data = user
 	completion.user_callback = rawptr(callback)
 	completion.operation = Op_Recv {
@@ -424,12 +426,12 @@ _recv :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, callba
 			}
 
 			callback(completion.user_data, 0, {}, net.TCP_Recv_Error(errno))
-			free(completion, lx.allocator)
+			pool_put(&lx.completion_pool, completion)
 			return
 		}
 
 		callback(completion.user_data, int(completion.result), {}, nil)
-		free(completion, lx.allocator)
+		pool_put(&lx.completion_pool, completion)
 	}
 
 	recv_enqueue(lx, completion)
@@ -469,7 +471,7 @@ _send :: proc(
 ) {
 	lx := cast(^Linux)io.impl_data
 
-	completion := new(Completion, lx.allocator)
+	completion := pool_get(&lx.completion_pool)
 	completion.user_data = user
 	completion.user_callback = rawptr(callback)
 	completion.operation = Op_Send {
@@ -488,12 +490,12 @@ _send :: proc(
 			}
 
 			callback(completion.user_data, 0, net.TCP_Send_Error(errno))
-			free(completion, lx.allocator)
+			pool_put(&lx.completion_pool, completion)
 			return
 		}
 
 		callback(completion.user_data, int(completion.result), nil)
-		free(completion, lx.allocator)
+		pool_put(&lx.completion_pool, completion)
 	}
 
 	send_enqueue(lx, completion)
@@ -525,7 +527,7 @@ Op_Write :: struct {
 _write :: proc(io: ^IO, fd: Handle, buf: []byte, user: rawptr, callback: On_Write) {
 	lx := cast(^Linux)io.impl_data
 
-	completion := new(Completion, lx.allocator)
+	completion := pool_get(&lx.completion_pool)
 	completion.user_data = user
 	completion.user_callback = rawptr(callback)
 	completion.operation = Op_Write {
@@ -544,12 +546,12 @@ _write :: proc(io: ^IO, fd: Handle, buf: []byte, user: rawptr, callback: On_Writ
 			}
 
 			callback(completion.user_data, 0, errno)
-			free(completion, lx.allocator)
+			pool_put(&lx.completion_pool, completion)
 			return
 		}
 
 		callback(completion.user_data, int(completion.result), os.ERROR_NONE)
-		free(completion, lx.allocator)
+		pool_put(&lx.completion_pool, completion)
 	}
 
 	write_enqueue(lx, completion)
@@ -581,7 +583,7 @@ _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout
 	ts.nanoseconds = timeout % NANOSECONDS_PER_SECOND
 	ts.seconds = timeout / NANOSECONDS_PER_SECOND
 
-	completion := new(Completion, lx.allocator)
+	completion := pool_get(&lx.completion_pool)
 	completion.user_data = user
 	completion.user_callback = rawptr(callback)
 	completion.operation = Op_Timeout {
@@ -601,7 +603,7 @@ _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout
 		assert(errno == os.ERROR_NONE)
 
 		callback(completion.user_data)
-		free(completion, lx.allocator)
+		pool_put(&lx.completion_pool, completion)
 	}
 
 	timeout_enqueue(lx, completion)
