@@ -8,29 +8,29 @@ import "core:path/filepath"
 import "core:strings"
 
 // Sets the response to one that sends the given HTML.
-respond_html :: proc(using r: ^Response, html: string, send := true) {
+respond_html :: proc(r: ^Response, html: string, send := true) {
 	defer if send do respond(r)
 
-	status = .Ok
-	bytes.buffer_write_string(&body, html)
-	headers["content-type"] = mime_to_content_type(Mime_Type.Html)
+	r.status = .Ok
+	bytes.buffer_write_string(&r.body, html)
+	r.headers["content-type"] = mime_to_content_type(Mime_Type.Html)
 }
 
 // Sets the response to one that sends the given plain text.
-respond_plain :: proc(using r: ^Response, text: string, send := true) {
+respond_plain :: proc(r: ^Response, text: string, send := true) {
 	defer if send do respond(r)
 
-	status = .Ok
-	bytes.buffer_write_string(&body, text)
-	headers["content-type"] = mime_to_content_type(Mime_Type.Plain)
+	r.status = .Ok
+	bytes.buffer_write_string(&r.body, text)
+	r.headers["content-type"] = mime_to_content_type(Mime_Type.Plain)
 }
 
 // Sets the response to one that sends the contents of the file at the given path.
 // Content-Type header is set based on the file extension, see the MimeType enum for known file extensions.
-respond_file :: proc(using r: ^Response, path: string, send := true) {
-	bs, ok := os.read_entire_file(path, allocator)
+respond_file :: proc(r: ^Response, path: string, send := true) {
+	bs, ok := os.read_entire_file(path, r.allocator)
 	if !ok {
-		status = .NotFound
+		r.status = .NotFound
 		respond(r)
 		return
 	}
@@ -38,15 +38,15 @@ respond_file :: proc(using r: ^Response, path: string, send := true) {
 	respond_file_content(r, path, bs)
 }
 
-respond_file_content :: proc(using r: ^Response, path: string, content: []byte, send := true) {
+respond_file_content :: proc(r: ^Response, path: string, content: []byte, send := true) {
 	defer if send do respond(r)
 
 	mime := mime_from_extension(path)
 	content_type := mime_to_content_type(mime)
 
-	status = .Ok
-	headers["content-type"] = content_type
-	bytes.buffer_write(&body, content)
+	r.status = .Ok
+	r.headers["content-type"] = content_type
+	bytes.buffer_write(&r.body, content)
 }
 
 // Sets the response to one that, based on the request path, returns a file.
@@ -56,39 +56,39 @@ respond_file_content :: proc(using r: ^Response, path: string, content: []byte, 
 //
 // Path traversal is detected and cleaned up.
 // The Content-Type is set based on the file extension, see the MimeType enum for known file extensions.
-respond_dir :: proc(using r: ^Response, base, target, request: string, send := true) {
+respond_dir :: proc(r: ^Response, base, target, request: string, send := true) {
 	if !strings.has_prefix(request, base) {
-		status = .NotFound
+		r.status = .NotFound
 		respond(r)
 		return
 	}
 
 	// Detect path traversal attacks.
-	req_clean := filepath.clean(request, allocator)
-	base_clean := filepath.clean(base, allocator)
+	req_clean := filepath.clean(request, r.allocator)
+	base_clean := filepath.clean(base, r.allocator)
 	if !strings.has_prefix(req_clean, base_clean) {
-		status = .NotFound
+		r.status = .NotFound
 		respond(r)
 		return
 	}
 
-	file_path := filepath.join([]string{"./", target, strings.trim_prefix(req_clean, base_clean)}, allocator)
+	file_path := filepath.join([]string{"./", target, strings.trim_prefix(req_clean, base_clean)}, r.allocator)
 	respond_file(r, file_path)
 }
 
 // Sets the response to one that returns the JSON representation of the given value.
-respond_json :: proc(using r: ^Response, v: any, opt: json.Marshal_Options = {}, send := true) -> json.Marshal_Error {
+respond_json :: proc(r: ^Response, v: any, opt: json.Marshal_Options = {}, send := true) -> json.Marshal_Error {
 	defer if send do respond(r)
 
 	stream := bytes.buffer_to_stream(&r.body)
 	opt := opt
 	if err := json.marshal_to_writer(io.to_writer(stream), v, &opt); err != nil {
-		status = .Internal_Server_Error
+		r.status = .Internal_Server_Error
 		return err
 	}
 
-	status = .Ok
-	headers["content-type"] = mime_to_content_type(Mime_Type.Json)
+	r.status = .Ok
+	r.headers["content-type"] = mime_to_content_type(Mime_Type.Json)
 
 	return nil
 }

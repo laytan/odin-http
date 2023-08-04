@@ -4,7 +4,6 @@ import "core:net"
 import "core:bufio"
 import "core:log"
 import "core:time"
-import "core:thread"
 import "core:mem"
 import "core:mem/virtual"
 import "core:runtime"
@@ -140,12 +139,12 @@ SHUTDOWN_INTERVAL :: time.Millisecond * 100
 // 3. Repeat 2 every SHUTDOWN_INTERVAL until no more connections are open.
 // 4. Close the main socket.
 // 5. Signal 'server_start' it can return.
-server_shutdown :: proc(using s: ^Server) {
+server_shutdown :: proc(s: ^Server) {
 	s.state = .Closing
-	defer delete(conns)
+	defer delete(s.conns)
 
 	for {
-		for sock, conn in conns {
+		for sock, conn in s.conns {
 			#partial switch conn.state {
 			case .Active:
 				log.infof("shutdown: connection %i still active", sock)
@@ -159,7 +158,7 @@ server_shutdown :: proc(using s: ^Server) {
 			}
 		}
 
-		if len(conns) == 0 {
+		if len(s.conns) == 0 {
 			break
 		}
 
@@ -167,8 +166,8 @@ server_shutdown :: proc(using s: ^Server) {
 	}
 
 	s.state = .Cleaning
-	net.close(tcp_sock)
-	nbio.destroy(&io)
+	net.close(s.tcp_sock)
+	nbio.destroy(&s.io)
 	s.state = .Closed
 
 	log.info("shutdown: done")
@@ -194,7 +193,7 @@ on_interrupt_context: runtime.Context
 
 // Registers a signal handler to shutdown the server gracefully on interrupt signal.
 // Can only be called once in the lifetime of the program because of a hacky interaction with libc.
-server_shutdown_on_interrupt :: proc(using s: ^Server) {
+server_shutdown_on_interrupt :: proc(s: ^Server) {
 	on_interrupt_server = s
 	on_interrupt_context = context
 
@@ -211,11 +210,11 @@ server_shutdown_on_interrupt :: proc(using s: ^Server) {
 }
 
 @(private)
-server_on_connection_close :: proc(using s: ^Server, c: ^Connection) {
+server_on_connection_close :: proc(s: ^Server, c: ^Connection) {
 	scanner_destroy(&c.scanner)
 	virtual.arena_destroy(&c.arena)
 	delete_key(&s.conns, c.socket)
-	free(c, conn_allocator)
+	free(c, s.conn_allocator)
 
 	// TODO: clean up c.response inflight.
 }
@@ -334,10 +333,9 @@ Loop :: struct {
 @(private)
 conn_handle_req :: proc(c: ^Connection, allocator := context.allocator) {
 	on_rline1 :: proc(loop: rawptr, token: []byte, err: bufio.Scanner_Error) {
-		loop := cast(^Loop)loop
-		using loop
+		l := cast(^Loop)loop
 
-		conn.state = .Active
+		l.conn.state = .Active
 
 		if err != nil {
 			if err == .EOF {
@@ -346,7 +344,7 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.allocator) {
 				log.warnf("request scanner error: %v", err)
 			}
 
-			clean_request_loop(conn, close = true)
+			clean_request_loop(l.conn, close = true)
 			return
 		}
 
@@ -355,7 +353,7 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.allocator) {
 		// received prior to the request-line.
 		if len(token) == 0 {
 			log.debug("first request line empty, skipping in interest of robustness")
-			scanner_scan(&conn.scanner, loop, on_rline2)
+			scanner_scan(&l.conn.scanner, loop, on_rline2)
 			return
 		}
 
@@ -363,122 +361,120 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.allocator) {
 	}
 
 	on_rline2 :: proc(loop: rawptr, token: []byte, err: bufio.Scanner_Error) {
-		loop := cast(^Loop)loop
-		using loop
+		l := cast(^Loop)loop
 
 		if err != nil {
 			log.warnf("request scanning error: %v", err)
-			clean_request_loop(conn, close = true)
+			clean_request_loop(l.conn, close = true)
 			return
 		}
 
-		rline, err := requestline_parse(string(token), req.allocator)
+		rline, err := requestline_parse(string(token), l.req.allocator)
 		switch err {
 		case .Method_Not_Implemented:
 			log.infof("request-line %q invalid method", string(token))
-			res.headers["connection"] = "close"
-			res.status = .Not_Implemented
-			respond(&res)
+			l.res.headers["connection"] = "close"
+			l.res.status = .Not_Implemented
+			respond(&l.res)
 			return
 		case .Invalid_Version_Format, .Not_Enough_Fields:
 			log.warnf("request-line %q invalid: %s", string(token), err)
-			clean_request_loop(conn, close = true)
+			clean_request_loop(l.conn, close = true)
 			return
 		case .None:
-			req.line = rline
+			l.req.line = rline
 		}
 
 		// Might need to support more versions later.
 		if rline.version.major != 1 || rline.version.minor < 1 {
 			log.infof("request http version not supported %v", rline.version)
-			res.headers["connection"] = "close"
-			res.status = .HTTP_Version_Not_Supported
-			respond(&res)
+			l.res.headers["connection"] = "close"
+			l.res.status = .HTTP_Version_Not_Supported
+			respond(&l.res)
 			return
 		}
 
-		req.url = url_parse(rline.target, req.allocator)
+		l.req.url = url_parse(rline.target, l.req.allocator)
 
-		conn.scanner.max_token_size = conn.server.opts.limit_headers
-		scanner_scan(&conn.scanner, loop, on_header_line)
+		l.conn.scanner.max_token_size = l.conn.server.opts.limit_headers
+		scanner_scan(&l.conn.scanner, loop, on_header_line)
 	}
 
 	on_header_line :: proc(loop: rawptr, token: []byte, err: bufio.Scanner_Error) {
-		loop := cast(^Loop)loop
-		using loop
+		l := cast(^Loop)loop
 
 		if err != nil {
 			log.warnf("request scanning error: %v", err)
-			clean_request_loop(conn, close = true)
+			clean_request_loop(l.conn, close = true)
 			return
 		}
 
 		// The first empty line denotes the end of the headers section.
 		if len(token) == 0 {
-			on_headers_end(loop)
+			on_headers_end(l)
 			return
 		}
 
-		if _, ok := header_parse(&req.headers, string(token), req.allocator); !ok {
+		if _, ok := header_parse(&l.req.headers, string(token), l.req.allocator); !ok {
 			log.warnf("header-line %s is invalid", string(token))
-			res.headers["connection"] = "close"
-			res.status = .Bad_Request
-			respond(&res)
+			l.res.headers["connection"] = "close"
+			l.res.status = .Bad_Request
+			respond(&l.res)
 			return
 		}
 
-		conn.scanner.max_token_size -= len(token)
-		if conn.scanner.max_token_size <= 0 {
+		l.conn.scanner.max_token_size -= len(token)
+		if l.conn.scanner.max_token_size <= 0 {
 			log.warn("request headers too large")
-			res.headers["connection"] = "close"
-			res.status = .Request_Header_Fields_Too_Large
-			respond(&res)
+			l.res.headers["connection"] = "close"
+			l.res.status = .Request_Header_Fields_Too_Large
+			respond(&l.res)
 			return
 		}
 
-		scanner_scan(&conn.scanner, loop, on_header_line)
+		scanner_scan(&l.conn.scanner, loop, on_header_line)
 	}
 
-	on_headers_end :: proc(using loop: ^Loop) {
-		if !server_headers_validate(&req.headers) {
+	on_headers_end :: proc(l: ^Loop) {
+		if !server_headers_validate(&l.req.headers) {
 			log.warn("request headers are invalid")
-			res.headers["connection"] = "close"
-			res.status = .Bad_Request
-			respond(&res)
+			l.res.headers["connection"] = "close"
+			l.res.status = .Bad_Request
+			respond(&l.res)
 			return
 		}
 
-		conn.scanner.max_token_size = bufio.DEFAULT_MAX_SCAN_TOKEN_SIZE
+		l.conn.scanner.max_token_size = bufio.DEFAULT_MAX_SCAN_TOKEN_SIZE
 
 		// Automatically respond with a continue status when the client has the Expect: 100-continue header.
-		if expect, ok := req.headers["expect"];
-		   ok && expect == "100-continue" && conn.server.opts.auto_expect_continue {
+		if expect, ok := l.req.headers["expect"];
+		   ok && expect == "100-continue" && l.conn.server.opts.auto_expect_continue {
 
-			res.status = .Continue
+			l.res.status = .Continue
 
-			respond(&res)
+			respond(&l.res)
 			return
 		}
 
-		req._scanner = conn.scanner
+		l.req._scanner = l.conn.scanner
 
-		rline := req.line.(Requestline)
+		rline := l.req.line.(Requestline)
 		// An options request with the "*" is a no-op/ping request to
 		// check for server capabilities and should not be sent to handlers.
 		if rline.method == .Options && rline.target == "*" {
-			res.status = .Ok
-			respond(&res)
+			l.res.status = .Ok
+			respond(&l.res)
 		} else {
 			// Give the handler this request as a GET, since the HTTP spec
 			// says a HEAD is identical to a GET but just without writing the body,
 			// handlers shouldn't have to worry about it.
 			is_head := rline.method == .Head
-			if is_head && conn.server.opts.redirect_head_to_get {
-				req.is_head = true
+			if is_head && l.conn.server.opts.redirect_head_to_get {
+				l.req.is_head = true
 				rline.method = .Get
 			}
 
-			conn.server.handler.handle(&conn.server.handler, &req, &res)
+			l.conn.server.handler.handle(&l.conn.server.handler, &l.req, &l.res)
 		}
 	}
 

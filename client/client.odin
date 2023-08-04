@@ -92,13 +92,11 @@ request :: proc(target: string, request: ^Request, allocator := context.allocato
 
 	// HTTPS using openssl.
 	if url.scheme == "https" {
-		using openssl
+		ctx := openssl.SSL_CTX_new(openssl.TLS_client_method())
+		ssl := openssl.SSL_new(ctx)
+		openssl.SSL_set_fd(ssl, c.int(socket))
 
-		ctx := SSL_CTX_new(TLS_client_method())
-		ssl := SSL_new(ctx)
-		SSL_set_fd(ssl, c.int(socket))
-
-		switch SSL_connect(ssl) {
+		switch openssl.SSL_connect(ssl) {
 		case 2:
 			err = SSL_Error.Controlled_Shutdown
 			return
@@ -111,7 +109,7 @@ request :: proc(target: string, request: ^Request, allocator := context.allocato
 		buf := bytes.buffer_to_bytes(&req_buf)
 		to_write := len(buf)
 		for to_write > 0 {
-			ret := SSL_write(ssl, raw_data(buf), c.int(to_write))
+			ret := openssl.SSL_write(ssl, raw_data(buf), c.int(to_write))
 			if ret <= 0 {
 				err = SSL_Error.SSL_Write_Failed
 				return

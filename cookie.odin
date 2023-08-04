@@ -25,51 +25,51 @@ Cookie :: struct {
 }
 
 // Builds the Set-Cookie header string representation of the given cookie.
-cookie_string :: proc(using c: Cookie, allocator := context.allocator) -> string {
+cookie_string :: proc(c: Cookie, allocator := context.allocator) -> string {
 	b: strings.Builder
 	strings.builder_init(&b, 0, 20, allocator)
 
 	strings.write_string(&b, "set-cookie: ")
-	strings.write_string(&b, name)
+	strings.write_string(&b, c.name)
 	strings.write_byte(&b, '=')
-	strings.write_string(&b, value)
+	strings.write_string(&b, c.value)
 
-	if d, ok := domain.(string); ok {
+	if d, ok := c.domain.(string); ok {
 		strings.write_string(&b, "; Domain=")
 		strings.write_string(&b, d)
 	}
 
-	if e, ok := expires_gmt.(time.Time); ok {
+	if e, ok := c.expires_gmt.(time.Time); ok {
 		strings.write_string(&b, "; Expires=")
 		strings.write_string(&b, format_date_header(e, allocator))
 	}
 
-	if a, ok := max_age_secs.(int); ok {
+	if a, ok := c.max_age_secs.(int); ok {
 		strings.write_string(&b, "; Max-Age=")
 		strings.write_int(&b, a)
 	}
 
-	if p, ok := path.(string); ok {
+	if p, ok := c.path.(string); ok {
 		strings.write_string(&b, "; Path=")
 		strings.write_string(&b, p)
 	}
 
-	switch same_site {
+	switch c.same_site {
 	case .None:   strings.write_string(&b, "; SameSite=None")
 	case .Lax:    strings.write_string(&b, "; SameSite=Lax")
 	case .Strict: strings.write_string(&b, "; SameSite=Strict")
 	case .Unspecified: // no-op.
 	}
 
-	if secure {
+	if c.secure {
 		strings.write_string(&b, "; Secure")
 	}
 
-	if partitioned {
+	if c.partitioned {
 		strings.write_string(&b, "; Partitioned")
 	}
 
-	if http_only {
+	if c.http_only {
 		strings.write_string(&b, "; HttpOnly")
 	}
 

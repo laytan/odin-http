@@ -195,27 +195,27 @@ parse_body :: proc(
 	allocator := context.allocator,
 ) {
 	on_body :: proc(
-		using parsing_body: ^Parsing_Body,
+		pb: ^Parsing_Body,
 		body: string,
 		was_allocation: bool,
 		err: Body_Error,
 	) {
-		defer free(parsing_body, allocator)
+		defer free(pb, pb.allocator)
 
 		if err != nil {
-			user_callback(user_data, err, false)
+			pb.user_callback(pb.user_data, err, false)
 			return
 		}
 
 		// Automatically decode url encoded bodies.
-		if typ, ok := headers["content-type"]; ok && typ == "application/x-www-form-urlencoded" {
+		if typ, ok := pb.headers["content-type"]; ok && typ == "application/x-www-form-urlencoded" {
 			plain := body
 			defer if was_allocation do delete(plain)
 
-			keyvalues := strings.split(plain, "&", allocator)
-			defer delete(keyvalues, allocator)
+			keyvalues := strings.split(plain, "&", pb.allocator)
+			defer delete(keyvalues, pb.allocator)
 
-			queries := make(Body_Url_Encoded, len(keyvalues), allocator)
+			queries := make(Body_Url_Encoded, len(keyvalues), pb.allocator)
 			for keyvalue in keyvalues {
 				seperator := strings.index(keyvalue, "=")
 				if seperator == -1 { 	// The keyvalue has no value.
@@ -223,13 +223,13 @@ parse_body :: proc(
 					continue
 				}
 
-				key, key_decoded_ok := net.percent_decode(keyvalue[:seperator], allocator)
+				key, key_decoded_ok := net.percent_decode(keyvalue[:seperator], pb.allocator)
 				if !key_decoded_ok {
 					log.warnf("url encoded body key %q could not be decoded", keyvalue[:seperator])
 					continue
 				}
 
-				val, val_decoded_ok := net.percent_decode(keyvalue[seperator + 1:], allocator)
+				val, val_decoded_ok := net.percent_decode(keyvalue[seperator + 1:], pb.allocator)
 				if !val_decoded_ok {
 					log.warnf(
 						"url encoded body value %q for key %q could not be decoded",
@@ -242,11 +242,11 @@ parse_body :: proc(
 				queries[key] = val
 			}
 
-			parsing_body.user_callback(parsing_body.user_data, queries, was_allocation)
+			pb.user_callback(pb.user_data, queries, was_allocation)
 			return
 		}
 
-		parsing_body.user_callback(parsing_body.user_data, body, was_allocation)
+		pb.user_callback(pb.user_data, body, was_allocation)
 	}
 
 	pb := new(Parsing_Body, allocator)
@@ -268,37 +268,37 @@ parse_body :: proc(
 
 // "Decodes" a request body based on the content length header.
 // Meant for internal usage, you should use `http.request_body`.
-request_body_length :: proc(using pb: ^Parsing_Body) {
-	len, ok := headers["content-length"]
+request_body_length :: proc(pb: ^Parsing_Body) {
+	len, ok := pb.headers["content-length"]
 	if !ok {
-		parsing_callback(pb, "", false, .No_Length)
+		pb.parsing_callback(pb, "", false, .No_Length)
 		return
 	}
 
 	ilen, lenok := strconv.parse_int(len, 10)
 	if !lenok {
-		parsing_callback(pb, "", false, .Invalid_Length)
+		pb.parsing_callback(pb, "", false, .Invalid_Length)
 		return
 	}
 
-	if max_length > -1 && ilen > max_length {
-		parsing_callback(pb, "", false, .Too_Long)
+	if pb.max_length > -1 && ilen > pb.max_length {
+		pb.parsing_callback(pb, "", false, .Too_Long)
 		return
 	}
 
 	if ilen == 0 {
-		parsing_callback(pb, "", false, nil)
+		pb.parsing_callback(pb, "", false, nil)
 		return
 	}
 
 	// user_index is used to set the amount of bytes to scan in scan_num_bytes.
 	context.user_index = ilen
 
-	scanner.max_token_size = ilen
-	defer scanner.max_token_size = bufio.DEFAULT_MAX_SCAN_TOKEN_SIZE
+	pb.scanner.max_token_size = ilen
+	defer pb.scanner.max_token_size = bufio.DEFAULT_MAX_SCAN_TOKEN_SIZE
 
-	scanner.split = scan_num_bytes
-	defer scanner.split = bufio.scan_lines
+	pb.scanner.split = scan_num_bytes
+	defer pb.scanner.split = bufio.scan_lines
 
 	on_scan :: proc(pb: rawptr, body: []byte, err: bufio.Scanner_Error) {
 		pb := cast(^Parsing_Body)pb
@@ -310,7 +310,7 @@ request_body_length :: proc(using pb: ^Parsing_Body) {
 		pb.parsing_callback(pb, string(body), false, nil)
 	}
 
-	scanner_scan(scanner, pb, on_scan)
+	scanner_scan(pb.scanner, pb, on_scan)
 }
 
 // "Decodes" a chunked transfer encoded request body.

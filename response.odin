@@ -32,7 +32,7 @@ response_init :: proc(r: ^Response, allocator := context.allocator) {
 // Frees the allocator (should be a request scoped allocator).
 // Closes the connection or starts the handling of the next request.
 @(private)
-response_send :: proc(using r: ^Response, conn: ^Connection) {
+response_send :: proc(r: ^Response, conn: ^Connection) {
 	check_body := proc(body: Body_Type, was_alloc: bool, res: rawptr) {
 		res := cast(^Response)res
 		will_close: bool
@@ -64,56 +64,56 @@ response_send :: proc(using r: ^Response, conn: ^Connection) {
 }
 
 @(private)
-response_send_got_body :: proc(using r: ^Response, will_close: bool) {
+response_send_got_body :: proc(r: ^Response, will_close: bool) {
 	conn := r._conn
 
 	res: bytes.Buffer
 	// Responses are on average at least 100 bytes, so lets start there, but add the body's length.
-	initial_buf_cap := response_needs_content_length(r, conn) ? 100 + bytes.buffer_length(&body) : 100
-	bytes.buffer_init_allocator(&res, 0, initial_buf_cap, allocator)
+	initial_buf_cap := response_needs_content_length(r, conn) ? 100 + bytes.buffer_length(&r.body) : 100
+	bytes.buffer_init_allocator(&res, 0, initial_buf_cap, r.allocator)
 
 	bytes.buffer_write_string(&res, "HTTP/1.1 ")
-	bytes.buffer_write_string(&res, status_string(status))
+	bytes.buffer_write_string(&res, status_string(r.status))
 	bytes.buffer_write_string(&res, "\r\n")
 
 	// Per RFC 9910 6.6.1 a Date header must be added in 2xx, 3xx, 4xx responses.
-	if status >= .Ok && status <= .Internal_Server_Error && "date" not_in headers {
-		headers["date"] = format_date_header(time.now(), allocator)
+	if r.status >= .Ok && r.status <= .Internal_Server_Error && "date" not_in r.headers {
+		r.headers["date"] = format_date_header(time.now(), r.allocator)
 	}
 
 	// Write the status code as the body, if there is no body set by the handlers.
-	if response_can_have_body(r, conn) && !status_success(status) && bytes.buffer_length(&body) == 0 {
-		bytes.buffer_write_string(&body, status_string(status))
-		headers["content-type"] = mime_to_content_type(.Plain)
+	if response_can_have_body(r, conn) && !status_success(r.status) && bytes.buffer_length(&r.body) == 0 {
+		bytes.buffer_write_string(&r.body, status_string(r.status))
+		r.headers["content-type"] = mime_to_content_type(.Plain)
 	}
 
-	if "content-length" not_in headers && response_needs_content_length(r, conn) {
-		buf := make([]byte, 32, allocator)
-		headers["content-length"] = strconv.itoa(buf, bytes.buffer_length(&body))
+	if "content-length" not_in r.headers && response_needs_content_length(r, conn) {
+		buf := make([]byte, 32, r.allocator)
+		r.headers["content-length"] = strconv.itoa(buf, bytes.buffer_length(&r.body))
 	}
 
-	for header, value in headers {
+	for header, value in r.headers {
 		bytes.buffer_write_string(&res, header)
 		bytes.buffer_write_string(&res, ": ")
 
 		// Escape newlines in headers, if we don't, an attacker can find an endpoint
 		// that returns a header with user input, and inject headers into the response.
 		// PERF: probably slow.
-		esc_value, _ := strings.replace_all(value, "\n", "\\n", allocator)
+		esc_value, _ := strings.replace_all(value, "\n", "\\n", r.allocator)
 		bytes.buffer_write_string(&res, esc_value)
 
 		bytes.buffer_write_string(&res, "\r\n")
 	}
 
-	for cookie in cookies {
-		bytes.buffer_write_string(&res, cookie_string(cookie, allocator))
+	for cookie in r.cookies {
+		bytes.buffer_write_string(&res, cookie_string(cookie, r.allocator))
 		bytes.buffer_write_string(&res, "\r\n")
 	}
 
 	// Empty line denotes end of headers and start of body.
 	bytes.buffer_write_string(&res, "\r\n")
 
-	if response_can_have_body(r, conn) do bytes.buffer_write(&res, bytes.buffer_to_bytes(&body))
+	if response_can_have_body(r, conn) do bytes.buffer_write(&res, bytes.buffer_to_bytes(&r.body))
 
 	buf := bytes.buffer_to_bytes(&res)
 	conn.response = Response_Inflight {
