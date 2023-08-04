@@ -10,8 +10,6 @@ import "core:thread"
 import "core:time"
 import win "core:sys/windows"
 
-Handle :: os.Handle
-
 Default :: struct {
 	allocator:       mem.Allocator,
 	pool:            thread.Pool,
@@ -96,9 +94,9 @@ _accept :: proc(io: ^IO, socket: net.TCP_Socket, user: rawptr, callback: On_Acce
 	})
 }
 
-Op_Close :: distinct Handle
+Op_Close :: distinct os.Handle
 
-_close :: proc(io: ^IO, fd: Handle, user: rawptr, callback: On_Close) {
+_close :: proc(io: ^IO, fd: os.Handle, user: rawptr, callback: On_Close) {
 	add_completion(io, user, rawptr(callback), Op_Close(fd), proc(t: thread.Task) {
 		completion := cast(^Completion)t.data
 		op := completion.operation.(Op_Close)
@@ -152,11 +150,11 @@ _connect :: proc(io: ^IO, endpoint: net.Endpoint, user: rawptr, callback: On_Con
 }
 
 Op_Read :: struct {
-	fd:  Handle,
+	fd:  os.Handle,
 	buf: []byte,
 }
 
-_read :: proc(io: ^IO, fd: Handle, buf: []byte, user: rawptr, callback: On_Read) {
+_read :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_Read) {
 	add_completion(io, user, rawptr(callback), Op_Read{fd = fd, buf = buf}, proc(t: thread.Task) {
 		completion := cast(^Completion)t.data
 		op := completion.operation.(Op_Read)
@@ -251,11 +249,11 @@ _send :: proc(
 }
 
 Op_Write :: struct {
-	fd:  Handle,
+	fd:  os.Handle,
 	buf: []byte,
 }
 
-_write :: proc(io: ^IO, fd: Handle, buf: []byte, user: rawptr, callback: On_Write) {
+_write :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_Write) {
 	add_completion(io, user, rawptr(callback), Op_Write{fd = fd, buf = buf}, proc(t: thread.Task) {
 		completion := cast(^Completion)t.data
 		op := completion.operation.(Op_Write)

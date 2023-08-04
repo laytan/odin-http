@@ -6,11 +6,8 @@ import "core:os"
 import "core:time"
 import "core:mem"
 import "core:net"
-import "core:log"
 
 import "../kqueue"
-
-Handle :: os.Handle
 
 KQueue :: struct {
 	fd:              os.Handle,
@@ -227,10 +224,10 @@ _accept :: proc(io: ^IO, socket: net.TCP_Socket, user: rawptr, callback: On_Acce
 	append(&kq.completed, completion)
 }
 
-Op_Close :: distinct Handle
+Op_Close :: distinct os.Handle
 
 // Wraps os.close using the kqueue.
-_close :: proc(io: ^IO, fd: Handle, user: rawptr, callback: On_Close) {
+_close :: proc(io: ^IO, fd: os.Handle, user: rawptr, callback: On_Close) {
 	kq := cast(^KQueue)io.impl_data
 
 	completion := pool_get(&kq.completion_pool)
@@ -240,7 +237,7 @@ _close :: proc(io: ^IO, fd: Handle, user: rawptr, callback: On_Close) {
 
 	completion.callback = proc(kq: ^KQueue, completion: ^Completion) {
 		op := completion.operation.(Op_Close)
-		ok := os.close(Handle(op))
+		ok := os.close(os.Handle(op))
 
 		callback := cast(On_Close)completion.user_callback
 		callback(completion.user_data, ok)
@@ -312,11 +309,11 @@ _connect :: proc(io: ^IO, endpoint: net.Endpoint, user: rawptr, callback: On_Con
 }
 
 Op_Read :: struct {
-	fd:  Handle,
+	fd:  os.Handle,
 	buf: []byte,
 }
 
-_read :: proc(io: ^IO, fd: Handle, buf: []byte, user: rawptr, callback: On_Read) {
+_read :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_Read) {
 	kq := cast(^KQueue)io.impl_data
 
 	completion := pool_get(&kq.completion_pool)
@@ -458,11 +455,11 @@ _send :: proc(
 }
 
 Op_Write :: struct {
-	fd:  Handle,
+	fd:  os.Handle,
 	buf: []byte,
 }
 
-_write :: proc(io: ^IO, fd: Handle, buf: []byte, user: rawptr, callback: On_Write) {
+_write :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_Write) {
 	kq := cast(^KQueue)io.impl_data
 
 	completion := pool_get(&kq.completion_pool)

@@ -52,7 +52,7 @@ prepare_socket :: proc(socket: net.Any_Socket) -> net.Network_Error {
 
 // Prepares a handle for non blocking IO,
 // user should call this before passing the handle to any other nbio procs.
-prepare_handle :: proc(handle: Handle) -> net.Network_Error {
+prepare_handle :: proc(handle: os.Handle) -> net.Network_Error {
 	when ODIN_OS != .Windows {
 		// NOTE: TCP_Socket gets cast to int right away in net, so this is safe to do.
 		return net.set_blocking(net.TCP_Socket(handle), false)
@@ -81,7 +81,7 @@ accept :: proc(io: ^IO, socket: net.TCP_Socket, user: rawptr, callback: On_Accep
 
 On_Close :: proc(user: rawptr, ok: bool)
 
-close :: proc(io: ^IO, fd: Handle, user: rawptr, callback: On_Close) {
+close :: proc(io: ^IO, fd: os.Handle, user: rawptr, callback: On_Close) {
 	_close(io, fd, user, callback)
 }
 
@@ -94,7 +94,7 @@ connect :: proc(io: ^IO, endpoint: net.Endpoint, user: rawptr, callback: On_Conn
 On_Read :: proc(user: rawptr, read: int, err: os.Errno)
 
 // TODO: accept and use offset.
-read :: proc(io: ^IO, fd: Handle, buf: []byte, user: rawptr, callback: On_Read) {
+read :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_Read) {
 	_read(io, fd, buf, user, callback)
 }
 
@@ -121,7 +121,7 @@ send :: proc(
 
 On_Write :: proc(user: rawptr, written: int, err: os.Errno)
 
-write :: proc(io: ^IO, fd: Handle, buf: []byte, user: rawptr, callback: On_Write) {
+write :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_Write) {
 	_write(io, fd, buf, user, callback)
 }
 

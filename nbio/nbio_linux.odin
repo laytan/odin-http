@@ -10,8 +10,6 @@ import "core:time"
 
 import "../io_uring"
 
-Handle :: os.Handle
-
 Linux :: struct {
 	ring:            io_uring.IO_Uring,
 
@@ -245,9 +243,9 @@ accept_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
 	lx.ios_queued += 1
 }
 
-Op_Close :: distinct Handle
+Op_Close :: distinct os.Handle
 
-_close :: proc(io: ^IO, fd: Handle, user: rawptr, callback: On_Close) {
+_close :: proc(io: ^IO, fd: os.Handle, user: rawptr, callback: On_Close) {
 	lx := cast(^Linux)io.impl_data
 
 	completion := pool_get(&lx.completion_pool)
@@ -350,11 +348,11 @@ connect_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
 }
 
 Op_Read :: struct {
-	fd:  Handle,
+	fd:  os.Handle,
 	buf: []byte,
 }
 
-_read :: proc(io: ^IO, fd: Handle, buf: []byte, user: rawptr, callback: On_Read) {
+_read :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_Read) {
 	lx := cast(^Linux)io.impl_data
 
 	completion := pool_get(&lx.completion_pool)
@@ -520,11 +518,11 @@ send_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
 }
 
 Op_Write :: struct {
-	fd:  Handle,
+	fd:  os.Handle,
 	buf: []byte,
 }
 
-_write :: proc(io: ^IO, fd: Handle, buf: []byte, user: rawptr, callback: On_Write) {
+_write :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_Write) {
 	lx := cast(^Linux)io.impl_data
 
 	completion := pool_get(&lx.completion_pool)
