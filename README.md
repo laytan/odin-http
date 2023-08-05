@@ -207,8 +207,7 @@ post :: proc() {
 ```
 
 ## TODO
- - TLS
+ - SSL/TLS for the server
  - decompress "Content-Encoding" middleware
  - Form Data
- - Close idle connections when thread count gets high
- - better Thread/connection pool
+ - Nice abstractions in both server and client API
