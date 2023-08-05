@@ -12,7 +12,6 @@ import "../io_uring"
 
 Linux :: struct {
 	ring:            io_uring.IO_Uring,
-
 	completion_pool: Pool(Completion),
 	// Ready to be submitted to kernel.
 	unqueued:        queue.Queue(^Completion),
@@ -31,7 +30,6 @@ Completion :: struct {
 	user_data:     rawptr,
 }
 
-// TODO: does not make sense to take flags here?
 _init :: proc(io: ^IO, entries: u32 = DEFAULT_ENTRIES, flags: u32 = 0, alloc := context.allocator) -> (err: os.Errno) {
 	lx := new(Linux, alloc)
 	io.impl_data = lx

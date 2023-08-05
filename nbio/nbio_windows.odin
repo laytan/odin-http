@@ -25,14 +25,7 @@ Completion :: struct {
 	user_data:     rawptr,
 }
 
-_init :: proc(
-	io: ^IO,
-	entries: u32 = DEFAULT_ENTRIES,
-	flags: u32 = 0,
-	allocator := context.allocator,
-) -> (
-	err: os.Errno,
-) {
+_init :: proc(io: ^IO, entries: u32 = DEFAULT_ENTRIES, _: u32 = 0, allocator := context.allocator) -> (err: os.Errno) {
 	df := new(Default, allocator)
 
 	df.allocator = allocator

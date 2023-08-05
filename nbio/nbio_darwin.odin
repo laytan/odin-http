@@ -26,14 +26,7 @@ Completion :: struct {
 	user_data:     rawptr,
 }
 
-_init :: proc(
-	io: ^IO,
-	entries: u32 = DEFAULT_ENTRIES,
-	flags: u32 = 0,
-	allocator := context.allocator,
-) -> (
-	err: os.Errno,
-) {
+_init :: proc(io: ^IO, _: u32 = DEFAULT_ENTRIES, _: u32 = 0, allocator := context.allocator) -> (err: os.Errno) {
 	kq := new(KQueue, allocator)
 	defer if err != os.ERROR_NONE do free(kq, allocator)
 
@@ -46,10 +39,9 @@ _init :: proc(
 	kq.timeouts = make([dynamic]^Completion, allocator)
 	kq.completed = make([dynamic]^Completion, allocator)
 	kq.io_pending = make([dynamic]^Completion, allocator)
+
 	kq.allocator = allocator
-
 	io.impl_data = kq
-
 	return
 }
 
@@ -71,7 +63,7 @@ _destroy :: proc(io: ^IO) {
 MAX_EVENTS :: 256
 
 _tick :: proc(io: ^IO) -> os.Errno {
-	return flush(io, false)
+	return flush(io, wait_for_completions = false)
 }
 
 flush :: proc(io: ^IO, wait_for_completions: bool) -> os.Errno {
