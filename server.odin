@@ -103,7 +103,6 @@ server_serve :: proc(s: ^Server, handler: Handler) -> net.Network_Error {
 	errno := nbio.init(&s.io)
 	// TODO: error handling.
 	assert(errno == os.ERROR_NONE)
-	defer nbio.destroy(&s.io)
 
 	log.debug("accepting connections")
 	nbio.accept(&s.io, s.tcp_sock, s, on_accept)
