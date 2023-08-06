@@ -90,15 +90,13 @@ flush :: proc(lx: ^Linux, wait_nr: u32, timeouts: ^uint, etime: ^bool) -> os.Err
 	err = flush_completions(lx, 0, timeouts, etime)
 	if err != os.ERROR_NONE do return err
 
-
-	// Prevent infinite loop when enqueue would add to unqueued,
-	// by copying, this makes the loop stop at the last item at the
-	// time we start it. New push backs during the loop will be done
-	// the next time.
-	unqueued_snapshot := lx.unqueued
+	// Store length at this time, so we don't infinite loop if any of the enqueue
+	// procs below then add to the queue again.
+	n := queue.len(lx.unqueued)
 
 	// odinfmt: disable
-	for unqueued in queue.pop_front_safe(&unqueued_snapshot) {
+	for _ in 0..<n {
+		unqueued := queue.pop_front(&lx.unqueued)
 		switch op in unqueued.operation {
 		case Op_Accept:  accept_enqueue(lx, unqueued)
 		case Op_Close:   close_enqueue(lx, unqueued)
