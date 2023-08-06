@@ -3,7 +3,6 @@
 package nbio
 
 import "core:c"
-import "core:fmt"
 import "core:mem"
 import "core:net"
 import "core:os"
@@ -282,7 +281,6 @@ _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout
 		op := completion.operation.(Op_Timeout)
 
 		diff := time.diff(time.now(), op.expires)
-		fmt.printf("sleeping for: %v", diff)
 		if (diff > 0) {
 			time.accurate_sleep(diff)
 		}
