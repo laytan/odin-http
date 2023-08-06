@@ -4,6 +4,19 @@ A HTTP/1.1 implementation for Odin.
 
 See below examples or the examples directory.
 
+## Compatibility
+
+This is beta software, confirmed to work in my own use cases but can certainly contain edge cases and bugs that I did not catch.
+Please file issues for any bug or suggestion you encounter/have.
+
+The has been tested to work with Ubuntu Linux (other "normal" distros should work), MacOS (m1 and intel), and Windows 64 bit.
+Any other distributions or versions have not been tested and might not work.
+
+## IO implementations
+
+MacOS uses kqueue, Linux uses io_uring and Windows currently uses threading (which when compared to others is slow),
+non-blocking IO for Windows using IOCP is planned in the future.
+
 ## Server example
 
 ```odin
@@ -36,13 +49,12 @@ main :: proc() {
 	// Matches /users followed by any word (alphanumeric) followed by /comments and then / with any number.
 	// The word is available as req.url_params[0], and the number as req.url_params[1].
 	http.route_get(&router, "/users/(%w+)/comments/(%d+)", http.handler(proc(req: ^http.Request, res: ^http.Response) {
-		http.respond_plain(res, fmt.tprintf("user %s, comment: %s", req.url_params[0], req.url_params[1]))
+		http.respond_plain( res, fmt.tprintf("user %s, comment: %s", req.url_params[0], req.url_params[1]))
 	}))
-
 	http.route_get(&router, "/cookies", http.handler(cookies))
-	http.route_get(&router, "/api",     http.handler(api))
-	http.route_get(&router, "/ping",    http.handler(ping))
-	http.route_get(&router, "/index",   http.handler(index))
+	http.route_get(&router, "/api", http.handler(api))
+	http.route_get(&router, "/ping", http.handler(ping))
+	http.route_get(&router, "/index", http.handler(index))
 
 	// Matches every get request that did not match another route.
 	http.route_get(&router, "(.*)", http.handler(static))
@@ -58,7 +70,7 @@ main :: proc() {
 	// Start the server on 127.0.0.1:6969.
 	err := http.listen_and_serve(
 		&s,
-		&with_logger,
+		with_logger,
 		net.Endpoint{address = net.IP4_Loopback, port = 6969},
 	)
 	log.warnf("server stopped: %s", err)
@@ -90,26 +102,32 @@ ping :: proc(req: ^http.Request, res: ^http.Response) {
 }
 
 index :: proc(req: ^http.Request, res: ^http.Response) {
-	http.respond_file(res, "examples/complete/static/index.html", req.allocator)
+	http.respond_file(res, "examples/complete/static/index.html")
 }
 
 static :: proc(req: ^http.Request, res: ^http.Response) {
-	http.respond_dir(res, "/", "examples/complete/static", req.url_params[0], req.allocator)
+	http.respond_dir(res, "/", "examples/complete/static", req.url_params[0])
 }
 
+// TODO: this needs abstractions.
 post_ping :: proc(req: ^http.Request, res: ^http.Response) {
-	body, _, err := http.request_body(req, len("ping"))
-	if err != nil {
-		res.status = http.body_error_status(err)
-		return
-	}
+	http.request_body(req, proc(body: http.Body_Type, was_alloc: bool, res: rawptr) {
+		res := cast(^http.Response)res
 
-	if (body.(http.Body_Plain) or_else "") != "ping" {
-		res.status = .Unprocessable_Content
-		return
-	}
+		if err, is_err := body.(http.Body_Error); is_err {
+			res.status = http.body_error_status(err)
+			http.respond(res)
+			return
+		}
 
-	http.respond_plain(res, "pong")
+		if (body.(http.Body_Plain) or_else "") != "ping" {
+			res.status = .Unprocessable_Content
+			http.respond(res)
+			return
+		}
+
+		http.respond_plain(res, "pong")
+	}, len("ping"), res)
 }
 ```
 
@@ -189,8 +207,7 @@ post :: proc() {
 ```
 
 ## TODO
- - TLS
+ - SSL/TLS for the server
  - decompress "Content-Encoding" middleware
  - Form Data
- - Close idle connections when thread count gets high
- - better Thread/connection pool
+ - Nice abstractions in both server and client API

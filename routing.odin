@@ -72,6 +72,7 @@ router_handler :: proc(router: ^Router) -> Handler {
 		}
 
 		log.infof("no route matched %s %s", method_string(rline.method), rline.target)
+		respond(res)
 	}
 
 	return h

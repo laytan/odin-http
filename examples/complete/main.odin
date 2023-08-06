@@ -79,6 +79,8 @@ serve :: proc() {
 		next.handle(next, req, res)
 
 		// The next handler has finished, we can now do things with the response.
+		// TODO: this is not true when the handler uses callbacks for nonblocking.
+		// Middleware in general doesn't work as expected.
 		log.infof("index handler returned status code: %s", res.status)
 	})
 	http.route_get(&router, "/", index_with_middleware)
@@ -96,7 +98,7 @@ serve :: proc() {
 	// Start the server on 127.0.0.1:6969.
 	err := http.listen_and_serve(
 		&s,
-		&with_logger,
+		with_logger,
 		net.Endpoint{address = net.IP4_Loopback, port = 6969},
 	)
 	log.warnf("server stopped: %s", err)
@@ -128,24 +130,30 @@ ping :: proc(req: ^http.Request, res: ^http.Response) {
 }
 
 index :: proc(req: ^http.Request, res: ^http.Response) {
-	http.respond_file(res, "examples/complete/static/index.html", req.allocator)
+	http.respond_file(res, "examples/complete/static/index.html")
 }
 
 static :: proc(req: ^http.Request, res: ^http.Response) {
-	http.respond_dir(res, "/", "examples/complete/static", req.url_params[0], req.allocator)
+	http.respond_dir(res, "/", "examples/complete/static", req.url_params[0])
 }
 
+// TODO: this needs abstractions.
 post_ping :: proc(req: ^http.Request, res: ^http.Response) {
-	body, _, err := http.request_body(req, len("ping"))
-	if err != nil {
-		res.status = http.body_error_status(err)
-		return
-	}
+	http.request_body(req, proc(body: http.Body_Type, was_alloc: bool, res: rawptr) {
+		res := cast(^http.Response)res
 
-	if (body.(http.Body_Plain) or_else "") != "ping" {
-		res.status = .Unprocessable_Content
-		return
-	}
+		if err, is_err := body.(http.Body_Error); is_err {
+			res.status = http.body_error_status(err)
+			http.respond(res)
+			return
+		}
 
-	http.respond_plain(res, "pong")
+		if (body.(http.Body_Plain) or_else "") != "ping" {
+			res.status = .Unprocessable_Content
+			http.respond(res)
+			return
+		}
+
+		http.respond_plain(res, "pong")
+	}, len("ping"), res)
 }
