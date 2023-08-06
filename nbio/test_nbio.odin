@@ -6,9 +6,38 @@ import "core:net"
 import "core:fmt"
 import "core:slice"
 import "core:mem"
+import "core:time"
 
 expect :: testing.expect
 log :: testing.log
+
+@(test)
+test_timeout :: proc(t: ^testing.T) {
+	io: IO
+
+	ierr := init(&io)
+	expect(t, ierr == os.ERROR_NONE, fmt.tprintf("nbio.init error: %v", ierr))
+
+	defer destroy(&io)
+
+	timeout_fired: bool
+
+	timeout(&io, time.Millisecond * 50, &timeout_fired, proc(t_: rawptr) {
+		timeout_fired := cast(^bool)t_
+		timeout_fired^ = true
+	})
+
+	start := time.now()
+	for {
+		terr := tick(&io)
+		expect(t, terr == os.ERROR_NONE, fmt.tprintf("nbio.tick error: %v", terr))
+
+		if time.since(start) > time.Millisecond * 60 {
+			expect(t, timeout_fired, "timeout did not run in time")
+			break
+		}
+	}
+}
 
 @(test)
 test_write_read_close :: proc(t: ^testing.T) {

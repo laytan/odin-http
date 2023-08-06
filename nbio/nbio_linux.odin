@@ -574,18 +574,13 @@ Op_Timeout :: struct {
 _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout) {
 	lx := cast(^Linux)io.impl_data
 
-	expires := time.time_add(time.now(), dur)
-	timeout := time.to_unix_nanoseconds(expires)
-
-	ts: os.Unix_File_Time
-	ts.nanoseconds = timeout % NANOSECONDS_PER_SECOND
-	ts.seconds = timeout / NANOSECONDS_PER_SECOND
-
 	completion := pool_get(&lx.completion_pool)
 	completion.user_data = user
 	completion.user_callback = rawptr(callback)
 	completion.operation = Op_Timeout {
-		expires = ts,
+		expires = os.Unix_File_Time{
+            nanoseconds = time.duration_nanoseconds(dur),
+        },
 	}
 
 	completion.callback = proc(lx: ^Linux, completion: ^Completion) {
@@ -598,7 +593,7 @@ _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout
 		}
 
 		// TODO: we are swallowing the returned error here.
-		assert(errno == os.ERROR_NONE)
+		fmt.assertf(errno == os.ERROR_NONE || errno == os.ETIME, "timeout error: %v", errno)
 
 		callback(completion.user_data)
 		pool_put(&lx.completion_pool, completion)
@@ -610,7 +605,7 @@ _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout
 timeout_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
 	op := &completion.operation.(Op_Timeout)
 
-	_, err := io_uring.timeout(&lx.ring, u64(uintptr(completion)), &op.expires, 0, io_uring.IORING_TIMEOUT_ABS)
+	_, err := io_uring.timeout(&lx.ring, u64(uintptr(completion)), &op.expires, 0, 0)
 	if err == .Submission_Queue_Full {
 		queue.push_back(&lx.unqueued, completion)
 		return
