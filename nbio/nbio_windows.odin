@@ -3,11 +3,13 @@
 package nbio
 
 import "core:c"
+import "core:fmt"
 import "core:mem"
 import "core:net"
 import "core:os"
 import "core:thread"
 import "core:time"
+
 import win "core:sys/windows"
 
 Default :: struct {
@@ -280,8 +282,9 @@ _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout
 		op := completion.operation.(Op_Timeout)
 
 		diff := time.diff(time.now(), op.expires)
+		fmt.printf("sleeping for: %v", diff)
 		if (diff > 0) {
-			time.sleep(diff)
+			time.accurate_sleep(diff)
 		}
 
 		callback := cast(On_Timeout)completion.user_callback
