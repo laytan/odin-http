@@ -3,6 +3,7 @@ package nbio
 
 import "core:c"
 import "core:container/queue"
+import "core:fmt"
 import "core:mem"
 import "core:net"
 import "core:os"
@@ -12,7 +13,6 @@ import "../io_uring"
 
 Linux :: struct {
 	ring:            io_uring.IO_Uring,
-
 	completion_pool: Pool(Completion),
 	// Ready to be submitted to kernel.
 	unqueued:        queue.Queue(^Completion),
@@ -577,10 +577,13 @@ _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout
 	completion := pool_get(&lx.completion_pool)
 	completion.user_data = user
 	completion.user_callback = rawptr(callback)
+
+	nsec := time.duration_nanoseconds(dur)
 	completion.operation = Op_Timeout {
 		expires = os.Unix_File_Time{
-            nanoseconds = time.duration_nanoseconds(dur),
-        },
+			seconds = nsec / NANOSECONDS_PER_SECOND,
+			nanoseconds = nsec % NANOSECONDS_PER_SECOND,
+		},
 	}
 
 	completion.callback = proc(lx: ^Linux, completion: ^Completion) {
@@ -605,7 +608,7 @@ _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout
 timeout_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
 	op := &completion.operation.(Op_Timeout)
 
-	_, err := io_uring.timeout(&lx.ring, u64(uintptr(completion)), &op.expires, 0, 0)
+	_, err := io_uring.timeout(&lx.ring, u64(uintptr(completion)), &op.expires, 0, io_uring.IORING_TIMEOUT_ABS)
 	if err == .Submission_Queue_Full {
 		queue.push_back(&lx.unqueued, completion)
 		return
