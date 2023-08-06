@@ -275,7 +275,9 @@ connection_close :: proc(c: ^Connection) {
 
 	nbio.timeout(&c.server.io, Conn_Close_Delay, c, proc(_c: rawptr) {
 		c := cast(^Connection)_c
-		defer log.infof("closed connection: %i", c.socket)
+
+		sock := c.socket
+		defer log.infof("closed connection: %i", sock)
 
 		net.close(c.socket)
 		c.state = .Closed

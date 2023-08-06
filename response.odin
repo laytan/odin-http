@@ -130,13 +130,14 @@ on_response_sent :: proc(conn_: rawptr, sent: int, err: net.Network_Error) {
 	res := &conn.response.(Response_Inflight)
 
 	res.sent += sent
-	if len(res.buf) != res.sent {
+	if err == nil && len(res.buf) != res.sent {
 		nbio.send(&conn.server.io, conn.socket, res.buf[res.sent:], conn, on_response_sent)
 		return
 	}
 
 	if err != nil {
 		log.errorf("could not send response: %v", err)
+		res.will_close = true
 	}
 
 	clean_request_loop(conn, res.will_close)

@@ -541,7 +541,6 @@ close :: proc(
 // timeout was removed before it expired.
 //
 // io_uring timeouts use the `CLOCK.MONOTONIC` clock source.
-// TODO: is os.Unix_File_Time the correct type to use here?
 timeout :: proc(
 	ring: ^IO_Uring,
 	user_data: u64,
@@ -652,7 +651,7 @@ submission_queue_make :: proc(
 ) -> (
 	sq: Submission_Queue,
 	ok: bool,
-) #optional_ok {
+) {
 	assert(fd >= 0)
 	// Unsupported feature.
 	assert((params.features & IORING_FEAT_SINGLE_MMAP) != 0)

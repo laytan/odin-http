@@ -8,6 +8,7 @@ import "core:net"
 import "core:os"
 import "core:thread"
 import "core:time"
+
 import win "core:sys/windows"
 
 Default :: struct {
@@ -274,7 +275,7 @@ _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout
 
 		diff := time.diff(time.now(), op.expires)
 		if (diff > 0) {
-			time.sleep(diff)
+			time.accurate_sleep(diff)
 		}
 
 		callback := cast(On_Timeout)completion.user_callback

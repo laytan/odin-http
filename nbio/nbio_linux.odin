@@ -3,6 +3,7 @@ package nbio
 
 import "core:c"
 import "core:container/queue"
+import "core:fmt"
 import "core:mem"
 import "core:net"
 import "core:os"
@@ -88,15 +89,13 @@ flush :: proc(lx: ^Linux, wait_nr: u32, timeouts: ^uint, etime: ^bool) -> os.Err
 	err = flush_completions(lx, 0, timeouts, etime)
 	if err != os.ERROR_NONE do return err
 
-
-	// Prevent infinite loop when enqueue would add to unqueued,
-	// by copying, this makes the loop stop at the last item at the
-	// time we start it. New push backs during the loop will be done
-	// the next time.
-	unqueued_snapshot := lx.unqueued
+	// Store length at this time, so we don't infinite loop if any of the enqueue
+	// procs below then add to the queue again.
+	n := queue.len(lx.unqueued)
 
 	// odinfmt: disable
-	for unqueued in queue.pop_front_safe(&unqueued_snapshot) {
+	for _ in 0..<n {
+		unqueued := queue.pop_front(&lx.unqueued)
 		switch op in unqueued.operation {
 		case Op_Accept:  accept_enqueue(lx, unqueued)
 		case Op_Close:   close_enqueue(lx, unqueued)
@@ -572,18 +571,16 @@ Op_Timeout :: struct {
 _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout) {
 	lx := cast(^Linux)io.impl_data
 
-	expires := time.time_add(time.now(), dur)
-	timeout := time.to_unix_nanoseconds(expires)
-
-	ts: os.Unix_File_Time
-	ts.nanoseconds = timeout % NANOSECONDS_PER_SECOND
-	ts.seconds = timeout / NANOSECONDS_PER_SECOND
-
 	completion := pool_get(&lx.completion_pool)
 	completion.user_data = user
 	completion.user_callback = rawptr(callback)
+
+	nsec := time.duration_nanoseconds(dur)
 	completion.operation = Op_Timeout {
-		expires = ts,
+		expires = os.Unix_File_Time{
+			seconds = nsec / NANOSECONDS_PER_SECOND,
+			nanoseconds = nsec % NANOSECONDS_PER_SECOND,
+		},
 	}
 
 	completion.callback = proc(lx: ^Linux, completion: ^Completion) {
@@ -596,7 +593,7 @@ _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout
 		}
 
 		// TODO: we are swallowing the returned error here.
-		assert(errno == os.ERROR_NONE)
+		fmt.assertf(errno == os.ERROR_NONE || errno == os.ETIME, "timeout error: %v", errno)
 
 		callback(completion.user_data)
 		pool_put(&lx.completion_pool, completion)
