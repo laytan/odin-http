@@ -3,6 +3,7 @@ package http
 import "core:strconv"
 import "core:strings"
 import "core:time"
+import "core:io"
 
 Same_Site :: enum {
 	Unspecified,
@@ -25,53 +26,62 @@ Cookie :: struct {
 }
 
 // Builds the Set-Cookie header string representation of the given cookie.
+cookie_write :: proc(w: io.Writer, c: Cookie) -> io.Error {
+	// odinfmt:disable
+	io.write_string(w, "set-cookie: ") or_return
+	io.write_string(w, c.name)         or_return
+	io.write_byte(w, '=')              or_return
+	io.write_string(w, c.value)        or_return
+
+	if d, ok := c.domain.(string); ok {
+		io.write_string(w, "; Domain=") or_return
+		io.write_string(w, d)           or_return
+	}
+
+	if e, ok := c.expires_gmt.(time.Time); ok {
+		io.write_string(w, "; Expires=") or_return
+		write_date_header(w, e)          or_return
+	}
+
+	if a, ok := c.max_age_secs.(int); ok {
+		io.write_string(w, "; Max-Age=") or_return
+		io.write_int(w, a)               or_return
+	}
+
+	if p, ok := c.path.(string); ok {
+		io.write_string(w, "; Path=") or_return
+		io.write_string(w, p)         or_return
+	}
+
+	switch c.same_site {
+	case .None:   io.write_string(w, "; SameSite=None")   or_return
+	case .Lax:    io.write_string(w, "; SameSite=Lax")    or_return
+	case .Strict: io.write_string(w, "; SameSite=Strict") or_return
+	case .Unspecified: // no-op.
+	}
+	// odinfmt:enable
+
+	if c.secure {
+		io.write_string(w, "; Secure") or_return
+	}
+
+	if c.partitioned {
+		io.write_string(w, "; Partitioned") or_return
+	}
+
+	if c.http_only {
+		io.write_string(w, "; HttpOnly") or_return
+	}
+
+	return nil
+}
+
+// Builds the Set-Cookie header string representation of the given cookie.
 cookie_string :: proc(c: Cookie, allocator := context.allocator) -> string {
 	b: strings.Builder
 	strings.builder_init(&b, 0, 20, allocator)
 
-	strings.write_string(&b, "set-cookie: ")
-	strings.write_string(&b, c.name)
-	strings.write_byte(&b, '=')
-	strings.write_string(&b, c.value)
-
-	if d, ok := c.domain.(string); ok {
-		strings.write_string(&b, "; Domain=")
-		strings.write_string(&b, d)
-	}
-
-	if e, ok := c.expires_gmt.(time.Time); ok {
-		strings.write_string(&b, "; Expires=")
-		strings.write_string(&b, format_date_header(e, allocator))
-	}
-
-	if a, ok := c.max_age_secs.(int); ok {
-		strings.write_string(&b, "; Max-Age=")
-		strings.write_int(&b, a)
-	}
-
-	if p, ok := c.path.(string); ok {
-		strings.write_string(&b, "; Path=")
-		strings.write_string(&b, p)
-	}
-
-	switch c.same_site {
-	case .None:   strings.write_string(&b, "; SameSite=None")
-	case .Lax:    strings.write_string(&b, "; SameSite=Lax")
-	case .Strict: strings.write_string(&b, "; SameSite=Strict")
-	case .Unspecified: // no-op.
-	}
-
-	if c.secure {
-		strings.write_string(&b, "; Secure")
-	}
-
-	if c.partitioned {
-		strings.write_string(&b, "; Partitioned")
-	}
-
-	if c.http_only {
-		strings.write_string(&b, "; HttpOnly")
-	}
+	cookie_write(strings.to_writer(&b), c)
 
 	return strings.to_string(b)
 }
@@ -87,7 +97,7 @@ cookie_parse :: proc(value: string, allocator := context.allocator) -> (cookie: 
 	if eq < 1 do return
 
 	cookie.name = value[:eq]
-	value = value[eq+1:]
+	value = value[eq + 1:]
 
 	semi := strings.index_byte(value, ';')
 	switch semi {
@@ -95,10 +105,11 @@ cookie_parse :: proc(value: string, allocator := context.allocator) -> (cookie: 
 		cookie.value = value
 		ok = true
 		return
-	case 0: return
+	case 0:
+		return
 	case:
 		cookie.value = value[:semi]
-		value = value[semi+1:]
+		value = value[semi + 1:]
 	}
 
 	parse_part :: proc(cookie: ^Cookie, part: string, allocator := context.allocator) -> (ok: bool) {
@@ -109,17 +120,22 @@ cookie_parse :: proc(value: string, allocator := context.allocator) -> (cookie: 
 			defer delete(key)
 
 			switch key {
-			case "httponly":    cookie.http_only = true
-			case "partitioned": cookie.partitioned = true
-			case "secure":      cookie.secure = true
-			case: return
+			case "httponly":
+				cookie.http_only = true
+			case "partitioned":
+				cookie.partitioned = true
+			case "secure":
+				cookie.secure = true
+			case:
+				return
 			}
-		case 0: return
+		case 0:
+			return
 		case:
 			key := strings.to_lower(part[:eq], allocator)
 			defer delete(key)
 
-			value := part[eq+1:]
+			value := part[eq + 1:]
 
 			switch key {
 			case "domain":
@@ -135,12 +151,17 @@ cookie_parse :: proc(value: string, allocator := context.allocator) -> (cookie: 
 				defer delete(val)
 
 				switch value {
-				case "lax":    cookie.same_site = .Lax
-				case "none":   cookie.same_site = .None
-				case "strict": cookie.same_site = .Strict
-				case: return
+				case "lax":
+					cookie.same_site = .Lax
+				case "none":
+					cookie.same_site = .None
+				case "strict":
+					cookie.same_site = .Strict
+				case:
+					return
 				}
-			case: return
+			case:
+				return
 			}
 		}
 		return true
@@ -148,7 +169,7 @@ cookie_parse :: proc(value: string, allocator := context.allocator) -> (cookie: 
 
 	for semi := strings.index_byte(value, ';'); semi != -1; semi = strings.index_byte(value, ';') {
 		part := strings.trim_left_space(value[:semi])
-		value = value[semi+1:]
+		value = value[semi + 1:]
 		parse_part(&cookie, part, allocator) or_return
 	}
 
@@ -162,4 +183,3 @@ cookie_parse :: proc(value: string, allocator := context.allocator) -> (cookie: 
 	ok = true
 	return
 }
-

@@ -76,20 +76,39 @@ response_send_got_body :: proc(r: ^Response, will_close: bool) {
 	bytes.buffer_write_string(&res, status_string(r.status))
 	bytes.buffer_write_string(&res, "\r\n")
 
-	// Per RFC 9910 6.6.1 a Date header must be added in 2xx, 3xx, 4xx responses.
-	if r.status >= .Ok && r.status <= .Internal_Server_Error && "date" not_in r.headers {
-		r.headers["date"] = format_date_header(time.now(), r.allocator)
-	}
-
 	// Write the status code as the body, if there is no body set by the handlers.
 	if response_can_have_body(r, conn) && !status_success(r.status) && bytes.buffer_length(&r.body) == 0 {
 		bytes.buffer_write_string(&r.body, status_string(r.status))
-		r.headers["content-type"] = mime_to_content_type(.Plain)
+		bytes.buffer_write_string(&res, "content-type: ")
+		bytes.buffer_write_string(&res, mime_to_content_type(.Plain))
+		bytes.buffer_write_string(&res, "\r\n")
 	}
 
 	if "content-length" not_in r.headers && response_needs_content_length(r, conn) {
-		buf := make([]byte, 32, r.allocator)
-		r.headers["content-length"] = strconv.itoa(buf, bytes.buffer_length(&r.body))
+		buf_len := bytes.buffer_length(&res)
+		if buf_len == 0 {
+			bytes.buffer_write_string(&res, "content-length: 0\r\n")
+		} else {
+			bytes.buffer_write_string(&res, "content-length: ")
+
+			// Grow to have at least 20 bytes of space, should be enough for the content length. bytes.buffer_grow(&res, bytes.buffer_length(&res) + 20)
+			bytes.buffer_grow(&res, buf_len + 20)
+
+			// Write the length into unwritten portion.
+            unwritten := dynamic_unwritten(res.buf)
+            l := len(strconv.itoa(unwritten, bytes.buffer_length(&r.body)))
+            assert(l <= 20)
+            dynamic_add_len(&res.buf, l)
+
+			bytes.buffer_write_string(&res, "\r\n")
+		}
+	}
+
+	// Per RFC 9910 6.6.1 a Date header must be added in 2xx, 3xx, 4xx responses.
+	if r.status >= .Ok && r.status <= .Internal_Server_Error && "date" not_in r.headers {
+		bytes.buffer_write_string(&res, "date: ")
+		write_date_header(bytes.buffer_to_stream(&res), time.now())
+		bytes.buffer_write_string(&res, "\r\n")
 	}
 
 	for header, value in r.headers {
@@ -106,7 +125,7 @@ response_send_got_body :: proc(r: ^Response, will_close: bool) {
 	}
 
 	for cookie in r.cookies {
-		bytes.buffer_write_string(&res, cookie_string(cookie, r.allocator))
+		cookie_write(bytes.buffer_to_stream(&res), cookie)
 		bytes.buffer_write_string(&res, "\r\n")
 	}
 

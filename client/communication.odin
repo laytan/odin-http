@@ -30,73 +30,52 @@ parse_endpoint :: proc(target: string) -> (url: http.URL, endpoint: net.Endpoint
 			endpoint.port = url.scheme == "https" ? 443 : 80
 		}
 		return
-	case: panic("unreachable")
+	case:
+		panic("unreachable")
 	}
-}
-
-// TODO: maybe net.percent_encode.
-request_path :: proc(target: http.URL, allocator := context.allocator) -> (rq_path: string) {
-	res := strings.builder_make(0, len(target.path), allocator)
-	strings.write_string(&res, target.path)
-	if target.path == "" {
-		strings.write_byte(&res, '/')
-	}
-
-	if len(target.queries) > 0 {
-		strings.write_byte(&res, '?')
-
-		i := 0
-		for key, value in target.queries {
-			strings.write_string(&res, key)
-			if value != "" {
-				strings.write_byte(&res, '=')
-				strings.write_string(&res, value)
-			}
-
-			if i != len(target.queries) -1 {
-				strings.write_byte(&res, '&')
-			}
-
-			i += 1
-		}
-	}
-
-	return strings.to_string(res)
 }
 
 format_request :: proc(target: http.URL, request: ^Request, allocator := context.allocator) -> (buf: bytes.Buffer) {
 	// Responses are on average at least 100 bytes, so lets start there, but add the body's length.
 	bytes.buffer_init_allocator(&buf, 0, bytes.buffer_length(&request.body) + 100, allocator)
 
-	rp := request_path(target)
-	defer delete(rp)
-
-	http.requestline_write(http.Requestline{
-		method  = request.method,
-		target  = rp,
-		version = http.Version{1, 1},
-	}, &buf, allocator)
+	http.requestline_write(
+		bytes.buffer_to_stream(&buf),
+		{method = request.method, target = target, version = http.Version{1, 1}},
+	)
 
 	if "content-length" not_in request.headers {
 		buf_len := bytes.buffer_length(&request.body)
 		if buf_len == 0 {
-			request.headers["content-length"] = "0"
+			bytes.buffer_write_string(&buf, "content-length: 0\r\n")
 		} else {
-			buf := make([]byte, 32, allocator) // TODO: is this leaking?
-			request.headers["content-length"] = strconv.itoa(buf, buf_len)
+			bytes.buffer_write_string(&buf, "content-length: ")
+
+			// Make sure at least 20 bytes are there to write into, should be enough for the content length.
+			bytes.buffer_grow(&buf, buf_len + 20)
+
+			// Write the length into unwritten portion.
+			unwritten := http.dynamic_unwritten(buf.buf)
+			l := len(strconv.itoa(unwritten, buf_len))
+			assert(l <= 20)
+			http.dynamic_add_len(&buf.buf, l)
+
+			bytes.buffer_write_string(&buf, "\r\n")
 		}
 	}
 
 	if "accept" not_in request.headers {
-		request.headers["accept"] = "*/*"
+		bytes.buffer_write_string(&buf, "accept: */*\r\n")
 	}
 
 	if "user-agent" not_in request.headers {
-		request.headers["user-agent"] = "odin-http"
+		bytes.buffer_write_string(&buf, "user-agent: odin-http\r\n")
 	}
 
 	if "host" not_in request.headers {
-		request.headers["host"] = target.host
+		bytes.buffer_write_string(&buf, "host: ")
+		bytes.buffer_write_string(&buf, target.host)
+		bytes.buffer_write_string(&buf, "\r\n")
 	}
 
 	for header, value in request.headers {
@@ -120,7 +99,7 @@ format_request :: proc(target: http.URL, request: ^Request, allocator := context
 			bytes.buffer_write_byte(&buf, '=')
 			bytes.buffer_write_string(&buf, cookie.value)
 
-			if i != len(request.cookies) -1 {
+			if i != len(request.cookies) - 1 {
 				bytes.buffer_write_string(&buf, "; ")
 			}
 		}
@@ -142,7 +121,7 @@ SSL_Communication :: struct {
 }
 
 Communication :: union {
-	net.TCP_Socket,    // HTTP.
+	net.TCP_Socket, // HTTP.
 	SSL_Communication, // HTTPS.
 }
 
@@ -151,8 +130,10 @@ parse_response :: proc(socket: Communication, allocator := context.allocator) ->
 
 	stream: io.Stream
 	switch comm in socket {
-	case net.TCP_Socket:    stream = tcp_stream(comm)
-	case SSL_Communication: stream = ssl_tcp_stream(comm.ssl)
+	case net.TCP_Socket:
+		stream = tcp_stream(comm)
+	case SSL_Communication:
+		stream = ssl_tcp_stream(comm.ssl)
 	}
 
 	stream_reader := io.to_reader(stream)
@@ -181,7 +162,7 @@ parse_response :: proc(socket: Communication, allocator := context.allocator) ->
 		return
 	}
 
-	res.status, ok = http.status_from_string(rline_str[si+1:])
+	res.status, ok = http.status_from_string(rline_str[si + 1:])
 	if !ok {
 		err = Request_Error.Invalid_Response_Method
 		return

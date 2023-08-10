@@ -15,11 +15,11 @@ import "nbio"
 Server_Opts :: struct {
 	// Whether the server should accept every request that sends a "Expect: 100-continue" header automatically.
 	// Defaults to true.
-	auto_expect_continue: bool,
+	auto_expect_continue:  bool,
 	// When this is true, any HEAD request is automatically redirected to the handler as a GET request.
 	// Then, when the response is sent, the body is removed from the response.
 	// Defaults to true.
-	redirect_head_to_get: bool,
+	redirect_head_to_get:  bool,
 	// Limit the maximum number of bytes to read for the request line (first line of request containing the URI).
 	// The HTTP spec does not specify any limits but in practice it is safer.
 	// RFC 7230 3.1.1 says:
@@ -27,18 +27,22 @@ Server_Opts :: struct {
 	// practice.  It is RECOMMENDED that all HTTP senders and recipients
 	// support, at a minimum, request-line lengths of 8000 octets.
 	// defaults to 8000.
-	limit_request_line:   int,
+	limit_request_line:    int,
 	// Limit the length of the headers.
 	// The HTTP spec does not specify any limits but in practice it is safer.
 	// defaults to 8000.
-	limit_headers:        int,
+	limit_headers:         int,
+	// The size of the growing arena's blocks, each connection has its own arena.
+	// defaults to 256KB (quarter of a megabyte).
+	connection_arena_size: uint,
 }
 
 Default_Server_Opts :: Server_Opts {
-	auto_expect_continue = true,
-	redirect_head_to_get = true,
-	limit_request_line   = 8000,
-	limit_headers        = 8000,
+	auto_expect_continue  = true,
+	redirect_head_to_get  = true,
+	limit_request_line    = 8000,
+	limit_headers         = 8000,
+	connection_arena_size = mem.Kilobyte * 256,
 }
 
 Server_State :: enum {
@@ -110,7 +114,7 @@ server_serve :: proc(s: ^Server, handler: Handler) -> net.Network_Error {
 	log.debug("starting event loop")
 	s.state = .Serving
 	for {
-		if s.state == .Closed   do break
+		if s.state == .Closed do break
 		if s.state == .Cleaning do continue
 
 		errno = nbio.tick(&s.io)
@@ -310,16 +314,11 @@ on_accept :: proc(server: rawptr, sock: net.TCP_Socket, source: net.Endpoint, er
 conn_handle_reqs :: proc(c: ^Connection) {
 	scanner_init(&c.scanner, c, c.server.conn_allocator)
 
-	if err := virtual.arena_init_growing(&c.arena); err != nil {
+	if err := virtual.arena_init_growing(&c.arena, c.server.opts.connection_arena_size); err != nil {
 		panic("could not create memory arena")
 	}
 
 	allocator := virtual.arena_allocator(&c.arena)
-
-	log.debugf(
-		"started handling requests for connection with %s",
-		net.endpoint_to_string(c.client, allocator),
-	)
 	conn_handle_req(c, allocator)
 }
 
@@ -395,7 +394,7 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.allocator) {
 			return
 		}
 
-		l.req.url = url_parse(rline.target, l.req.allocator)
+		l.req.url = url_parse(rline.target.(string), l.req.allocator)
 
 		l.conn.scanner.max_token_size = l.conn.server.opts.limit_headers
 		scanner_scan(&l.conn.scanner, loop, on_header_line)
@@ -462,7 +461,7 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.allocator) {
 		rline := l.req.line.(Requestline)
 		// An options request with the "*" is a no-op/ping request to
 		// check for server capabilities and should not be sent to handlers.
-		if rline.method == .Options && rline.target == "*" {
+		if rline.method == .Options && rline.target.(string) == "*" {
 			l.res.status = .Ok
 			respond(&l.res)
 		} else {

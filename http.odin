@@ -1,9 +1,11 @@
 package http
 
-import "core:bytes"
 import "core:strconv"
 import "core:strings"
 import "core:time"
+import "core:io"
+import "core:slice"
+import "core:runtime"
 
 Requestline_Error :: enum {
 	None,
@@ -14,7 +16,10 @@ Requestline_Error :: enum {
 
 Requestline :: struct {
 	method:  Method,
-	target:  string,
+	target:  union {
+		string,
+		URL,
+	},
 	version: Version,
 }
 
@@ -24,10 +29,7 @@ Requestline :: struct {
 //
 // This allocates a clone of the target, because this is intended to be used with a scanner,
 // which has a buffer that changes every read.
-requestline_parse :: proc(s: string, allocator := context.allocator) -> (
-	line: Requestline,
-	err: Requestline_Error,
-) {
+requestline_parse :: proc(s: string, allocator := context.allocator) -> (line: Requestline, err: Requestline_Error) {
 	s := s
 
 	next_space := strings.index_byte(s, ' ')
@@ -43,7 +45,7 @@ requestline_parse :: proc(s: string, allocator := context.allocator) -> (
 
 	// Clone because s (from the scanner) could point to something else later.
 	line.target = strings.clone(s[:next_space], allocator)
-	s = s[len(line.target) + 1:]
+	s = s[len(line.target.(string)) + 1:]
 
 	line.version, ok = version_parse(s)
 	if !ok do return line, .Invalid_Version_Format
@@ -51,16 +53,23 @@ requestline_parse :: proc(s: string, allocator := context.allocator) -> (
 	return
 }
 
-requestline_write :: proc(rline: Requestline, buf: ^bytes.Buffer, allocator := context.allocator) {
-	version := version_string(rline.version, allocator)
-	defer delete(version)
+requestline_write :: proc(w: io.Writer, rline: Requestline) -> io.Error {
 
-	bytes.buffer_write_string(buf, method_string(rline.method)) // <METHOD>
-	bytes.buffer_write_byte(buf, ' ')                           // <METHOD> <SP>
-	bytes.buffer_write_string(buf, rline.target)                // <METHOD> <SP> <TARGET>
-	bytes.buffer_write_byte(buf, ' ')                           // <METHOD> <SP> <TARGET> <SP>
-	bytes.buffer_write_string(buf, version)                     // <METHOD> <SP> <TARGET> <SP> <VERSION>
-	bytes.buffer_write_string(buf, "\r\n")                      // <METHOD> <SP> <TARGET> <SP> <VERSION> <CRLF>
+	// odinfmt:disable
+	io.write_string(w, method_string(rline.method)) or_return // <METHOD>
+	io.write_byte(w, ' ')                           or_return // <METHOD> <SP>
+
+	switch t in rline.target {
+	case string: io.write_string(w, t)              or_return // <METHOD> <SP> <TARGET>
+	case URL:    request_path_write(w, t)           or_return // <METHOD> <SP> <TARGET>
+	}
+
+	io.write_byte(w, ' ')                           or_return // <METHOD> <SP> <TARGET> <SP>
+	version_write(w, rline.version)                 or_return // <METHOD> <SP> <TARGET> <SP> <VERSION>
+	io.write_string(w, "\r\n")                      or_return // <METHOD> <SP> <TARGET> <SP> <VERSION> <CRLF>
+	// odinfmt:enable
+
+	return nil
 }
 
 Version :: struct {
@@ -80,18 +89,39 @@ version_parse :: proc(s: string) -> (version: Version, ok: bool) {
 	return
 }
 
-version_string :: proc(v: Version, allocator := context.allocator) -> string {
-	str := strings.builder_make(0, 8, allocator)
-	strings.write_string(&str, "HTTP/")
-	strings.write_rune(&str, '0' + rune(v.major))
+version_write :: proc(w: io.Writer, v: Version) -> io.Error {
+	io.write_string(w, "HTTP/") or_return
+	io.write_rune(w, '0' + rune(v.major)) or_return
 	if v.minor > 0 {
-		strings.write_rune(&str, '.')
-		strings.write_rune(&str, '0' + rune(v.minor))
+		io.write_rune(w, '.')
+		io.write_rune(w, '0' + rune(v.minor))
 	}
-	return strings.to_string(str)
+
+	return nil
 }
 
-Method :: enum { Get, Head, Post, Put, Patch, Delete, Connect, Options, Trace }
+version_string :: proc(v: Version, allocator := context.allocator) -> string {
+	buf := make([]byte, 8, allocator)
+
+	b: strings.Builder
+	b.buf = slice.into_dynamic(buf)
+
+	version_write(strings.to_writer(&b), v)
+
+	return strings.to_string(b)
+}
+
+Method :: enum {
+	Get,
+	Head,
+	Post,
+	Put,
+	Patch,
+	Delete,
+	Connect,
+	Options,
+	Trace,
+}
 
 method_parse :: proc(m: string) -> (method: Method, ok: bool) {
 	(len(m) <= 7) or_return
@@ -106,6 +136,7 @@ method_parse :: proc(m: string) -> (method: Method, ok: bool) {
 }
 
 method_string :: proc(m: Method) -> string {
+	// odinfmt:disable
 	switch m {
 	case .Get:     return "GET"
 	case .Head:    return "HEAD"
@@ -118,6 +149,7 @@ method_string :: proc(m: Method) -> string {
 	case .Options: return "OPTIONS"
 	case:          return ""
 	}
+	// odinfmt:enable
 }
 
 // Headers are request or response headers.
@@ -177,6 +209,7 @@ header_parse :: proc(headers: ^Headers, line: string, allocator := context.alloc
 // 7.1 of [RFC7231]), or determining how to process the payload (e.g.,
 // Content-Encoding, Content-Type, Content-Range, and Trailer).
 header_allowed_trailer :: proc(key: string) -> bool {
+	// odinfmt:disable
     return (
         // Message framing:
         key != "transfer-encoding" &&
@@ -210,6 +243,7 @@ header_allowed_trailer :: proc(key: string) -> bool {
         key != "content-type" &&
         key != "content-range" &&
         key != "trailer")
+	// odinfmt:enable
 }
 
 @(private)
@@ -217,26 +251,37 @@ DATE_LENGTH := len("Fri, 05 Feb 2023 09:01:10 GMT")
 
 // Formats a time in the HTTP header format (no timezone conversion is done, GMT expected):
 // <day-name>, <day> <month> <year> <hour>:<minute>:<second> GMT
-format_date_header :: proc(t: time.Time, allocator := context.allocator) -> string {
-	b: strings.Builder
-	// Init with enough capacity to hold the whole string.
-	strings.builder_init(&b, 0, DATE_LENGTH, allocator)
-
+write_date_header :: proc(w: io.Writer, t: time.Time) -> io.Error {
 	year, month, day := time.date(t)
 	hour, minute, second := time.clock_from_time(t)
 	wday := time.weekday(t)
 
-	strings.write_string(&b, DAYS[wday])    // 'Fri, '
-	write_padded_int(&b, day)               // 'Fri, 05'
-	strings.write_string(&b, MONTHS[month]) // 'Fri, 05 Feb '
-	strings.write_int(&b, year)             // 'Fri, 05 Feb 2023'
-	strings.write_byte(&b, ' ')             // 'Fri, 05 Feb 2023 '
-	write_padded_int(&b, hour)              // 'Fri, 05 Feb 2023 09'
-	strings.write_byte(&b, ':')             // 'Fri, 05 Feb 2023 09:'
-	write_padded_int(&b, minute)            // 'Fri, 05 Feb 2023 09:01'
-	strings.write_byte(&b, ':')             // 'Fri, 05 Feb 2023 09:01:'
-	write_padded_int(&b, second)            // 'Fri, 05 Feb 2023 09:01:10'
-	strings.write_string(&b, " GMT")        // 'Fri, 05 Feb 2023 09:01:10 GMT'
+	// odinfmt:disable
+	io.write_string(w, DAYS[wday])    or_return // 'Fri, '
+	write_padded_int(w, day)          or_return // 'Fri, 05'
+	io.write_string(w, MONTHS[month]) or_return // 'Fri, 05 Feb '
+	io.write_int(w, year)             or_return // 'Fri, 05 Feb 2023'
+	io.write_byte(w, ' ')             or_return // 'Fri, 05 Feb 2023 '
+	write_padded_int(w, hour)         or_return // 'Fri, 05 Feb 2023 09'
+	io.write_byte(w, ':')             or_return // 'Fri, 05 Feb 2023 09:'
+	write_padded_int(w, minute)       or_return // 'Fri, 05 Feb 2023 09:01'
+	io.write_byte(w, ':')             or_return // 'Fri, 05 Feb 2023 09:01:'
+	write_padded_int(w, second)       or_return // 'Fri, 05 Feb 2023 09:01:10'
+	io.write_string(w, " GMT")        or_return // 'Fri, 05 Feb 2023 09:01:10 GMT'
+	// odinfmt:enable
+
+	return nil
+}
+
+// Formats a time in the HTTP header format (no timezone conversion is done, GMT expected):
+// <day-name>, <day> <month> <year> <hour>:<minute>:<second> GMT
+format_date_header :: proc(t: time.Time, allocator := context.allocator) -> string {
+	b: strings.Builder
+
+	buf := make([]byte, DATE_LENGTH, allocator)
+	b.buf = slice.into_dynamic(buf)
+
+	write_date_header(strings.to_writer(&b), t)
 
 	return strings.to_string(b)
 }
@@ -285,14 +330,62 @@ parse_date_header :: proc(value: string) -> (t: time.Time, ok: bool) #no_bounds_
 	return
 }
 
-@(private)
-write_padded_int :: proc(b: ^strings.Builder, i: int) {
-	if i < 10 {
-		strings.write_string(b, PADDED_NUMS[i])
-		return
+// TODO: maybe net.percent_encode.
+request_path_write :: proc(w: io.Writer, target: URL) -> io.Error {
+	if target.path == "" {
+		io.write_byte(w, '/') or_return
+	} else {
+		io.write_string(w, target.path) or_return
 	}
 
-	strings.write_int(b, i)
+	if len(target.queries) > 0 {
+		io.write_byte(w, '?') or_return
+
+		i := 0
+		for key, value in target.queries {
+			io.write_string(w, key) or_return
+			if value != "" {
+				io.write_byte(w, '=') or_return
+				io.write_string(w, value) or_return
+			}
+
+			if i != len(target.queries) - 1 {
+				io.write_byte(w, '&') or_return
+			}
+
+			i += 1
+		}
+	}
+
+	return nil
+}
+
+request_path :: proc(target: URL, allocator := context.allocator) -> (rq_path: string) {
+	res := strings.builder_make(0, len(target.path), allocator)
+	request_path_write(strings.to_writer(&res), target)
+	return strings.to_string(res)
+}
+
+dynamic_unwritten :: proc(d: [dynamic]$E) -> []E {
+	return slice.from_ptr(
+		slice.ptr_add(&d[0], len(d) * size_of(E)),
+		cap(d),
+	)
+}
+
+dynamic_add_len :: proc(d: ^[dynamic]$E, len: int) {
+    (transmute(^runtime.Raw_Dynamic_Array)d).len += len
+}
+
+@(private)
+write_padded_int :: proc(w: io.Writer, i: int) -> io.Error {
+	if i < 10 {
+		io.write_string(w, PADDED_NUMS[i]) or_return
+		return nil
+	}
+
+	_, err := io.write_int(w, i)
+	return err
 }
 
 @(private)
