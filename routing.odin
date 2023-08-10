@@ -21,6 +21,10 @@ url_parse :: proc(raw: string, allocator := context.allocator) -> URL {
 	return url
 }
 
+url_string :: proc(url: URL, allocator := context.allocator) -> string {
+	return net.join_url(url.scheme, url.host, url.path, url.queries, allocator)
+}
+
 Route :: struct {
 	handler: Handler,
 	pattern: string,
