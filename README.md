@@ -12,6 +12,13 @@ Please file issues for any bug or suggestion you encounter/have.
 The has been tested to work with Ubuntu Linux (other "normal" distros should work), MacOS (m1 and intel), and Windows 64 bit.
 Any other distributions or versions have not been tested and might not work.
 
+## Dependencies
+
+`odin-http` depends on OpenSSL for making HTTPS requests in the client package.
+This repository contains a copy of these libraries for ease of use on Windows and Darwin.
+For Linux, most distros come with OpenSSL, if not you can install it by using something like this:
+`sudo apt-get update && sudo apt-get install openssl libssl-dev`.
+
 ## IO implementations
 
 MacOS uses kqueue, Linux uses io_uring and Windows currently uses threading (which when compared to others is slow),
