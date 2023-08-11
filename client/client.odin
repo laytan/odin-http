@@ -96,6 +96,11 @@ request :: proc(target: string, request: ^Request, allocator := context.allocato
 		ssl := openssl.SSL_new(ctx)
 		openssl.SSL_set_fd(ssl, c.int(socket))
 
+		// For servers using SNI for SSL certs (like cloudflare), this needs to be set.
+		chostname := strings.clone_to_cstring(url.host, allocator)
+		defer delete(chostname)
+		openssl.SSL_set_tlsext_host_name(ssl, chostname)
+
 		switch openssl.SSL_connect(ssl) {
 		case 2:
 			err = SSL_Error.Controlled_Shutdown
