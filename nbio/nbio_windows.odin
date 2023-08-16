@@ -31,6 +31,20 @@ FILE_SKIP_SET_EVENT_ON_HANDLE :: 0x2
 
 SO_UPDATE_ACCEPT_CONTEXT :: 28683
 
+WSA_IO_INCOMPLETE :: 996
+WSA_IO_PENDING :: 997
+
+WSAID_CONNECTEX :: win.GUID{0x25a207b9, 0xddf3, 0x4660, [8]win.BYTE{0x8e, 0xe9, 0x76, 0xe5, 0x8c, 0x74, 0x06, 0x3e}}
+LPFN_CONNECTEX :: #type proc(
+	socket: win.SOCKET,
+	addr: ^win.SOCKADDR_STORAGE_LH,
+	namelen: win.c_int,
+	send_buf: win.PVOID,
+	send_data_len: win.DWORD,
+	bytes_sent: win.LPDWORD,
+	overlapped: win.LPOVERLAPPED,
+) -> win.BOOL
+
 // TODO: convert windows error to os error.
 
 Windows :: struct {
@@ -223,11 +237,123 @@ _accept :: proc(io: ^IO, socket: net.TCP_Socket, user: rawptr, callback: On_Acce
 		}
 
 		err := win.WSAGetLastError()
-		if err == win.WSAEWOULDBLOCK do return
+		if err_incomplete(err) do return
 
 		win.closesocket(op.client)
-
 		callback(completion.user_data, {}, {}, net.Accept_Error(err))
+		pool_put(&winio.completion_pool, completion)
+	}
+	queue.push_back(&winio.completed, completion)
+}
+
+Op_Connect :: struct {
+	socket: win.SOCKET,
+	addr: win.SOCKADDR_STORAGE_LH,
+	pending: bool,
+}
+
+_connect :: proc(io: ^IO, ep: net.Endpoint, user: rawptr, callback: On_Connect) {
+	winio := cast(^Windows)io.impl_data
+
+	if ep.port == 0 {
+		callback(user, {}, net.Dial_Error.Port_Required)
+		return
+	}
+
+	family := net.family_from_endpoint(ep)
+	sock, err := open_socket(winio, family, .TCP)
+	if err != nil {
+		callback(user, {}, err)
+		return
+	}
+
+	completion := pool_get(&winio.completion_pool)
+	completion.user_data = user
+	completion.user_callback = rawptr(callback)
+
+	completion.op = Op_Connect{
+		socket = sock,
+		addr = _endpoint_to_sockaddr(ep),
+	}
+
+	completion.callback = proc(winio: ^Windows, completion: ^Completion) {
+		op := completion.op.(Op_Connect)
+		callback := cast(On_Connect)completion.user_callback
+
+		flags: win.DWORD
+		transferred: win.DWORD
+		ok: win.BOOL
+		if op.pending {
+			ok = win.WSAGetOverlappedResult(
+				op.socket,
+				&completion.over,
+				&transferred,
+				win.FALSE,
+				&flags,
+			)
+		} else {
+			sockaddr := _endpoint_to_sockaddr({net.IP4_Any, 0})
+			res := win.bind(op.socket, &sockaddr, size_of(sockaddr))
+			if res < 0 {
+				err := net.Bind_Error(win.WSAGetLastError())
+
+				win.closesocket(op.socket)
+				callback(completion.user_data, {}, err)
+				pool_put(&winio.completion_pool, completion)
+				return
+			}
+
+			connect_ex: LPFN_CONNECTEX
+			num_bytes: win.DWORD
+			guid := WSAID_CONNECTEX
+			res = win.WSAIoctl(
+				op.socket,
+				win.SIO_GET_EXTENSION_FUNCTION_POINTER,
+				&guid,
+				size_of(win.GUID),
+				&connect_ex,
+				size_of(LPFN_CONNECTEX),
+				&num_bytes,
+				nil,
+				nil,
+			)
+			if res == win.SOCKET_ERROR {
+				err := net.Socket_Option_Error(.Invalid_Option_For_Socket)
+
+				win.closesocket(op.socket)
+				callback(completion.user_data, {}, err)
+				pool_put(&winio.completion_pool, completion)
+				return
+			}
+
+			assert(num_bytes == size_of(LPFN_CONNECTEX))
+			op.pending = true
+
+			ok = connect_ex(
+				op.socket,
+				&op.addr,
+				size_of(op.addr),
+				nil,
+				0,
+				&transferred,
+				&completion.over,
+			)
+		}
+
+		if ok {
+			// enables getsockopt, setsockopt, getsockname, getpeername.
+			win.setsockopt(op.socket, win.SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, nil, 0)
+
+			callback(completion.user_data, net.TCP_Socket(op.socket), nil)
+			pool_put(&winio.completion_pool, completion)
+			return
+		}
+
+		err := win.WSAGetLastError()
+		if err_incomplete(err) do return
+
+		win.closesocket(op.socket)
+		callback(completion.user_data, {}, net.Dial_Error(err))
 		pool_put(&winio.completion_pool, completion)
 	}
 	queue.push_back(&winio.completed, completion)
@@ -236,12 +362,6 @@ _accept :: proc(io: ^IO, socket: net.TCP_Socket, user: rawptr, callback: On_Acce
 Op_Close :: distinct os.Handle
 
 _close :: proc(io: ^IO, fd: os.Handle, user: rawptr, callback: On_Close) {
-	unimplemented()
-}
-
-Op_Connect :: distinct net.Endpoint
-
-_connect :: proc(io: ^IO, endpoint: net.Endpoint, user: rawptr, callback: On_Connect) {
 	unimplemented()
 }
 
@@ -298,21 +418,19 @@ _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout
 }
 
 // TODO: cross platform.
-open_socket :: proc(winio: ^Windows, family: net.Address_Family, protocol: net.Socket_Protocol) -> (socket: win.SOCKET, err: net.Create_Socket_Error) {
+open_socket :: proc(winio: ^Windows, family: net.Address_Family, protocol: net.Socket_Protocol) -> (socket: win.SOCKET, err: net.Network_Error) {
 	c_type, c_protocol, c_family: c.int
 
 	switch family {
 	case .IP4:  c_family = win.AF_INET
 	case .IP6:  c_family = win.AF_INET6
-	case:
-		unreachable()
+	case: unreachable()
 	}
 
 	switch protocol {
 	case .TCP:  c_type = win.SOCK_STREAM; c_protocol = win.IPPROTO_TCP
 	case .UDP:  c_type = win.SOCK_DGRAM;  c_protocol = win.IPPROTO_UDP
-	case:
-		unreachable()
+	case: unreachable()
 	}
 
 	flags: win.DWORD
@@ -338,7 +456,20 @@ open_socket :: proc(winio: ^Windows, family: net.Address_Family, protocol: net.S
 		err = net.Create_Socket_Error(win.GetLastError())
 		return
 	}
+
+	switch protocol {
+	case .TCP: prepare(net.TCP_Socket(socket)) or_return
+	case .UDP: prepare(net.UDP_Socket(socket)) or_return
+	}
+
 	return
+}
+
+err_incomplete :: proc(err: win.c_int) -> bool {
+	return err == win.WSAEWOULDBLOCK ||
+	       err == WSA_IO_PENDING ||
+		   err == WSA_IO_INCOMPLETE ||
+		   err == win.WSAEALREADY
 }
 
 // Verbatim copy of private proc in core:net.
