@@ -281,6 +281,7 @@ Op_Connect :: struct {
 	sockaddr: os.SOCKADDR_STORAGE_LH,
 }
 
+// TODO: close the socket on failure.
 _connect :: proc(io: ^IO, endpoint: net.Endpoint, user: rawptr, callback: On_Connect) {
 	lx := cast(^Linux)io.impl_data
 
