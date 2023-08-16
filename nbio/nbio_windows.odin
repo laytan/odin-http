@@ -3,63 +3,148 @@
 package nbio
 
 import "core:c"
+import "core:container/queue"
 import "core:mem"
 import "core:net"
 import "core:os"
-import "core:thread"
 import "core:time"
 
 import win "core:sys/windows"
 
-Default :: struct {
+foreign import mswsock "system:mswsock.lib"
+@(default_calling_convention="stdcall")
+foreign mswsock {
+	AcceptEx :: proc(
+		socket: win.SOCKET,
+		accept: win.SOCKET,
+		addr_buf: win.PVOID,
+		addr_len: win.DWORD,
+		local_addr_len: win.DWORD,
+		remote_addr_len: win.DWORD,
+		bytes_received: win.LPDWORD,
+		overlapped: win.LPOVERLAPPED,
+	) -> win.BOOL ---
+}
+
+FILE_SKIP_COMPLETION_PORT_ON_SUCCESS :: 0x1
+FILE_SKIP_SET_EVENT_ON_HANDLE :: 0x2
+
+SO_UPDATE_ACCEPT_CONTEXT :: 28683
+
+// TODO: convert windows error to os error.
+
+Windows :: struct {
+	iocp:            win.HANDLE,
 	allocator:       mem.Allocator,
-	pool:            thread.Pool,
+	timeouts:        [dynamic]^Completion,
+	completed:       queue.Queue(^Completion),
 	completion_pool: Pool(Completion),
-	pending:         [dynamic]^Completion,
-	started:         bool,
+	io_pending:      int,
 }
 
 Completion :: struct {
-	df:            ^Default,
-	operation:     Operation,
+	// NOTE: needs to be the first field.
+	over: win.OVERLAPPED,
+
+	op: Operation,
+	callback: proc(winio: ^Windows, completion: ^Completion),
+
 	user_callback: rawptr,
-	user_data:     rawptr,
+	user_data: rawptr,
 }
 
 _init :: proc(io: ^IO, entries: u32 = DEFAULT_ENTRIES, _: u32 = 0, allocator := context.allocator) -> (err: os.Errno) {
-	df := new(Default, allocator)
+	winio := new(Windows, allocator)
+	winio.allocator = allocator
 
-	df.allocator = allocator
-	df.pending = make([dynamic]^Completion, allocator)
+	pool_init(&winio.completion_pool, allocator = allocator)
+	queue.init(&winio.completed, allocator = allocator)
+	winio.timeouts = make([dynamic]^Completion, allocator)
 
-	pool_init(&df.completion_pool, allocator = allocator)
+	win.ensure_winsock_initialized()
+	defer if err != win.NO_ERROR {
+		assert(win.WSACleanup() == win.NO_ERROR)
+	}
 
-	thread.pool_init(&df.pool, allocator, int(entries))
-	thread.pool_start(&df.pool)
+	winio.iocp = win.CreateIoCompletionPort(win.INVALID_HANDLE_VALUE, nil, nil, 0)
+	if winio.iocp == nil {
+		err = os.Errno(win.GetLastError())
+		return
+	}
 
-	io.impl_data = df
+	io.impl_data = winio
 	return
 }
 
 _destroy :: proc(io: ^IO) {
-	df := cast(^Default)io.impl_data
-	thread.pool_finish(&df.pool)
-	thread.pool_destroy(&df.pool)
+	winio := cast(^Windows)io.impl_data
 
-	delete(df.pending)
+	delete(winio.timeouts)
+	queue.destroy(&winio.completed)
+	pool_destroy(&winio.completion_pool)
 
-	pool_destroy(&df.completion_pool)
-
-	free(df, df.allocator)
+	win.CloseHandle(winio.iocp)
+	assert(win.WSACleanup() == win.NO_ERROR)
 }
 
 _tick :: proc(io: ^IO) -> (err: os.Errno) {
-	df := cast(^Default)io.impl_data
+	winio := cast(^Windows)io.impl_data
 
-	// Pop of all tasks that are done so the internal dynamic array doesn't grow infinitely.
-	// PERF: ideally the thread pool does not keep track of tasks that are done, we don't care.
-	for _ in thread.pool_pop_done(&df.pool) {}
+	if queue.len(winio.completed) == 0 {
+		flush_timeouts(winio)
 
+		if winio.io_pending > 0 {
+			events: [64]win.OVERLAPPED_ENTRY
+			entries_removed: win.ULONG
+			if !win.GetQueuedCompletionStatusEx(winio.iocp, raw_data(events[:]), 64, &entries_removed, 0, false) {
+				if terr := win.GetLastError(); terr != win.ERROR_TIMEOUT {
+					err = os.Errno(terr)
+					return
+				}
+			}
+
+			assert(winio.io_pending >= int(entries_removed))
+			winio.io_pending -= int(entries_removed)
+
+			for event in events[:entries_removed] {
+				// This is actually pointing at the Completion.over field, but because it is the first field
+				// It is also a valid pointer to the Completion struct.
+				completion := cast(^Completion)event.lpOverlapped
+				queue.push_back(&winio.completed, completion)
+			}
+		}
+	}
+
+	// Copy completed to not get into an infinite loop when callbacks add to completed again.
+	c := winio.completed
+	for completion in queue.pop_front_safe(&c) {
+		completion.callback(winio, completion)
+	}
+	return
+}
+
+flush_timeouts :: proc(winio: ^Windows) -> (expires: Maybe(time.Duration)) {
+	curr: time.Time
+	timeout_len := len(winio.timeouts)
+	if timeout_len > 0 do curr = time.now()
+
+	for i := 0; i < timeout_len; {
+		completion := winio.timeouts[i]
+		cexpires := time.diff(curr, completion.op.(Op_Timeout).expires)
+
+		// Timeout done.
+		if (cexpires <= 0) {
+			ordered_remove(&winio.timeouts, i)
+			queue.push_back(&winio.completed, completion)
+			continue
+		}
+
+		// Update minimum timeout.
+		exp, ok := expires.?
+		expires = min(exp, cexpires) if ok else cexpires
+
+		i += 1
+	}
 	return
 }
 
@@ -70,77 +155,94 @@ _listen :: proc(socket: net.TCP_Socket, backlog := 1000) -> (err: net.Network_Er
 	return
 }
 
-Op_Accept :: distinct net.TCP_Socket
+Op_Accept :: struct {
+	socket: win.SOCKET,
+	client: win.SOCKET,
+	addr: win.SOCKADDR_STORAGE_LH,
+}
 
 _accept :: proc(io: ^IO, socket: net.TCP_Socket, user: rawptr, callback: On_Accept) {
-	add_completion(io, user, rawptr(callback), Op_Accept(socket), proc(t: thread.Task) {
-		completion := cast(^Completion)t.data
-		op := completion.operation.(Op_Accept)
+	winio := cast(^Windows)io.impl_data
 
-		client, source, err := net.accept_tcp(net.TCP_Socket(op))
-		if err == nil {
-			err = prepare(client)
+	completion := pool_get(&winio.completion_pool)
+	completion.user_data = user
+	completion.user_callback = rawptr(callback)
+
+	completion.op = Op_Accept{
+		socket = win.SOCKET(socket),
+		client = win.INVALID_SOCKET,
+	}
+
+	completion.callback = proc(winio: ^Windows, completion: ^Completion) {
+		op := &completion.op.(Op_Accept)
+		callback := cast(On_Accept)completion.user_callback
+
+		flags: win.DWORD
+		transferred: win.DWORD
+		ok: win.BOOL
+		switch op.client {
+		case win.INVALID_SOCKET:
+			client, err := open_socket(winio, .IP4, .TCP)
+			if err != nil {
+				callback(completion.user_data, {}, {}, err)
+				pool_put(&winio.completion_pool, completion)
+				return
+			}
+			op.client = client
+
+			bytes_read: win.DWORD
+			ok = AcceptEx(
+				op.socket,
+				op.client,
+				&op.addr,
+				0,
+				size_of(op.addr),
+				size_of(op.addr),
+				&bytes_read,
+				&completion.over,
+			)
+		case:
+			// Get status update, we've already initiated the accept.
+			ok = win.WSAGetOverlappedResult(
+				op.socket,
+				&completion.over,
+				&transferred,
+				win.FALSE,
+				&flags,
+			)
 		}
 
-		callback := cast(On_Accept)completion.user_callback
-		callback(completion.user_data, client, source, err)
-		pool_put(&completion.df.completion_pool, completion)
-	})
+		if ok {
+			// enables getsockopt, setsockopt, getsockname, getpeername.
+			win.setsockopt(op.client, win.SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, nil, 0)
+			source := _sockaddr_to_endpoint(&op.addr)
+
+			callback(completion.user_data, net.TCP_Socket(op.client), source, nil)
+			pool_put(&winio.completion_pool, completion)
+			return
+		}
+
+		err := win.WSAGetLastError()
+		if err == win.WSAEWOULDBLOCK do return
+
+		win.closesocket(op.client)
+
+		callback(completion.user_data, {}, {}, net.Accept_Error(err))
+		pool_put(&winio.completion_pool, completion)
+	}
+	queue.push_back(&winio.completed, completion)
 }
 
 Op_Close :: distinct os.Handle
 
 _close :: proc(io: ^IO, fd: os.Handle, user: rawptr, callback: On_Close) {
-	add_completion(io, user, rawptr(callback), Op_Close(fd), proc(t: thread.Task) {
-		completion := cast(^Completion)t.data
-		op := completion.operation.(Op_Close)
-
-		errno := os.close(os.Handle(op))
-
-		callback := cast(On_Close)completion.user_callback
-		callback(completion.user_data, errno == os.ERROR_NONE)
-		pool_put(&completion.df.completion_pool, completion)
-	})
+	unimplemented()
 }
 
 Op_Connect :: distinct net.Endpoint
 
 _connect :: proc(io: ^IO, endpoint: net.Endpoint, user: rawptr, callback: On_Connect) {
-	if endpoint.port == 0 {
-		callback(user, {}, net.Dial_Error.Port_Required)
-		return
-	}
-
-	add_completion(io, user, rawptr(callback), Op_Connect(endpoint), proc(t: thread.Task) {
-		completion := cast(^Completion)t.data
-		callback := cast(On_Connect)completion.user_callback
-		op := completion.operation.(Op_Connect)
-
-		family := net.family_from_endpoint(net.Endpoint(op))
-		sock, err := net.create_socket(family, .TCP)
-		if err != nil {
-			callback(completion.user_data, {}, err)
-			pool_put(&completion.df.completion_pool, completion)
-			return
-		}
-
-		if err := prepare(sock); err != nil {
-			callback(completion.user_data, {}, err)
-			pool_put(&completion.df.completion_pool, completion)
-			return
-		}
-
-		socket := sock.(net.TCP_Socket)
-		sockaddr := _endpoint_to_sockaddr(net.Endpoint(op))
-		res := win.connect(win.SOCKET(socket), &sockaddr, size_of(sockaddr))
-
-		if res < 0 {
-			err = net.Dial_Error(win.WSAGetLastError())
-		}
-
-		callback(completion.user_data, socket, err)
-		pool_put(&completion.df.completion_pool, completion)
-	})
+	unimplemented()
 }
 
 Op_Read :: struct {
@@ -149,16 +251,7 @@ Op_Read :: struct {
 }
 
 _read :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_Read) {
-	add_completion(io, user, rawptr(callback), Op_Read{fd = fd, buf = buf}, proc(t: thread.Task) {
-		completion := cast(^Completion)t.data
-		op := completion.operation.(Op_Read)
-
-		read, err := os.read(os.Handle(op.fd), op.buf)
-
-		callback := cast(On_Read)completion.user_callback
-		callback(completion.user_data, read, err)
-		pool_put(&completion.df.completion_pool, completion)
-	})
+	unimplemented()
 }
 
 Op_Recv :: struct {
@@ -167,24 +260,7 @@ Op_Recv :: struct {
 }
 
 _recv :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, callback: On_Recv) {
-	add_completion(io, user, rawptr(callback), Op_Recv{socket = socket, buf = buf}, proc(t: thread.Task) {
-		completion := cast(^Completion)t.data
-		op := completion.operation.(Op_Recv)
-
-		received: int
-		err: net.Network_Error
-		remote_endpoint: net.Endpoint
-		switch sock in op.socket {
-		case net.TCP_Socket:
-			received, err = net.recv_tcp(sock, op.buf)
-		case net.UDP_Socket:
-			received, remote_endpoint, err = net.recv_udp(sock, op.buf)
-		}
-
-		callback := cast(On_Recv)completion.user_callback
-		callback(completion.user_data, received, remote_endpoint, err)
-		pool_put(&completion.df.completion_pool, completion)
-	})
+	unimplemented()
 }
 
 Op_Send :: struct {
@@ -201,45 +277,7 @@ _send :: proc(
 	callback: On_Sent,
 	endpoint: Maybe(net.Endpoint) = nil,
 ) {
-	if _, ok := socket.(net.UDP_Socket); ok {
-		assert(endpoint != nil)
-	}
-
-	add_completion(
-		io,
-		user,
-		rawptr(callback),
-		Op_Send{socket = socket, buf = buf, endpoint = endpoint},
-		proc(t: thread.Task) {
-			completion := cast(^Completion)t.data
-			op := completion.operation.(Op_Send)
-
-			sent: int
-			err: net.Network_Error
-			switch sock in op.socket {
-			case net.TCP_Socket:
-				res := win.send(win.SOCKET(sock), raw_data(op.buf), c.int(len(op.buf)), 0)
-				if res < 0 {
-					err = net.TCP_Send_Error(win.WSAGetLastError())
-				} else {
-					sent = int(res)
-				}
-
-			case net.UDP_Socket:
-				toaddr := _endpoint_to_sockaddr(op.endpoint.(net.Endpoint))
-				res := win.sendto(win.SOCKET(sock), raw_data(op.buf), c.int(len(op.buf)), 0, &toaddr, size_of(toaddr))
-				if res < 0 {
-					err = net.UDP_Send_Error(win.WSAGetLastError())
-				} else {
-					sent = int(res)
-				}
-			}
-
-			callback := cast(On_Sent)completion.user_callback
-			callback(completion.user_data, sent, err)
-			pool_put(&completion.df.completion_pool, completion)
-		},
-	)
+	unimplemented()
 }
 
 Op_Write :: struct {
@@ -248,16 +286,7 @@ Op_Write :: struct {
 }
 
 _write :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_Write) {
-	add_completion(io, user, rawptr(callback), Op_Write{fd = fd, buf = buf}, proc(t: thread.Task) {
-		completion := cast(^Completion)t.data
-		op := completion.operation.(Op_Write)
-
-		written, err := os.write(os.Handle(op.fd), op.buf)
-
-		callback := cast(On_Write)completion.user_callback
-		callback(completion.user_data, written, err)
-		pool_put(&completion.df.completion_pool, completion)
-	})
+	unimplemented()
 }
 
 Op_Timeout :: struct {
@@ -265,35 +294,77 @@ Op_Timeout :: struct {
 }
 
 _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout) {
-	op := Op_Timeout {
-		expires = time.time_add(time.now(), dur),
+	unimplemented()
+}
+
+// TODO: cross platform.
+open_socket :: proc(winio: ^Windows, family: net.Address_Family, protocol: net.Socket_Protocol) -> (socket: win.SOCKET, err: net.Create_Socket_Error) {
+	c_type, c_protocol, c_family: c.int
+
+	switch family {
+	case .IP4:  c_family = win.AF_INET
+	case .IP6:  c_family = win.AF_INET6
+	case:
+		unreachable()
 	}
 
-	add_completion(io, user, rawptr(callback), op, proc(t: thread.Task) {
-		completion := cast(^Completion)t.data
-		op := completion.operation.(Op_Timeout)
+	switch protocol {
+	case .TCP:  c_type = win.SOCK_STREAM; c_protocol = win.IPPROTO_TCP
+	case .UDP:  c_type = win.SOCK_DGRAM;  c_protocol = win.IPPROTO_UDP
+	case:
+		unreachable()
+	}
 
-		diff := time.diff(time.now(), op.expires)
-		if (diff > 0) {
-			time.accurate_sleep(diff)
+	flags: win.DWORD
+	flags |= win.WSA_FLAG_OVERLAPPED
+	flags |= win.WSA_FLAG_NO_HANDLE_INHERIT
+
+	socket = win.WSASocketW(c_family, c_type, c_protocol, nil, 0, flags)
+	if socket == win.INVALID_SOCKET {
+		err = net.Create_Socket_Error(win.WSAGetLastError())
+		return
+	}
+	defer if err != nil do win.closesocket(socket)
+
+	handle := win.HANDLE(socket)
+
+	sock_iocp := win.CreateIoCompletionPort(handle, winio.iocp, nil, 0)
+	assert(sock_iocp == winio.iocp)
+
+	mode: byte
+	mode |= FILE_SKIP_COMPLETION_PORT_ON_SUCCESS
+	mode |= FILE_SKIP_SET_EVENT_ON_HANDLE
+	if !win.SetFileCompletionNotificationModes(handle, mode) {
+		err = net.Create_Socket_Error(win.GetLastError())
+		return
+	}
+	return
+}
+
+// Verbatim copy of private proc in core:net.
+_sockaddr_to_endpoint :: proc(native_addr: ^win.SOCKADDR_STORAGE_LH) -> (ep: net.Endpoint) {
+	switch native_addr.ss_family {
+	case u16(win.AF_INET):
+		addr := cast(^win.sockaddr_in) native_addr
+		port := int(addr.sin_port)
+		ep = net.Endpoint {
+			address = net.IP4_Address(transmute([4]byte) addr.sin_addr),
+			port = port,
 		}
-
-		callback := cast(On_Timeout)completion.user_callback
-		callback(completion.user_data)
-		pool_put(&completion.df.completion_pool, completion)
-	})
+	case u16(win.AF_INET6):
+		addr := cast(^win.sockaddr_in6) native_addr
+		port := int(addr.sin6_port)
+		ep = net.Endpoint {
+			address = net.IP6_Address(transmute([8]u16be) addr.sin6_addr),
+			port = port,
+		}
+	case:
+		panic("native_addr is neither IP4 or IP6 address")
+	}
+	return
 }
 
-add_completion :: proc(io: ^IO, user_data: rawptr, callback: rawptr, op: Operation, task: thread.Task_Proc) {
-	df := cast(^Default)io.impl_data
-	c := pool_get(&df.completion_pool)
-	c.df = df
-	c.user_callback = callback
-	c.user_data = user_data
-	c.operation = op
-	thread.pool_add_task(&df.pool, df.allocator, task, c)
-}
-
+// Verbatim copy of private proc in core:net.
 _endpoint_to_sockaddr :: proc(ep: net.Endpoint) -> (sockaddr: win.SOCKADDR_STORAGE_LH) {
 	switch a in ep.address {
 	case net.IP4_Address:
