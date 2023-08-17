@@ -122,6 +122,7 @@ middleware_rate_limit :: proc(next: ^Handler, opts: ^Rate_Limit_Opts, allocator 
 	h: Handler
 	h.next = next
 
+	// TODO: this is never freed.
 	data := new(Rate_Limit_Data, allocator)
 	data.opts = opts
 	data.hits = make(map[net.Address]int, 0, allocator)

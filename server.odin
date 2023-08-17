@@ -9,6 +9,7 @@ import "core:mem/virtual"
 import "core:runtime"
 import "core:c/libc"
 import "core:os"
+import "core:fmt"
 
 import "nbio"
 
@@ -102,7 +103,7 @@ server_serve :: proc(s: ^Server, handler: Handler) -> net.Network_Error {
 	// Save allocator so we can free connections later.
 	s.conn_allocator = context.allocator
 
-	nbio.prepare(s.tcp_sock)
+	nbio.prepare(s.tcp_sock) or_return
 
 	errno := nbio.init(&s.io)
 	// TODO: error handling.
@@ -165,7 +166,8 @@ server_shutdown :: proc(s: ^Server) {
 			break
 		}
 
-		time.sleep(SHUTDOWN_INTERVAL)
+		err := nbio.tick(&s.io)
+		fmt.assertf(err == os.ERROR_NONE, "IO tick error during shutdown: %v")
 	}
 
 	s.state = .Cleaning
@@ -218,8 +220,6 @@ server_on_connection_close :: proc(s: ^Server, c: ^Connection) {
 	virtual.arena_destroy(&c.arena)
 	delete_key(&s.conns, c.socket)
 	free(c, s.conn_allocator)
-
-	// TODO: clean up c.response inflight.
 }
 
 
