@@ -56,8 +56,8 @@ response_send :: proc(r: ^Response, conn: ^Connection) {
 	// the entire request message body or close the connection after sending
 	// its response, since otherwise the remaining data on a persistent
 	// connection would be misinterpreted as the next request.
-	if !response_must_close(conn.curr_req, r) {
-		request_body(conn.curr_req, check_body, Max_Post_Handler_Discard_Bytes, r)
+	if !response_must_close(&conn.loop.req, r) {
+		request_body(&conn.loop.req, check_body, Max_Post_Handler_Discard_Bytes, r)
 	} else {
 		response_send_got_body(r, true)
 	}
@@ -135,7 +135,7 @@ response_send_got_body :: proc(r: ^Response, will_close: bool) {
 	if response_can_have_body(r, conn) do bytes.buffer_write(&res, bytes.buffer_to_bytes(&r.body))
 
 	buf := bytes.buffer_to_bytes(&res)
-	conn.response = Response_Inflight {
+	conn.loop.inflight = Response_Inflight {
 		buf        = buf,
 		will_close = will_close,
 	}
@@ -146,7 +146,7 @@ response_send_got_body :: proc(r: ^Response, will_close: bool) {
 @(private)
 on_response_sent :: proc(conn_: rawptr, sent: int, err: net.Network_Error) {
 	conn := cast(^Connection)conn_
-	res := &conn.response.(Response_Inflight)
+	res := &conn.loop.inflight.(Response_Inflight)
 
 	res.sent += sent
 	if err == nil && len(res.buf) != res.sent {
@@ -165,9 +165,11 @@ on_response_sent :: proc(conn_: rawptr, sent: int, err: net.Network_Error) {
 // Response has been sent, clean up and close/handle next.
 @(private)
 clean_request_loop :: proc(conn: ^Connection, close: bool = false) {
-	allocator := conn.curr_req.allocator
-	free_all(conn.curr_req.allocator)
-	conn.response = nil
+	allocator := conn.loop.req.allocator
+	free_all(conn.loop.req.allocator)
+	conn.loop.inflight = nil
+	conn.loop.req = {}
+	conn.loop.res = {}
 
 	switch {
 	case close:
@@ -189,7 +191,7 @@ response_needs_content_length :: proc(r: ^Response, conn: ^Connection) -> bool {
 		return false
 	}
 
-	if rline, ok := conn.curr_req.line.(Requestline); ok {
+	if rline, ok := conn.loop.req.line.(Requestline); ok {
 		if status_success(r.status) && rline.method == .Connect {
 			return false
 		}
@@ -204,7 +206,7 @@ response_needs_content_length :: proc(r: ^Response, conn: ^Connection) -> bool {
 response_can_have_body :: proc(r: ^Response, conn: ^Connection) -> bool {
 	response_needs_content_length(r, conn) or_return
 
-	if rline, ok := conn.curr_req.line.(Requestline); ok {
+	if rline, ok := conn.loop.req.line.(Requestline); ok {
 		return rline.method != .Head
 	}
 

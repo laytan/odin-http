@@ -96,7 +96,7 @@ respond_json :: proc(r: ^Response, v: any, opt: json.Marshal_Options = {}, send 
 // Sends the response back to the client, handlers should call this.
 respond :: proc(r: ^Response) {
 	conn := r._conn
-	req := conn.curr_req
+	req := conn.loop.req
 
 	// Respond as head request if we set it to get.
 	if rline, ok := req.line.(Requestline); ok && req.is_head && conn.server.opts.redirect_head_to_get {
