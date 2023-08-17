@@ -247,13 +247,22 @@ Connection :: struct {
 	server:   ^Server,
 	socket:   net.TCP_Socket,
 	client:   net.Endpoint,
-	curr_req: ^Request,
 	state:    Connection_State,
 	scanner:  Scanner,
 	arena:    virtual.Arena,
-	response: Maybe(Response_Inflight),
+	loop:     Loop,
 }
 
+// Loop/request cycle state.
+@(private)
+Loop :: struct {
+	conn:     ^Connection,
+	req:      Request,
+	res:      Response,
+	inflight: Maybe(Response_Inflight),
+}
+
+@(private)
 Response_Inflight :: struct {
 	buf:        []byte,
 	sent:       int,
@@ -320,14 +329,6 @@ conn_handle_reqs :: proc(c: ^Connection) {
 
 	allocator := virtual.arena_allocator(&c.arena)
 	conn_handle_req(c, allocator)
-}
-
-// Loop/request cycle state.
-@(private)
-Loop :: struct {
-	conn: ^Connection,
-	req:  Request,
-	res:  Response,
 }
 
 @(private)
@@ -479,15 +480,13 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.allocator) {
 	}
 
 
-	loop := new(Loop, allocator)
-	loop.conn = c
-	request_init(&loop.req, allocator)
-	response_init(&loop.res, allocator)
-	loop.res._conn = c
-	c.curr_req = &loop.req
+	c.loop.conn = c
+	c.loop.res._conn = c
+	request_init(&c.loop.req, allocator)
+	response_init(&c.loop.res, allocator)
 
 	log.debugf("waiting for next request on %s", net.endpoint_to_string(c.client, allocator))
 
 	c.scanner.max_token_size = c.server.opts.limit_request_line
-	scanner_scan(&c.scanner, loop, on_rline1)
+	scanner_scan(&c.scanner, &c.loop, on_rline1)
 }
