@@ -196,6 +196,7 @@ _accept :: proc(io: ^IO, socket: net.TCP_Socket, user: rawptr, callback: On_Acce
 
 	completion.callback = proc(kq: ^KQueue, completion: ^Completion) {
 		op := completion.operation.(Op_Accept)
+		callback := cast(On_Accept)completion.user_callback
 
 		client, source, err := net.accept_tcp(net.TCP_Socket(op))
 		if err == net.Accept_Error.Would_Block {
@@ -207,8 +208,12 @@ _accept :: proc(io: ^IO, socket: net.TCP_Socket, user: rawptr, callback: On_Acce
 			err = prepare(client)
 		}
 
-		callback := cast(On_Accept)completion.user_callback
-		callback(completion.user_data, client, source, err)
+		if err != nil {
+			net.close(client)
+			callback(completion.user_data, {}, {}, err)
+		} else {
+			callback(completion.user_data, client, source, nil)
+		}
 
 		pool_put(&kq.completion_pool, completion)
 	}
@@ -263,6 +268,7 @@ _connect :: proc(io: ^IO, endpoint: net.Endpoint, user: rawptr, callback: On_Con
 	}
 
 	if err := prepare(sock); err != nil {
+		net.close(sock)
 		callback(user, {}, err)
 		return
 	}
@@ -277,6 +283,7 @@ _connect :: proc(io: ^IO, endpoint: net.Endpoint, user: rawptr, callback: On_Con
 
 	completion.callback = proc(kq: ^KQueue, completion: ^Completion) {
 		op := &completion.operation.(Op_Connect)
+		callback := cast(On_Connect)completion.user_callback
 		defer op.initiated = true
 
 		err: os.Errno
@@ -291,8 +298,12 @@ _connect :: proc(io: ^IO, endpoint: net.Endpoint, user: rawptr, callback: On_Con
 			}
 		}
 
-		callback := cast(On_Connect)completion.user_callback
-		callback(completion.user_data, op.socket, net.Dial_Error(err))
+		if err != os.ERROR_NONE {
+			net.close(op.socket)
+			callback(completion.user_data, {}, net.Dial_Error(err))
+		} else {
+			callback(completion.user_data, op.socket, nil)
+		}
 
 		pool_put(&kq.completion_pool, completion)
 	}
