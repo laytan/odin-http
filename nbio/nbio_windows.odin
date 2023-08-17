@@ -169,40 +169,65 @@ _listen :: proc(socket: net.TCP_Socket, backlog := 1000) -> (err: net.Network_Er
 	return
 }
 
-Op_Accept :: struct {
-	socket: win.SOCKET,
-	client: win.SOCKET,
-	addr: win.SOCKADDR_STORAGE_LH,
-}
-
-_accept :: proc(io: ^IO, socket: net.TCP_Socket, user: rawptr, callback: On_Accept) {
+submit :: proc(io: ^IO, user: rawptr, callback: rawptr, op: Operation) {
 	winio := cast(^Windows)io.impl_data
 
 	completion := pool_get(&winio.completion_pool)
 	completion.user_data = user
-	completion.user_callback = rawptr(callback)
-
-	completion.op = Op_Accept{
-		socket = win.SOCKET(socket),
-		client = win.INVALID_SOCKET,
-	}
+	completion.user_callback = callback
+	completion.op = op
 
 	completion.callback = proc(winio: ^Windows, completion: ^Completion) {
-		op := &completion.op.(Op_Accept)
-		callback := cast(On_Accept)completion.user_callback
+		switch op in &completion.op {
+		case Op_Accept:
+			source, err := op.callback(winio, op)
+			if err_incomplete(err) do return
 
-		flags: win.DWORD
-		transferred: win.DWORD
+			rerr := net.Accept_Error(err)
+			if rerr != nil do win.closesocket(op.client)
+
+			cb := cast(On_Accept)completion.user_callback
+			cb(completion.user_data, net.TCP_Socket(client), source, err)
+
+		case Op_Connect:
+			err := op.callback(winio, op)
+			if err_incomplete(err) do return
+
+			rerr := net.Dial_Error(err)
+			if rerr != nil do win.closesocket(op.socket)
+
+			cb := cast(On_Connect)completion.user_callback
+			cb(completion.user_data, net.TCP_Socket(op.socket), rerr)
+
+		case Op_Close:   unimplemented()
+		case Op_Read:    unimplemented()
+		case Op_Recv:    unimplemented()
+		case Op_Send:    unimplemented()
+		case Op_Write:   unimplemented()
+		case Op_Timeout: unimplemented()
+		}
+		pool_put(winio.completion_pool, completion)
+	}
+	queue.push_back(&winio.completed, completion)
+}
+
+Op_Accept :: struct {
+	callback: proc(winio: ^Windows, op: ^Op_Accept) -> (source: net.Endpoint, err: win.c_int),
+	socket:   win.SOCKET,
+	client:   win.SOCKET,
+	addr:     win.SOCKADDR_STORAGE_LH,
+}
+
+_accept :: proc(io: ^IO, socket: net.TCP_Socket, user: rawptr, callback: On_Accept) {
+	internal_callback :: proc(winio: ^Windows, op: ^Op_Accept) -> (source: net.Endpoint, err: win.c_int) {
 		ok: win.BOOL
-		switch op.client {
-		case win.INVALID_SOCKET:
-			client, err := open_socket(winio, .IP4, .TCP)
-			if err != nil {
-				callback(completion.user_data, {}, {}, err)
-				pool_put(&winio.completion_pool, completion)
+		if op.client == win.INVALID_SOCKET {
+			oclient, oerr := open_socket(winio, .IP4, .TCP)
+			if oerr != nil {
+				err = win.c_int(oerr)
 				return
 			}
-			op.client = client
+			op.client = oclient
 
 			bytes_read: win.DWORD
 			ok = AcceptEx(
@@ -215,8 +240,10 @@ _accept :: proc(io: ^IO, socket: net.TCP_Socket, user: rawptr, callback: On_Acce
 				&bytes_read,
 				&completion.over,
 			)
-		case:
+		else {
 			// Get status update, we've already initiated the accept.
+			flags: win.DWORD
+			transferred: win.DWORD
 			ok = win.WSAGetOverlappedResult(
 				op.socket,
 				&completion.over,
@@ -226,82 +253,49 @@ _accept :: proc(io: ^IO, socket: net.TCP_Socket, user: rawptr, callback: On_Acce
 			)
 		}
 
-		if ok {
-			// enables getsockopt, setsockopt, getsockname, getpeername.
-			win.setsockopt(op.client, win.SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, nil, 0)
-			source := _sockaddr_to_endpoint(&op.addr)
-
-			callback(completion.user_data, net.TCP_Socket(op.client), source, nil)
-			pool_put(&winio.completion_pool, completion)
+		if !ok {
+			err = win.WSAGetLastError()
 			return
+
 		}
 
-		err := win.WSAGetLastError()
-		if err_incomplete(err) do return
+		// enables getsockopt, setsockopt, getsockname, getpeername.
+		win.setsockopt(op.client, win.SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, nil, 0)
 
-		win.closesocket(op.client)
-		callback(completion.user_data, {}, {}, net.Accept_Error(err))
-		pool_put(&winio.completion_pool, completion)
+		source = _sockaddr_to_endpoint(&op.addr)
+		return
 	}
-	queue.push_back(&winio.completed, completion)
+
+	submit(io, user, rawptr(callback), Op_Accept{
+		callback = internal_callback,
+		socket   = win.SOCKET(socket),
+		client   = win.INVALID_SOCKET,
+	})
 }
 
 Op_Connect :: struct {
-	socket: win.SOCKET,
-	addr: win.SOCKADDR_STORAGE_LH,
-	pending: bool,
+	callback: proc(winio: ^Windows, op: ^Op_Connect) -> (err: win.c_int),
+	socket:   win.SOCKET,
+	addr:     win.SOCKADDR_STORAGE_LH,
 }
 
 _connect :: proc(io: ^IO, ep: net.Endpoint, user: rawptr, callback: On_Connect) {
-	winio := cast(^Windows)io.impl_data
-
 	if ep.port == 0 {
 		callback(user, {}, net.Dial_Error.Port_Required)
 		return
 	}
 
-	family := net.family_from_endpoint(ep)
-	sock, err := open_socket(winio, family, .TCP)
-	if err != nil {
-		callback(user, {}, err)
-		return
-	}
-
-	completion := pool_get(&winio.completion_pool)
-	completion.user_data = user
-	completion.user_callback = rawptr(callback)
-
-	completion.op = Op_Connect{
-		socket = sock,
-		addr = _endpoint_to_sockaddr(ep),
-	}
-
-	completion.callback = proc(winio: ^Windows, completion: ^Completion) {
-		op := completion.op.(Op_Connect)
-		callback := cast(On_Connect)completion.user_callback
-
-		flags: win.DWORD
+	internal_callback :: proc(winio: ^Windows, op: ^Op_Connect) -> net.Network_Error {
 		transferred: win.DWORD
 		ok: win.BOOL
-		if op.pending {
-			ok = win.WSAGetOverlappedResult(
-				op.socket,
-				&completion.over,
-				&transferred,
-				win.FALSE,
-				&flags,
-			)
-		} else {
+		if op.socket == win.INVALID_SOCKET {
+			sock, oerr := open_socket(winio, .IP4, .TCP)
+			if oerr != nil do return win.c_int(oerr)
+			op.socket = socket
+
 			sockaddr := _endpoint_to_sockaddr({net.IP4_Any, 0})
 			res := win.bind(op.socket, &sockaddr, size_of(sockaddr))
-			if res < 0 {
-				err := net.Bind_Error(win.WSAGetLastError())
-
-				win.closesocket(op.socket)
-				callback(completion.user_data, {}, err)
-				pool_put(&winio.completion_pool, completion)
-				return
-			}
+			if res < 0 do return win.WSAGetLastError()
 
 			connect_ex: LPFN_CONNECTEX
 			num_bytes: win.DWORD
@@ -317,17 +311,7 @@ _connect :: proc(io: ^IO, ep: net.Endpoint, user: rawptr, callback: On_Connect) 
 				nil,
 				nil,
 			)
-			if res == win.SOCKET_ERROR {
-				err := net.Socket_Option_Error(.Invalid_Option_For_Socket)
-
-				win.closesocket(op.socket)
-				callback(completion.user_data, {}, err)
-				pool_put(&winio.completion_pool, completion)
-				return
-			}
-
-			assert(num_bytes == size_of(LPFN_CONNECTEX))
-			op.pending = true
+			if res == win.SOCKET_ERROR do return win.WSAGetLastError()
 
 			ok = connect_ex(
 				op.socket,
@@ -338,25 +322,27 @@ _connect :: proc(io: ^IO, ep: net.Endpoint, user: rawptr, callback: On_Connect) 
 				&transferred,
 				&completion.over,
 			)
+		} else {
+			flags: win.DWORD
+			ok = win.WSAGetOverlappedResult(
+				op.socket,
+				&completion.over,
+				&transferred,
+				win.FALSE,
+				&flags,
+			)
 		}
+		if !ok do return win.WSAGetLastError()
 
-		if ok {
-			// enables getsockopt, setsockopt, getsockname, getpeername.
-			win.setsockopt(op.socket, win.SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, nil, 0)
-
-			callback(completion.user_data, net.TCP_Socket(op.socket), nil)
-			pool_put(&winio.completion_pool, completion)
-			return
-		}
-
-		err := win.WSAGetLastError()
-		if err_incomplete(err) do return
-
-		win.closesocket(op.socket)
-		callback(completion.user_data, {}, net.Dial_Error(err))
-		pool_put(&winio.completion_pool, completion)
+		// enables getsockopt, setsockopt, getsockname, getpeername.
+		win.setsockopt(op.socket, win.SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, nil, 0)
+		return
 	}
-	queue.push_back(&winio.completed, completion)
+
+	submit(io, user, rawptr(callback), Op_Connect{
+		callback = internal_callback,
+		addr     = _endpoint_to_sockaddr(ep),
+	})
 }
 
 Op_Close :: distinct os.Handle
