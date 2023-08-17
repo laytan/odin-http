@@ -281,7 +281,6 @@ Op_Connect :: struct {
 	sockaddr: os.SOCKADDR_STORAGE_LH,
 }
 
-// TODO: close the socket on failure.
 _connect :: proc(io: ^IO, endpoint: net.Endpoint, user: rawptr, callback: On_Connect) {
 	lx := cast(^Linux)io.impl_data
 
@@ -298,6 +297,7 @@ _connect :: proc(io: ^IO, endpoint: net.Endpoint, user: rawptr, callback: On_Con
 	}
 
 	if err := prepare(sock); err != nil {
+		net.close(sock)
 		callback(user, {}, err)
 		return
 	}
@@ -320,7 +320,13 @@ _connect :: proc(io: ^IO, endpoint: net.Endpoint, user: rawptr, callback: On_Con
 			return
 		}
 
-		callback(completion.user_data, op.socket, net.Dial_Error(errno))
+		if errno != os.ERROR_NONE {
+			net.close(op.socket)
+			callback(completion.user_data, {}, net.Dial_Error(errno))
+		} else {
+			callback(completion.user_data, op.socket, nil)
+		}
+
 		pool_put(&lx.completion_pool, completion)
 	}
 
