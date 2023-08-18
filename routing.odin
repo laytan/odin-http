@@ -38,7 +38,7 @@ Router :: struct {
 
 router_init :: proc(router: ^Router, allocator := context.allocator) {
 	router.allocator = allocator
-	router.routes = make(map[Method][dynamic]Route, 0, allocator)
+	router.routes = make(map[Method][dynamic]Route, len(Method), allocator)
 }
 
 router_destroy :: proc(router: ^Router) {

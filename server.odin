@@ -101,6 +101,7 @@ server_serve :: proc(s: ^Server, handler: Handler) -> net.Network_Error {
 	s.handler = handler
 
 	// Save allocator so we can free connections later.
+	s.conns = make(map[net.TCP_Socket]^Connection)
 	s.conn_allocator = context.allocator
 
 	nbio.prepare(s.tcp_sock) or_return
