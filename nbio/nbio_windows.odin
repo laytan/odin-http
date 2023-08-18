@@ -7,6 +7,7 @@ import "core:container/queue"
 import "core:mem"
 import "core:net"
 import "core:os"
+import "core:runtime"
 import "core:time"
 
 import win "core:sys/windows"
@@ -62,7 +63,7 @@ Completion :: struct {
 
 	op: Operation,
 	callback: proc(winio: ^Windows, completion: ^Completion),
-
+	ctx: runtime.Context,
 	user_callback: rawptr,
 	user_data: rawptr,
 }
@@ -132,6 +133,7 @@ _tick :: proc(io: ^IO) -> (err: os.Errno) {
 	// Copy completed to not get into an infinite loop when callbacks add to completed again.
 	c := winio.completed
 	for completion in queue.pop_front_safe(&c) {
+		context = completion.ctx
 		completion.callback(winio, completion)
 	}
 	return
@@ -173,6 +175,7 @@ submit :: proc(io: ^IO, user: rawptr, callback: rawptr, op: Operation) {
 	winio := cast(^Windows)io.impl_data
 
 	completion := pool_get(&winio.completion_pool)
+	completion.ctx = context
 	completion.user_data = user
 	completion.user_callback = callback
 	completion.op = op
