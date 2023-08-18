@@ -7,6 +7,7 @@ import "core:fmt"
 import "core:mem"
 import "core:net"
 import "core:os"
+import "core:runtime"
 import "core:time"
 
 import "../io_uring"
@@ -27,6 +28,7 @@ Completion :: struct {
 	result:        i32,
 	operation:     Operation,
 	callback:      proc(lx: ^Linux, c: ^Completion),
+	ctx:           runtime.Context,
 	user_callback: rawptr,
 	user_data:     rawptr,
 }
@@ -110,6 +112,7 @@ flush :: proc(lx: ^Linux, wait_nr: u32, timeouts: ^uint, etime: ^bool) -> os.Err
 	// odinfmt: enable
 
 	for completed in queue.pop_front_safe(&lx.completed) {
+		context = completed.ctx
 		completed.callback(lx, completed)
 	}
 
@@ -188,6 +191,7 @@ _accept :: proc(io: ^IO, socket: net.TCP_Socket, user: rawptr, callback: On_Acce
 	lx := cast(^Linux)io.impl_data
 
 	completion := pool_get(&lx.completion_pool)
+	completion.ctx = context
 	completion.user_data = user
 	completion.user_callback = rawptr(callback)
 	completion.operation = Op_Accept {
@@ -246,6 +250,7 @@ _close :: proc(io: ^IO, fd: os.Handle, user: rawptr, callback: On_Close) {
 	lx := cast(^Linux)io.impl_data
 
 	completion := pool_get(&lx.completion_pool)
+	completion.ctx = context
 	completion.user_data = user
 	completion.user_callback = rawptr(callback)
 	completion.operation = Op_Close(fd)
@@ -303,6 +308,7 @@ _connect :: proc(io: ^IO, endpoint: net.Endpoint, user: rawptr, callback: On_Con
 	}
 
 	completion := pool_get(&lx.completion_pool)
+	completion.ctx = context
 	completion.user_data = user
 	completion.user_callback = rawptr(callback)
 	completion.operation = Op_Connect {
@@ -360,6 +366,7 @@ _read :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_Re
 	lx := cast(^Linux)io.impl_data
 
 	completion := pool_get(&lx.completion_pool)
+	completion.ctx = context
 	completion.user_data = user
 	completion.user_callback = rawptr(callback)
 	completion.operation = Op_Read {
@@ -410,6 +417,7 @@ _recv :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, callba
 	lx := cast(^Linux)io.impl_data
 
 	completion := pool_get(&lx.completion_pool)
+	completion.ctx = context
 	completion.user_data = user
 	completion.user_callback = rawptr(callback)
 	completion.operation = Op_Recv {
@@ -474,6 +482,7 @@ _send :: proc(
 	lx := cast(^Linux)io.impl_data
 
 	completion := pool_get(&lx.completion_pool)
+	completion.ctx = context
 	completion.user_data = user
 	completion.user_callback = rawptr(callback)
 	completion.operation = Op_Send {
@@ -530,6 +539,7 @@ _write :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_W
 	lx := cast(^Linux)io.impl_data
 
 	completion := pool_get(&lx.completion_pool)
+	completion.ctx = context
 	completion.user_data = user
 	completion.user_callback = rawptr(callback)
 	completion.operation = Op_Write {
@@ -579,6 +589,7 @@ _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout
 	lx := cast(^Linux)io.impl_data
 
 	completion := pool_get(&lx.completion_pool)
+	completion.ctx = context
 	completion.user_data = user
 	completion.user_callback = rawptr(callback)
 

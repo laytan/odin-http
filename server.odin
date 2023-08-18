@@ -328,6 +328,7 @@ conn_handle_reqs :: proc(c: ^Connection) {
 	}
 
 	allocator := virtual.arena_allocator(&c.arena)
+	context.temp_allocator = allocator
 	conn_handle_req(c, allocator)
 }
 
