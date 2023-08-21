@@ -2,6 +2,7 @@
 package nbio
 
 import "core:c"
+import "core:container/queue"
 import "core:mem"
 import "core:net"
 import "core:os"
@@ -15,7 +16,8 @@ KQueue :: struct {
 	io_inflight:     int,
 	completion_pool: Pool(Completion),
 	timeouts:        [dynamic]^Completion,
-	completed:       [dynamic]^Completion,
+	// TODO: should be a queue.
+	completed:       queue.Queue(^Completion),
 	io_pending:      [dynamic]^Completion,
 	allocator:       mem.Allocator,
 }
@@ -39,8 +41,9 @@ _init :: proc(io: ^IO, _: u32 = DEFAULT_ENTRIES, _: u32 = 0, allocator := contex
 	pool_init(&kq.completion_pool, allocator = allocator)
 
 	kq.timeouts = make([dynamic]^Completion, allocator)
-	kq.completed = make([dynamic]^Completion, allocator)
 	kq.io_pending = make([dynamic]^Completion, allocator)
+
+	queue.init(&kq.completed, allocator = allocator)
 
 	kq.allocator = allocator
 	io.impl_data = kq
@@ -51,8 +54,9 @@ _destroy :: proc(io: ^IO) {
 	kq := cast(^KQueue)io.impl_data
 
 	delete(kq.timeouts)
-	delete(kq.completed)
 	delete(kq.io_pending)
+
+	queue.destroy(&kq.completed)
 
 	os.close(kq.fd)
 
@@ -65,10 +69,10 @@ _destroy :: proc(io: ^IO) {
 MAX_EVENTS :: 256
 
 _tick :: proc(io: ^IO) -> os.Errno {
-	return flush(io, wait_for_completions = false)
+	return flush(io)
 }
 
-flush :: proc(io: ^IO, wait_for_completions: bool) -> os.Errno {
+flush :: proc(io: ^IO) -> os.Errno {
 	kq := cast(^KQueue)io.impl_data
 
 	events: [MAX_EVENTS]kqueue.KEvent
@@ -77,18 +81,11 @@ flush :: proc(io: ^IO, wait_for_completions: bool) -> os.Errno {
 	change_events := flush_io(kq, events[:])
 
 	if (change_events > 0 || len(kq.completed) == 0) {
-		ts: kqueue.Time_Spec
-
-		if (change_events == 0 && len(kq.completed) == 0) {
-			if (wait_for_completions) {
-				timeout := next_timeout.(i64) or_else panic("blocking forever")
-				ts.nsec = timeout % NANOSECONDS_PER_SECOND
-				ts.sec = c.long(timeout / NANOSECONDS_PER_SECOND)
-			} else if (kq.io_inflight == 0) {
-				return os.ERROR_NONE
-			}
+		if (change_events == 0 && len(kq.completed) == 0 && kq.io_inflight == 0) {
+			return os.ERROR_NONE
 		}
 
+		ts: kqueue.Time_Spec
 		new_events, err := kqueue.kevent(kq.fd, events[:change_events], events[:], &ts)
 		if err != .None do return ev_err_to_os_err(err)
 
@@ -99,20 +96,20 @@ flush :: proc(io: ^IO, wait_for_completions: bool) -> os.Errno {
 		kq.io_inflight += change_events
 		kq.io_inflight -= new_events
 
-		// TODO(perf): don't do this and after the resize to 0, exec callbacks for these events.
-		// This is an unnecessary append to then directly remove outside of this if.
-		reserve(&kq.completed, new_events)
+		queue.reserve(&kq.completed, new_events)
 		for event in events[:new_events] {
 			completion := cast(^Completion)event.udata
-			append(&kq.completed, completion)
+			queue.push_back(&kq.completed, completion)
 		}
 	}
 
-	for completed in &kq.completed {
+	// Save length so we avoid an infinite loop when there is added to the queue in a callback.
+	n := queue.len(&kq.completed)
+	for _ in 0..<n {
+		completed := queue.pop_front(&kq.completed)
 		context = completed.ctx
 		completed.callback(kq, completed)
 	}
-	resize(&kq.completed, 0)
 
 	return os.ERROR_NONE
 }
@@ -165,7 +162,7 @@ flush_timeouts :: proc(kq: ^KQueue) -> (min_timeout: Maybe(i64)) {
 		expires := time.to_unix_nanoseconds(timeout.expires)
 		if now >= expires {
 			ordered_remove(&kq.timeouts, i)
-			append(&kq.completed, completion)
+			queue.push_back(&kq.completed, completion)
 			continue
 		}
 
@@ -222,7 +219,7 @@ _accept :: proc(io: ^IO, socket: net.TCP_Socket, user: rawptr, callback: On_Acce
 		pool_put(&kq.completion_pool, completion)
 	}
 
-	append(&kq.completed, completion)
+	queue.push_back(&kq.completed, completion)
 }
 
 Op_Close :: distinct os.Handle
@@ -247,7 +244,7 @@ _close :: proc(io: ^IO, fd: os.Handle, user: rawptr, callback: On_Close) {
 		pool_put(&kq.completion_pool, completion)
 	}
 
-	append(&kq.completed, completion)
+	queue.push_back(&kq.completed, completion)
 }
 
 Op_Connect :: struct {
@@ -314,7 +311,7 @@ _connect :: proc(io: ^IO, endpoint: net.Endpoint, user: rawptr, callback: On_Con
 		pool_put(&kq.completion_pool, completion)
 	}
 
-	append(&kq.completed, completion)
+	queue.push_back(&kq.completed, completion)
 }
 
 Op_Read :: struct {
@@ -350,7 +347,7 @@ _read :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_Re
 		pool_put(&kq.completion_pool, completion)
 	}
 
-	append(&kq.completed, completion)
+	queue.push_back(&kq.completed, completion)
 }
 
 Op_Recv :: struct {
@@ -401,7 +398,7 @@ _recv :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, callba
 		pool_put(&kq.completion_pool, completion)
 	}
 
-	append(&kq.completed, completion)
+	queue.push_back(&kq.completed, completion)
 }
 
 Op_Send :: struct {
@@ -463,7 +460,7 @@ _send :: proc(
 		pool_put(&kq.completion_pool, completion)
 	}
 
-	append(&kq.completed, completion)
+	queue.push_back(&kq.completed, completion)
 }
 
 Op_Write :: struct {
@@ -498,7 +495,7 @@ _write :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_W
 		pool_put(&kq.completion_pool, completion)
 	}
 
-	append(&kq.completed, completion)
+	queue.push_back(&kq.completed, completion)
 }
 
 Op_Timeout :: struct {
