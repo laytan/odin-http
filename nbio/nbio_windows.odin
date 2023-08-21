@@ -227,7 +227,13 @@ submit :: proc(io: ^IO, user: rawptr, callback: rawptr, op: Operation) {
 			cb := cast(On_Recv)completion.user_callback
 			cb(completion.user_data, int(received), {}, net.TCP_Recv_Error(err))
 
-		case Op_Send:    unimplemented()
+		case Op_Send:
+			sent, err := op.callback(winio, completion, &op)
+			if wsa_err_incomplete(err) do return
+
+			cb := cast(On_Sent)completion.user_callback
+			cb(completion.user_data, int(sent), net.TCP_Send_Error(err))
+
 		case Op_Timeout: unimplemented()
 		}
 		pool_put(&winio.completion_pool, completion)
@@ -473,9 +479,10 @@ _recv :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, callba
 }
 
 Op_Send :: struct {
+	callback: proc(^Windows, ^Completion, ^Op_Send) -> (sent: win.DWORD, err: win.c_int),
 	socket:   net.Any_Socket,
-	buf:      []byte,
-	endpoint: Maybe(net.Endpoint),
+	buf:      win.WSABUF,
+	pending:  bool,
 }
 
 _send :: proc(
@@ -486,7 +493,32 @@ _send :: proc(
 	callback: On_Sent,
 	endpoint: Maybe(net.Endpoint) = nil,
 ) {
-	unimplemented()
+	// TODO: implement UDP.
+	if _, ok := socket.(net.UDP_Socket); ok do unimplemented("nbio.send with UDP sockets is not yet implemented")
+
+	internal_callback :: proc(winio: ^Windows, comp: ^Completion, op: ^Op_Send) -> (sent: win.DWORD, err: win.c_int) {
+		sock := win.SOCKET(net.any_socket_to_socket(op.socket))
+		ok: win.BOOL
+		if op.pending {
+			flags: win.DWORD
+			ok = win.WSAGetOverlappedResult(sock, &comp.over, &sent, win.FALSE, &flags)
+		} else {
+			err_code := win.WSASend(sock, &op.buf, 1, nil, 0, win.LPWSAOVERLAPPED(&comp.over), nil)
+			assert(err_code == win.SOCKET_ERROR)
+		}
+
+		if !ok do err = win.WSAGetLastError()
+		return
+	}
+
+	submit(io, user, rawptr(callback), Op_Send{
+		callback = internal_callback,
+		socket   = socket,
+		buf      = win.WSABUF{
+			len = win.ULONG(len(buf)),
+			buf = raw_data(buf),
+		},
+	})
 }
 
 Op_Timeout :: struct {
