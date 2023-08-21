@@ -213,9 +213,15 @@ submit :: proc(io: ^IO, user: rawptr, callback: rawptr, op: Operation) {
 			cb := cast(On_Read)completion.user_callback
 			cb(completion.user_data, int(read), os.Errno(err))
 
+		case Op_Write:
+			written, err := op.callback(winio, completion, &op)
+			if err_incomplete(err) do return
+
+			cb := cast(On_Write)completion.user_callback
+			cb(completion.user_data, int(written), os.Errno(err))
+
 		case Op_Recv:    unimplemented()
 		case Op_Send:    unimplemented()
-		case Op_Write:   unimplemented()
 		case Op_Timeout: unimplemented()
 		}
 		pool_put(&winio.completion_pool, completion)
@@ -307,6 +313,7 @@ _connect :: proc(io: ^IO, ep: net.Endpoint, user: rawptr, callback: On_Connect) 
 			connect_ex: LPFN_CONNECTEX
 			num_bytes: win.DWORD
 			guid := WSAID_CONNECTEX
+			// TODO: this can also be done asynchronously.
 			res = win.WSAIoctl(
 				op.socket,
 				win.SIO_GET_EXTENSION_FUNCTION_POINTER,
@@ -362,9 +369,9 @@ _close :: proc(io: ^IO, fd: os.Handle, user: rawptr, callback: On_Close) {
 
 Op_Read :: struct {
 	callback: proc(^Windows, ^Completion, ^Op_Read) -> (read: win.DWORD, err: win.DWORD),
-	fd:  os.Handle,
-	buf: []byte,
-	pending: bool,
+	fd:       os.Handle,
+	buf:      []byte,
+	pending:  bool,
 }
 
 _read :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_Read) {
@@ -375,7 +382,8 @@ _read :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_Re
 			ok = win.WSAGetOverlappedResult(win.SOCKET(op.fd), &comp.over, &read, win.FALSE, &flags)
 		} else {
 			// TODO: this requires the file to be opened with win.FILE_FLAG_OVERLAPPED.
-			ok = win.ReadFile(win.HANDLE(op.fd), raw_data(op.buf), u32(len(op.buf)), nil, &comp.over)
+			ok = win.ReadFile(win.HANDLE(op.fd), raw_data(op.buf), win.DWORD(len(op.buf)), nil, &comp.over)
+			assert(!ok)
 			op.pending = true
 		}
 
@@ -384,6 +392,37 @@ _read :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_Re
 	}
 
 	submit(io, user, rawptr(callback), Op_Read{
+		callback = internal_callback,
+		fd       = fd,
+		buf      = buf,
+	})
+}
+
+Op_Write :: struct {
+	callback: proc(^Windows, ^Completion, ^Op_Write) -> (written: win.DWORD, err: win.DWORD),
+	fd:       os.Handle,
+	buf:      []byte,
+	pending:  bool,
+}
+
+_write :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_Write) {
+	internal_callback :: proc(winio: ^Windows, comp: ^Completion, op: ^Op_Write) -> (written: win.DWORD, err: win.DWORD) {
+		ok: win.BOOL
+		if op.pending {
+			flags: win.DWORD
+			ok = win.WSAGetOverlappedResult(win.SOCKET(op.fd), &comp.over, &written, win.FALSE, &flags)
+		} else {
+			// TODO: this requires the file to be opened with win.FILE_FLAG_OVERLAPPED.
+			ok = win.WriteFile(win.HANDLE(op.fd), raw_data(op.buf), win.DWORD(len(op.buf)), nil, &comp.over)
+			assert(!ok)
+			op.pending = true
+		}
+
+		if !ok do err = win.GetLastError()
+		return
+	}
+
+	submit(io, user, rawptr(callback), Op_Write{
 		callback = internal_callback,
 		fd       = fd,
 		buf      = buf,
@@ -413,15 +452,6 @@ _send :: proc(
 	callback: On_Sent,
 	endpoint: Maybe(net.Endpoint) = nil,
 ) {
-	unimplemented()
-}
-
-Op_Write :: struct {
-	fd:  os.Handle,
-	buf: []byte,
-}
-
-_write :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_Write) {
 	unimplemented()
 }
 
