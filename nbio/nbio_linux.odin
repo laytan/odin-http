@@ -111,7 +111,10 @@ flush :: proc(lx: ^Linux, wait_nr: u32, timeouts: ^uint, etime: ^bool) -> os.Err
 	}
 	// odinfmt: enable
 
-	for completed in queue.pop_front_safe(&lx.completed) {
+	// Store length to prevent infinite loop if the callback adds to completed.
+	n = queue.len(&lx.completed)
+	for _ in 0..<n {
+		completed := queue.pop_front(&lx.completed)
 		context = completed.ctx
 		completed.callback(lx, completed)
 	}
