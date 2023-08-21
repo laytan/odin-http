@@ -202,7 +202,10 @@ submit :: proc(io: ^IO, user: rawptr, callback: rawptr, op: Operation) {
 			cb := cast(On_Connect)completion.user_callback
 			cb(completion.user_data, net.TCP_Socket(op.socket), rerr)
 
-		case Op_Close:   unimplemented()
+		case Op_Close:
+			cb := cast(On_Close)completion.user_callback
+			cb(completion.user_data, op.callback(winio, op))
+
 		case Op_Read:    unimplemented()
 		case Op_Recv:    unimplemented()
 		case Op_Send:    unimplemented()
@@ -343,10 +346,25 @@ _connect :: proc(io: ^IO, ep: net.Endpoint, user: rawptr, callback: On_Connect) 
 	})
 }
 
-Op_Close :: distinct os.Handle
+Op_Close :: struct {
+	callback: proc(^Windows, Op_Close) -> bool,
+	fd: os.Handle,
+}
 
 _close :: proc(io: ^IO, fd: os.Handle, user: rawptr, callback: On_Close) {
-	unimplemented()
+	internal_callback := proc(winio: ^Windows, op: Op_Close) -> bool {
+		// NOTE: This might cause problems if there is still IO queued/pending.
+		// Is that our responsibility to check/keep track of?
+
+		// Close is used for both file and socket handles, we call a close proc based on what it is.
+		if   (is_socket(op.fd) or_return) do return win.closesocket(win.SOCKET(op.fd)) == win.NO_ERROR
+		else                              do return win.CloseHandle(win.HANDLE(op.fd)) == true
+	}
+
+	submit(io, user, rawptr(callback), Op_Close{
+		callback = internal_callback,
+		fd       = fd,
+	})
 }
 
 Op_Read :: struct {
@@ -506,4 +524,22 @@ _endpoint_to_sockaddr :: proc(ep: net.Endpoint) -> (sockaddr: win.SOCKADDR_STORA
 		return
 	}
 	unreachable()
+}
+
+is_socket :: proc(fd: os.Handle) -> (is_socket: bool, ok: bool) {
+	size: win.c_int = size_of(win.c_int)
+	err_code: [size_of(win.c_int)]byte
+	if err := win.getsockopt(win.SOCKET(fd), win.SOL_SOCKET, win.SO_ERROR, raw_data(err_code[:]), &size); err != win.NO_ERROR {
+		aerr := win.WSAGetLastError()
+		if aerr == win.WSAENOTSOCK do return false, true
+		else                       do return false, false
+	}
+
+	err_code_ := transmute(win.c_int)err_code
+	if err_code_ != win.NO_ERROR {
+		if err_code_ == win.WSAENOTSOCK do return false, true
+		else                            do return false, false
+	}
+
+	return true, true
 }
