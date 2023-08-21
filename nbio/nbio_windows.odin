@@ -181,19 +181,19 @@ submit :: proc(io: ^IO, user: rawptr, callback: rawptr, op: Operation) {
 	completion.op = op
 
 	completion.callback = proc(winio: ^Windows, completion: ^Completion) {
-		switch op in &completion.op {
+		switch &op in completion.op {
 		case Op_Accept:
-			source, err := op.callback(winio, op)
+			source, err := op.callback(winio, completion, &op)
 			if err_incomplete(err) do return
 
 			rerr := net.Accept_Error(err)
 			if rerr != nil do win.closesocket(op.client)
 
 			cb := cast(On_Accept)completion.user_callback
-			cb(completion.user_data, net.TCP_Socket(client), source, err)
+			cb(completion.user_data, net.TCP_Socket(op.client), source, rerr)
 
 		case Op_Connect:
-			err := op.callback(winio, op)
+			err := op.callback(winio, completion, &op)
 			if err_incomplete(err) do return
 
 			rerr := net.Dial_Error(err)
@@ -209,28 +209,24 @@ submit :: proc(io: ^IO, user: rawptr, callback: rawptr, op: Operation) {
 		case Op_Write:   unimplemented()
 		case Op_Timeout: unimplemented()
 		}
-		pool_put(winio.completion_pool, completion)
+		pool_put(&winio.completion_pool, completion)
 	}
 	queue.push_back(&winio.completed, completion)
 }
 
 Op_Accept :: struct {
-	callback: proc(winio: ^Windows, op: ^Op_Accept) -> (source: net.Endpoint, err: win.c_int),
+	callback: proc(^Windows, ^Completion, ^Op_Accept) -> (source: net.Endpoint, err: win.c_int),
 	socket:   win.SOCKET,
 	client:   win.SOCKET,
 	addr:     win.SOCKADDR_STORAGE_LH,
 }
 
 _accept :: proc(io: ^IO, socket: net.TCP_Socket, user: rawptr, callback: On_Accept) {
-	internal_callback :: proc(winio: ^Windows, op: ^Op_Accept) -> (source: net.Endpoint, err: win.c_int) {
+	internal_callback :: proc(winio: ^Windows, comp: ^Completion, op: ^Op_Accept) -> (source: net.Endpoint, err: win.c_int) {
 		ok: win.BOOL
 		if op.client == win.INVALID_SOCKET {
-			oclient, oerr := open_socket(winio, .IP4, .TCP)
-			if oerr != nil {
-				err = win.c_int(oerr)
-				return
-			}
-			op.client = oclient
+			op.client, err = open_socket(winio, .IP4, .TCP)
+			if err != win.NO_ERROR do return
 
 			bytes_read: win.DWORD
 			ok = AcceptEx(
@@ -241,15 +237,15 @@ _accept :: proc(io: ^IO, socket: net.TCP_Socket, user: rawptr, callback: On_Acce
 				size_of(op.addr),
 				size_of(op.addr),
 				&bytes_read,
-				&completion.over,
+				&comp.over,
 			)
-		else {
+		} else {
 			// Get status update, we've already initiated the accept.
 			flags: win.DWORD
 			transferred: win.DWORD
 			ok = win.WSAGetOverlappedResult(
 				op.socket,
-				&completion.over,
+				&comp.over,
 				&transferred,
 				win.FALSE,
 				&flags,
@@ -277,7 +273,7 @@ _accept :: proc(io: ^IO, socket: net.TCP_Socket, user: rawptr, callback: On_Acce
 }
 
 Op_Connect :: struct {
-	callback: proc(winio: ^Windows, op: ^Op_Connect) -> (err: win.c_int),
+	callback: proc(winio: ^Windows, comp: ^Completion, op: ^Op_Connect) -> (err: win.c_int),
 	socket:   win.SOCKET,
 	addr:     win.SOCKADDR_STORAGE_LH,
 }
@@ -288,13 +284,12 @@ _connect :: proc(io: ^IO, ep: net.Endpoint, user: rawptr, callback: On_Connect) 
 		return
 	}
 
-	internal_callback :: proc(winio: ^Windows, op: ^Op_Connect) -> net.Network_Error {
+	internal_callback :: proc(winio: ^Windows, comp: ^Completion, op: ^Op_Connect) -> (err: win.c_int) {
 		transferred: win.DWORD
 		ok: win.BOOL
 		if op.socket == win.INVALID_SOCKET {
-			sock, oerr := open_socket(winio, .IP4, .TCP)
-			if oerr != nil do return win.c_int(oerr)
-			op.socket = socket
+			op.socket, err = open_socket(winio, .IP4, .TCP)
+			if err != win.NO_ERROR do return
 
 			sockaddr := _endpoint_to_sockaddr({net.IP4_Any, 0})
 			res := win.bind(op.socket, &sockaddr, size_of(sockaddr))
@@ -323,13 +318,13 @@ _connect :: proc(io: ^IO, ep: net.Endpoint, user: rawptr, callback: On_Connect) 
 				nil,
 				0,
 				&transferred,
-				&completion.over,
+				&comp.over,
 			)
 		} else {
 			flags: win.DWORD
 			ok = win.WSAGetOverlappedResult(
 				op.socket,
-				&completion.over,
+				&comp.over,
 				&transferred,
 				win.FALSE,
 				&flags,
@@ -407,7 +402,7 @@ _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout
 }
 
 // TODO: cross platform.
-open_socket :: proc(winio: ^Windows, family: net.Address_Family, protocol: net.Socket_Protocol) -> (socket: win.SOCKET, err: net.Network_Error) {
+open_socket :: proc(winio: ^Windows, family: net.Address_Family, protocol: net.Socket_Protocol) -> (socket: win.SOCKET, err: win.c_int) {
 	c_type, c_protocol, c_family: c.int
 
 	switch family {
@@ -428,10 +423,10 @@ open_socket :: proc(winio: ^Windows, family: net.Address_Family, protocol: net.S
 
 	socket = win.WSASocketW(c_family, c_type, c_protocol, nil, 0, flags)
 	if socket == win.INVALID_SOCKET {
-		err = net.Create_Socket_Error(win.WSAGetLastError())
+		err = win.WSAGetLastError()
 		return
 	}
-	defer if err != nil do win.closesocket(socket)
+	defer if err != win.NO_ERROR do win.closesocket(socket)
 
 	handle := win.HANDLE(socket)
 
@@ -442,13 +437,21 @@ open_socket :: proc(winio: ^Windows, family: net.Address_Family, protocol: net.S
 	mode |= FILE_SKIP_COMPLETION_PORT_ON_SUCCESS
 	mode |= FILE_SKIP_SET_EVENT_ON_HANDLE
 	if !win.SetFileCompletionNotificationModes(handle, mode) {
-		err = net.Create_Socket_Error(win.GetLastError())
+		err = win.c_int(win.GetLastError()) // techincally unsafe u32 -> i32.
 		return
 	}
 
 	switch protocol {
-	case .TCP: prepare(net.TCP_Socket(socket)) or_return
-	case .UDP: prepare(net.UDP_Socket(socket)) or_return
+	case .TCP:
+		if perr := prepare(net.TCP_Socket(socket)); perr != nil {
+			err = 1 // TODO: Losing the error here!
+			return
+		}
+	case .UDP:
+		if perr := prepare(net.UDP_Socket(socket)); perr != nil {
+			err = 1 // TODO: Losing the error here!
+			return
+		}
 	}
 
 	return
