@@ -98,41 +98,57 @@ _destroy :: proc(io: ^IO) {
 	queue.destroy(&winio.completed)
 	pool_destroy(&winio.completion_pool)
 
+	// TODO: error handling.
 	win.CloseHandle(winio.iocp)
-	assert(win.WSACleanup() == win.NO_ERROR)
+	win.WSACleanup()
 }
 
 _tick :: proc(io: ^IO) -> (err: os.Errno) {
 	winio := cast(^Windows)io.impl_data
 
 	if queue.len(winio.completed) == 0 {
-		flush_timeouts(winio)
+		next_timeout := flush_timeouts(winio)
 
-		if winio.io_pending > 0 {
-			events: [64]win.OVERLAPPED_ENTRY
-			entries_removed: win.ULONG
-			if !win.GetQueuedCompletionStatusEx(winio.iocp, raw_data(events[:]), 64, &entries_removed, 0, false) {
-				if terr := win.GetLastError(); terr != win.ERROR_TIMEOUT {
-					err = os.Errno(terr)
-					return
-				}
+		// Wait a maximum of a ms if there is nothing to do.
+		wait_ms: win.DWORD = 1 if winio.io_pending == 0 else 0
+
+		// But, to counter inaccuracies in low timeouts,
+		// lets make the call exit immediately if the next timeout is close.
+		if nt, ok := next_timeout.?; ok && nt <= time.Millisecond * 15 {
+			wait_ms = 0
+		}
+
+		events: [64]win.OVERLAPPED_ENTRY
+		entries_removed: win.ULONG
+		if !win.GetQueuedCompletionStatusEx(
+			winio.iocp,
+			raw_data(events[:]),
+			64,
+			&entries_removed,
+			wait_ms,
+			false,
+		) {
+			if terr := win.GetLastError(); terr != win.WAIT_TIMEOUT {
+				err = os.Errno(terr)
+				return
 			}
+		}
 
-			assert(winio.io_pending >= int(entries_removed))
-			winio.io_pending -= int(entries_removed)
+		assert(winio.io_pending >= int(entries_removed))
+		winio.io_pending -= int(entries_removed)
 
-			for event in events[:entries_removed] {
-				// This is actually pointing at the Completion.over field, but because it is the first field
-				// It is also a valid pointer to the Completion struct.
-				completion := cast(^Completion)event.lpOverlapped
-				queue.push_back(&winio.completed, completion)
-			}
+		for event in events[:entries_removed] {
+			// This is actually pointing at the Completion.over field, but because it is the first field
+			// It is also a valid pointer to the Completion struct.
+			completion := cast(^Completion)event.lpOverlapped
+			queue.push_back(&winio.completed, completion)
 		}
 	}
 
-	// Copy completed to not get into an infinite loop when callbacks add to completed again.
-	c := winio.completed
-	for completion in queue.pop_front_safe(&c) {
+	// Prevent infinte loop when callback adds to completed by storing length.
+	n := queue.len(winio.completed)
+	for _ in 0..<n {
+		completion := queue.pop_front(&winio.completed)
 		context = completion.ctx
 		completion.callback(winio, completion)
 	}
@@ -152,6 +168,7 @@ flush_timeouts :: proc(winio: ^Windows) -> (expires: Maybe(time.Duration)) {
 		if (cexpires <= 0) {
 			ordered_remove(&winio.timeouts, i)
 			queue.push_back(&winio.completed, completion)
+			timeout_len -= 1
 			continue
 		}
 
@@ -181,12 +198,13 @@ submit :: proc(io: ^IO, user: rawptr, callback: rawptr, op: Operation) {
 	completion.op = op
 
 	completion.callback = proc(winio: ^Windows, completion: ^Completion) {
-		context = completion.ctx
-
 		switch &op in completion.op {
 		case Op_Accept:
 			source, err := op.callback(winio, completion, &op)
-			if wsa_err_incomplete(err) do return
+			if wsa_err_incomplete(err) {
+				winio.io_pending += 1
+				return
+			}
 
 			rerr := net.Accept_Error(err)
 			if rerr != nil do win.closesocket(op.client)
@@ -196,7 +214,10 @@ submit :: proc(io: ^IO, user: rawptr, callback: rawptr, op: Operation) {
 
 		case Op_Connect:
 			err := op.callback(winio, completion, &op)
-			if wsa_err_incomplete(err) do return
+			if wsa_err_incomplete(err) {
+				winio.io_pending += 1
+				return
+			}
 
 			rerr := net.Dial_Error(err)
 			if rerr != nil do win.closesocket(op.socket)
@@ -210,28 +231,40 @@ submit :: proc(io: ^IO, user: rawptr, callback: rawptr, op: Operation) {
 
 		case Op_Read:
 			read, err := op.callback(winio, completion, &op)
-			if err_incomplete(err) do return
+			if err_incomplete(err) {
+				winio.io_pending += 1
+				return
+			}
 
 			cb := cast(On_Read)completion.user_callback
 			cb(completion.user_data, int(read), os.Errno(err))
 
 		case Op_Write:
 			written, err := op.callback(winio, completion, &op)
-			if err_incomplete(err) do return
+			if err_incomplete(err) {
+				winio.io_pending += 1
+				return
+			}
 
 			cb := cast(On_Write)completion.user_callback
 			cb(completion.user_data, int(written), os.Errno(err))
 
 		case Op_Recv:
 			received, err := op.callback(winio, completion, &op)
-			if wsa_err_incomplete(err) do return
+			if wsa_err_incomplete(err) {
+				winio.io_pending += 1
+				return
+			}
 
 			cb := cast(On_Recv)completion.user_callback
 			cb(completion.user_data, int(received), {}, net.TCP_Recv_Error(err))
 
 		case Op_Send:
 			sent, err := op.callback(winio, completion, &op)
-			if wsa_err_incomplete(err) do return
+			if wsa_err_incomplete(err) {
+				winio.io_pending += 1
+				return
+			}
 
 			cb := cast(On_Sent)completion.user_callback
 			cb(completion.user_data, int(sent), net.TCP_Send_Error(err))
@@ -528,7 +561,7 @@ Op_Timeout :: struct {
 }
 
 _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout) {
-	winio := cast(^Windows)io
+	winio := cast(^Windows)io.impl_data
 
 	completion := pool_get(&winio.completion_pool)
 
