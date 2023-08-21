@@ -22,7 +22,7 @@ test_timeout :: proc(t: ^testing.T) {
 
 	timeout_fired: bool
 
-	timeout(&io, time.Millisecond * 50, &timeout_fired, proc(t_: rawptr) {
+	timeout(&io, time.Millisecond * 20, &timeout_fired, proc(t_: rawptr) {
 		timeout_fired := cast(^bool)t_
 		timeout_fired^ = true
 	})
@@ -32,7 +32,8 @@ test_timeout :: proc(t: ^testing.T) {
 		terr := tick(&io)
 		expect(t, terr == os.ERROR_NONE, fmt.tprintf("nbio.tick error: %v", terr))
 
-		if time.since(start) > time.Millisecond * 60 {
+		// TODO: make this more accurate for linux and darwin, windows is accurate.
+		if time.since(start) > time.Millisecond * 30 {
 			expect(t, timeout_fired, "timeout did not run in time")
 			break
 		}
