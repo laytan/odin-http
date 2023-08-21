@@ -184,7 +184,7 @@ submit :: proc(io: ^IO, user: rawptr, callback: rawptr, op: Operation) {
 		switch &op in completion.op {
 		case Op_Accept:
 			source, err := op.callback(winio, completion, &op)
-			if err_incomplete(err) do return
+			if wsa_err_incomplete(err) do return
 
 			rerr := net.Accept_Error(err)
 			if rerr != nil do win.closesocket(op.client)
@@ -194,7 +194,7 @@ submit :: proc(io: ^IO, user: rawptr, callback: rawptr, op: Operation) {
 
 		case Op_Connect:
 			err := op.callback(winio, completion, &op)
-			if err_incomplete(err) do return
+			if wsa_err_incomplete(err) do return
 
 			rerr := net.Dial_Error(err)
 			if rerr != nil do win.closesocket(op.socket)
@@ -206,7 +206,13 @@ submit :: proc(io: ^IO, user: rawptr, callback: rawptr, op: Operation) {
 			cb := cast(On_Close)completion.user_callback
 			cb(completion.user_data, op.callback(winio, op))
 
-		case Op_Read:    unimplemented()
+		case Op_Read:
+			read, err := op.callback(winio, completion, &op)
+			if err_incomplete(err) do return
+
+			cb := cast(On_Read)completion.user_callback
+			cb(completion.user_data, int(read), os.Errno(err))
+
 		case Op_Recv:    unimplemented()
 		case Op_Send:    unimplemented()
 		case Op_Write:   unimplemented()
@@ -276,7 +282,7 @@ _accept :: proc(io: ^IO, socket: net.TCP_Socket, user: rawptr, callback: On_Acce
 }
 
 Op_Connect :: struct {
-	callback: proc(winio: ^Windows, comp: ^Completion, op: ^Op_Connect) -> (err: win.c_int),
+	callback: proc(^Windows, ^Completion, ^Op_Connect) -> (err: win.c_int),
 	socket:   win.SOCKET,
 	addr:     win.SOCKADDR_STORAGE_LH,
 }
@@ -314,24 +320,10 @@ _connect :: proc(io: ^IO, ep: net.Endpoint, user: rawptr, callback: On_Connect) 
 			)
 			if res == win.SOCKET_ERROR do return win.WSAGetLastError()
 
-			ok = connect_ex(
-				op.socket,
-				&op.addr,
-				size_of(op.addr),
-				nil,
-				0,
-				&transferred,
-				&comp.over,
-			)
+			ok = connect_ex(op.socket, &op.addr, size_of(op.addr), nil, 0, &transferred, &comp.over)
 		} else {
 			flags: win.DWORD
-			ok = win.WSAGetOverlappedResult(
-				op.socket,
-				&comp.over,
-				&transferred,
-				win.FALSE,
-				&flags,
-			)
+			ok = win.WSAGetOverlappedResult(op.socket, &comp.over, &transferred, win.FALSE, &flags)
 		}
 		if !ok do return win.WSAGetLastError()
 
@@ -352,9 +344,10 @@ Op_Close :: struct {
 }
 
 _close :: proc(io: ^IO, fd: os.Handle, user: rawptr, callback: On_Close) {
-	internal_callback := proc(winio: ^Windows, op: Op_Close) -> bool {
+	internal_callback :: proc(winio: ^Windows, op: Op_Close) -> bool {
 		// NOTE: This might cause problems if there is still IO queued/pending.
 		// Is that our responsibility to check/keep track of?
+		// Might want to call win.CancelloEx to cancel all pending operations first.
 
 		// Close is used for both file and socket handles, we call a close proc based on what it is.
 		if   (is_socket(op.fd) or_return) do return win.closesocket(win.SOCKET(op.fd)) == win.NO_ERROR
@@ -368,12 +361,33 @@ _close :: proc(io: ^IO, fd: os.Handle, user: rawptr, callback: On_Close) {
 }
 
 Op_Read :: struct {
+	callback: proc(^Windows, ^Completion, ^Op_Read) -> (read: win.DWORD, err: win.DWORD),
 	fd:  os.Handle,
 	buf: []byte,
+	pending: bool,
 }
 
 _read :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_Read) {
-	unimplemented()
+	internal_callback :: proc(winio: ^Windows, comp: ^Completion, op: ^Op_Read) -> (read: win.DWORD, err: win.DWORD) {
+		ok: win.BOOL
+		if op.pending {
+			flags: win.DWORD
+			ok = win.WSAGetOverlappedResult(win.SOCKET(op.fd), &comp.over, &read, win.FALSE, &flags)
+		} else {
+			// TODO: this requires the file to be opened with win.FILE_FLAG_OVERLAPPED.
+			ok = win.ReadFile(win.HANDLE(op.fd), raw_data(op.buf), u32(len(op.buf)), nil, &comp.over)
+			op.pending = true
+		}
+
+		if !ok do err = win.GetLastError()
+		return
+	}
+
+	submit(io, user, rawptr(callback), Op_Read{
+		callback = internal_callback,
+		fd       = fd,
+		buf      = buf,
+	})
 }
 
 Op_Recv :: struct {
@@ -475,11 +489,15 @@ open_socket :: proc(winio: ^Windows, family: net.Address_Family, protocol: net.S
 	return
 }
 
-err_incomplete :: proc(err: win.c_int) -> bool {
-	return err == win.WSAEWOULDBLOCK ||
-	       err == WSA_IO_PENDING ||
-		   err == WSA_IO_INCOMPLETE ||
+wsa_err_incomplete :: proc(err: win.c_int) -> bool {
+	return err == win.WSAEWOULDBLOCK  ||
+	       err == WSA_IO_PENDING      ||
+		   err == WSA_IO_INCOMPLETE   ||
 		   err == win.WSAEALREADY
+}
+
+err_incomplete :: proc(err: win.DWORD) -> bool {
+	return err == win.ERROR_IO_PENDING
 }
 
 // Verbatim copy of private proc in core:net.
