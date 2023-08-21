@@ -181,6 +181,8 @@ submit :: proc(io: ^IO, user: rawptr, callback: rawptr, op: Operation) {
 	completion.op = op
 
 	completion.callback = proc(winio: ^Windows, completion: ^Completion) {
+		context = completion.ctx
+
 		switch &op in completion.op {
 		case Op_Accept:
 			source, err := op.callback(winio, completion, &op)
@@ -234,7 +236,7 @@ submit :: proc(io: ^IO, user: rawptr, callback: rawptr, op: Operation) {
 			cb := cast(On_Sent)completion.user_callback
 			cb(completion.user_data, int(sent), net.TCP_Send_Error(err))
 
-		case Op_Timeout: unimplemented()
+		case Op_Timeout: unreachable()
 		}
 		pool_put(&winio.completion_pool, completion)
 	}
@@ -526,7 +528,25 @@ Op_Timeout :: struct {
 }
 
 _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout) {
-	unimplemented()
+	winio := cast(^Windows)io
+
+	completion := pool_get(&winio.completion_pool)
+
+	completion.op = Op_Timeout{time.time_add(time.now(), dur)}
+	completion.user_data = user
+	completion.user_callback = rawptr(callback)
+	completion.ctx = context
+
+	completion.callback = proc(winio: ^Windows, completion: ^Completion) {
+		context = completion.ctx
+
+		cb := cast(On_Timeout)completion.user_callback
+		cb(completion.user_data)
+
+		pool_put(&winio.completion_pool, completion)
+	}
+
+	append(&winio.timeouts, completion)
 }
 
 // TODO: cross platform.
