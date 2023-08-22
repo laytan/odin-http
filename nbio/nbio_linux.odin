@@ -112,7 +112,7 @@ flush :: proc(lx: ^Linux, wait_nr: u32, timeouts: ^uint, etime: ^bool) -> os.Err
 	// odinfmt: enable
 
 	// Store length to prevent infinite loop if the callback adds to completed.
-	n = queue.len(&lx.completed)
+	n = queue.len(lx.completed)
 	for _ in 0..<n {
 		completed := queue.pop_front(&lx.completed)
 		context = completed.ctx
@@ -219,7 +219,7 @@ _accept :: proc(io: ^IO, socket: net.TCP_Socket, user: rawptr, callback: On_Acce
 		}
 
 		client := net.TCP_Socket(completion.result)
-		err := prepare(client)
+		err := _prepare_socket(client)
 		source := _sockaddr_storage_to_endpoint(&op.sockaddr)
 
 		callback(completion.user_data, client, source, err)
