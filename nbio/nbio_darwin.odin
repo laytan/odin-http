@@ -1,7 +1,6 @@
 //+private
 package nbio
 
-import "core:c"
 import "core:container/queue"
 import "core:mem"
 import "core:net"
@@ -77,11 +76,11 @@ flush :: proc(io: ^IO) -> os.Errno {
 
 	events: [MAX_EVENTS]kqueue.KEvent
 
-	next_timeout := flush_timeouts(kq)
+	_ = flush_timeouts(kq)
 	change_events := flush_io(kq, events[:])
 
-	if (change_events > 0 || len(kq.completed) == 0) {
-		if (change_events == 0 && len(kq.completed) == 0 && kq.io_inflight == 0) {
+	if (change_events > 0 || queue.len(kq.completed) == 0) {
+		if (change_events == 0 && queue.len(kq.completed) == 0 && kq.io_inflight == 0) {
 			return os.ERROR_NONE
 		}
 
@@ -104,7 +103,7 @@ flush :: proc(io: ^IO) -> os.Errno {
 	}
 
 	// Save length so we avoid an infinite loop when there is added to the queue in a callback.
-	n := queue.len(&kq.completed)
+	n := queue.len(kq.completed)
 	for _ in 0..<n {
 		completed := queue.pop_front(&kq.completed)
 		context = completed.ctx
@@ -206,7 +205,7 @@ _accept :: proc(io: ^IO, socket: net.TCP_Socket, user: rawptr, callback: On_Acce
 		}
 
 		if err == nil {
-			err = prepare(client)
+			err = _prepare_socket(client)
 		}
 
 		if err != nil {
@@ -269,7 +268,7 @@ _connect :: proc(io: ^IO, endpoint: net.Endpoint, user: rawptr, callback: On_Con
 		return
 	}
 
-	if err := prepare(sock); err != nil {
+	if err := _prepare_socket(sock); err != nil {
 		net.close(sock)
 		callback(user, {}, err)
 		return
