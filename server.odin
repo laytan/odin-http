@@ -79,36 +79,21 @@ listen_and_serve :: proc(
 ) -> (
 	err: net.Network_Error,
 ) {
-	server_listen(s, endpoint, opts) or_return
-	return server_serve(s, h)
-}
-
-server_listen :: proc(
-	s: ^Server,
-	endpoint: net.Endpoint = Default_Endpoint,
-	opts: Server_Opts = Default_Server_Opts,
-) -> (
-	err: net.Network_Error,
-) {
-	defer s.state = .Listening
-
-	s.opts = opts
-	s.tcp_sock, err = net.listen_tcp(endpoint)
-	return
-}
-
-server_serve :: proc(s: ^Server, handler: Handler) -> net.Network_Error {
-	s.handler = handler
+	s.handler = h
 
 	// Save allocator so we can free connections later.
 	s.conns = make(map[net.TCP_Socket]^Connection)
 	s.conn_allocator = context.allocator
 
-	nbio.prepare(s.tcp_sock) or_return
-
 	errno := nbio.init(&s.io)
 	// TODO: error handling.
 	assert(errno == os.ERROR_NONE)
+
+	s.tcp_sock, err = nbio.open_and_listen_tcp(&s.io, endpoint)
+	if err != nil {
+		server_shutdown(s)
+		return
+	}
 
 	log.debug("accepting connections")
 	nbio.accept(&s.io, s.tcp_sock, s, on_accept)

@@ -80,15 +80,14 @@ test_write_read_close :: proc(t: ^testing.T) {
 		tctx.io = &io
 
 		path := "test_write_read_close"
-		handle, errno := os.open(
+		handle, errno := open(
+			&io,
 			path,
 			os.O_RDWR | os.O_CREATE | os.O_TRUNC,
 			os.S_IRUSR | os.S_IWUSR | os.S_IRGRP | os.S_IROTH when ODIN_OS != .Windows else 0,
 		)
 		expect(t, errno == os.ERROR_NONE, fmt.tprintf("open file error: %i", errno))
 		defer os.remove(path)
-
-		expect(t, prepare(handle) == nil, "prepare_handle failed")
 
 		tctx.fd = handle
 
@@ -179,11 +178,8 @@ test_client_and_server_send_recv :: proc(t: ^testing.T) {
 			port    = 3131,
 		}
 
-		server, err := net.create_socket(.IP4, .TCP)
+		server, err := open_socket(&io, .IP4, .TCP)
 		expect(t, err == nil, fmt.tprintf("create socket error: %s", err))
-
-		err = prepare(server)
-		expect(t, err == nil, fmt.tprintf("prepare socket err: %s", err))
 
 		err = net.bind(server, endpoint)
 		expect(t, err == nil, fmt.tprintf("bind error: %s", err))
