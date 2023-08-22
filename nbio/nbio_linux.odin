@@ -304,7 +304,7 @@ _connect :: proc(io: ^IO, endpoint: net.Endpoint, user: rawptr, callback: On_Con
 		return
 	}
 
-	if err := prepare(sock); err != nil {
+	if err := _prepare_socket(sock); err != nil {
 		net.close(sock)
 		callback(user, {}, err)
 		return
