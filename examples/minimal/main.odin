@@ -1,6 +1,5 @@
 package main
 
-import "core:net"
 import "core:fmt"
 import "core:log"
 

@@ -2,7 +2,6 @@
 //+build windows
 package nbio
 
-import "core:c"
 import "core:container/queue"
 import "core:mem"
 import "core:net"
@@ -62,7 +61,7 @@ Completion :: struct {
 	over: win.OVERLAPPED,
 
 	op: Operation,
-	callback: proc(winio: ^Windows, completion: ^Completion),
+	callback: proc(io: ^IO, completion: ^Completion),
 	ctx: runtime.Context,
 	user_callback: rawptr,
 	user_data: rawptr,
@@ -100,7 +99,9 @@ _destroy :: proc(io: ^IO) {
 
 	// TODO: error handling.
 	win.CloseHandle(winio.iocp)
-	win.WSACleanup()
+	// win.WSACleanup()
+
+	free(io.impl_data)
 }
 
 _tick :: proc(io: ^IO) -> (err: os.Errno) {
@@ -150,7 +151,7 @@ _tick :: proc(io: ^IO) -> (err: os.Errno) {
 	for _ in 0..<n {
 		completion := queue.pop_front(&winio.completed)
 		context = completion.ctx
-		completion.callback(winio, completion)
+		completion.callback(io, completion)
 	}
 	return
 }
@@ -188,6 +189,119 @@ _listen :: proc(socket: net.TCP_Socket, backlog := 1000) -> (err: net.Network_Er
 	return
 }
 
+// Basically a copy of `os.open`, where a flag is added to signal async io, and creation of IOCP.
+// Specifically the FILE_FLAG_OVERLAPPEd flag.
+_open :: proc(io: ^IO, path: string, mode, perm: int) -> (os.Handle, os.Errno) {
+	if len(path) == 0 {
+		return os.INVALID_HANDLE, os.ERROR_FILE_NOT_FOUND
+	}
+
+	access: u32
+	switch mode & (os.O_RDONLY|os.O_WRONLY|os.O_RDWR) {
+	case os.O_RDONLY: access = win.FILE_GENERIC_READ
+	case os.O_WRONLY: access = win.FILE_GENERIC_WRITE
+	case os.O_RDWR:   access = win.FILE_GENERIC_READ | win.FILE_GENERIC_WRITE
+	}
+
+	if mode&os.O_CREATE != 0 {
+		access |= win.FILE_GENERIC_WRITE
+	}
+	if mode&os.O_APPEND != 0 {
+		access &~= win.FILE_GENERIC_WRITE
+		access |=  win.FILE_APPEND_DATA
+	}
+
+	share_mode := win.FILE_SHARE_READ|win.FILE_SHARE_WRITE
+	sa: ^win.SECURITY_ATTRIBUTES = nil
+	sa_inherit := win.SECURITY_ATTRIBUTES{nLength = size_of(win.SECURITY_ATTRIBUTES), bInheritHandle = true}
+	if mode&os.O_CLOEXEC == 0 {
+		sa = &sa_inherit
+	}
+
+	create_mode: u32
+	switch {
+	case mode&(os.O_CREATE|os.O_EXCL) == (os.O_CREATE | os.O_EXCL):
+		create_mode = win.CREATE_NEW
+	case mode&(os.O_CREATE|os.O_TRUNC) == (os.O_CREATE | os.O_TRUNC):
+		create_mode = win.CREATE_ALWAYS
+	case mode&os.O_CREATE == os.O_CREATE:
+		create_mode = win.OPEN_ALWAYS
+	case mode&os.O_TRUNC == os.O_TRUNC:
+		create_mode = win.TRUNCATE_EXISTING
+	case:
+		create_mode = win.OPEN_EXISTING
+	}
+
+	flags := win.FILE_ATTRIBUTE_NORMAL|win.FILE_FLAG_BACKUP_SEMANTICS
+
+	// This line is the only thing different from the `os.open` procedure.
+	// This makes it an asynchronous file that can be used in nbio.
+	flags |= win.FILE_FLAG_OVERLAPPED
+
+	wide_path := win.utf8_to_wstring(path)
+	handle := os.Handle(win.CreateFileW(
+		wide_path,
+		access,
+		share_mode,
+		sa,
+		create_mode,
+		flags,
+		nil,
+	))
+
+	if handle == os.INVALID_HANDLE {
+		err := os.Errno(win.GetLastError())
+		return os.INVALID_HANDLE, err
+	}
+
+	// Everything past here is custom/not from `os.open`.
+
+	winio := cast(^Windows)io.impl_data
+
+	handle_iocp := win.CreateIoCompletionPort(win.HANDLE(handle), winio.iocp, nil, 0)
+	assert(handle_iocp == winio.iocp)
+
+	mode: byte
+	mode |= FILE_SKIP_COMPLETION_PORT_ON_SUCCESS
+	mode |= FILE_SKIP_SET_EVENT_ON_HANDLE
+	if !win.SetFileCompletionNotificationModes(win.HANDLE(handle), mode) {
+		win.CloseHandle(win.HANDLE(handle))
+		return os.INVALID_HANDLE, os.Errno(win.GetLastError())
+	}
+
+	return handle, os.ERROR_NONE
+}
+
+_open_socket :: proc(io: ^IO, family: net.Address_Family, protocol: net.Socket_Protocol) -> (socket: net.Any_Socket, err: net.Network_Error) {
+	socket, err = net.create_socket(family, protocol)
+	if err != nil do return
+
+	err = _prepare_socket(io, socket)
+	if err != nil do net.close(socket)
+	return
+}
+
+_prepare_socket :: proc(io: ^IO, socket: net.Any_Socket) -> net.Network_Error {
+	net.set_option(socket, .Reuse_Address, true) or_return
+	net.set_option(socket, .TCP_Nodelay, true)   or_return
+
+	winio := cast(^Windows)io.impl_data
+
+	handle := win.HANDLE(uintptr(net.any_socket_to_socket(socket)))
+
+	handle_iocp := win.CreateIoCompletionPort(handle, winio.iocp, nil, 0)
+	assert(handle_iocp == winio.iocp)
+
+	mode: byte
+	mode |= FILE_SKIP_COMPLETION_PORT_ON_SUCCESS
+	mode |= FILE_SKIP_SET_EVENT_ON_HANDLE
+	if !win.SetFileCompletionNotificationModes(handle, mode) {
+		return net.Socket_Option_Error(win.GetLastError())
+	}
+
+	return nil
+}
+
 submit :: proc(io: ^IO, user: rawptr, callback: rawptr, op: Operation) {
 	winio := cast(^Windows)io.impl_data
 
@@ -197,10 +311,12 @@ submit :: proc(io: ^IO, user: rawptr, callback: rawptr, op: Operation) {
 	completion.user_callback = callback
 	completion.op = op
 
-	completion.callback = proc(winio: ^Windows, completion: ^Completion) {
+	completion.callback = proc(io: ^IO, completion: ^Completion) {
+		winio := cast(^Windows)io.impl_data
+
 		switch &op in completion.op {
 		case Op_Accept:
-			source, err := op.callback(winio, completion, &op)
+			source, err := op.callback(io, completion, &op)
 			if wsa_err_incomplete(err) {
 				winio.io_pending += 1
 				return
@@ -213,7 +329,7 @@ submit :: proc(io: ^IO, user: rawptr, callback: rawptr, op: Operation) {
 			cb(completion.user_data, net.TCP_Socket(op.client), source, rerr)
 
 		case Op_Connect:
-			err := op.callback(winio, completion, &op)
+			err := op.callback(io, completion, &op)
 			if wsa_err_incomplete(err) {
 				winio.io_pending += 1
 				return
@@ -277,18 +393,36 @@ submit :: proc(io: ^IO, user: rawptr, callback: rawptr, op: Operation) {
 }
 
 Op_Accept :: struct {
-	callback: proc(^Windows, ^Completion, ^Op_Accept) -> (source: net.Endpoint, err: win.c_int),
+	callback: proc(^IO, ^Completion, ^Op_Accept) -> (source: net.Endpoint, err: win.c_int),
 	socket:   win.SOCKET,
 	client:   win.SOCKET,
 	addr:     win.SOCKADDR_STORAGE_LH,
+	pending:  bool,
 }
 
 _accept :: proc(io: ^IO, socket: net.TCP_Socket, user: rawptr, callback: On_Accept) {
-	internal_callback :: proc(winio: ^Windows, comp: ^Completion, op: ^Op_Accept) -> (source: net.Endpoint, err: win.c_int) {
+	internal_callback :: proc(io: ^IO, comp: ^Completion, op: ^Op_Accept) -> (source: net.Endpoint, err: win.c_int) {
 		ok: win.BOOL
-		if op.client == win.INVALID_SOCKET {
-			op.client, err = open_socket(winio, .IP4, .TCP)
+		if op.pending {
+			// Get status update, we've already initiated the accept.
+			flags: win.DWORD
+			transferred: win.DWORD
+			ok = win.WSAGetOverlappedResult(
+				op.socket,
+				&comp.over,
+				&transferred,
+				win.FALSE,
+				&flags,
+			)
+		} else {
+			op.pending = true
+
+			oclient, oerr := open_socket(io, .IP4, .TCP)
+
+			err = win.c_int(net_err_to_code(oerr))
 			if err != win.NO_ERROR do return
+
+			op.client = win.SOCKET(net.any_socket_to_socket(oclient))
 
 			bytes_read: win.DWORD
 			ok = AcceptEx(
@@ -301,23 +435,11 @@ _accept :: proc(io: ^IO, socket: net.TCP_Socket, user: rawptr, callback: On_Acce
 				&bytes_read,
 				&comp.over,
 			)
-		} else {
-			// Get status update, we've already initiated the accept.
-			flags: win.DWORD
-			transferred: win.DWORD
-			ok = win.WSAGetOverlappedResult(
-				op.socket,
-				&comp.over,
-				&transferred,
-				win.FALSE,
-				&flags,
-			)
 		}
 
 		if !ok {
 			err = win.WSAGetLastError()
 			return
-
 		}
 
 		// enables getsockopt, setsockopt, getsockname, getpeername.
@@ -335,9 +457,10 @@ _accept :: proc(io: ^IO, socket: net.TCP_Socket, user: rawptr, callback: On_Acce
 }
 
 Op_Connect :: struct {
-	callback: proc(^Windows, ^Completion, ^Op_Connect) -> (err: win.c_int),
+	callback: proc(^IO, ^Completion, ^Op_Connect) -> (err: win.c_int),
 	socket:   win.SOCKET,
 	addr:     win.SOCKADDR_STORAGE_LH,
+	pending:  bool,
 }
 
 _connect :: proc(io: ^IO, ep: net.Endpoint, user: rawptr, callback: On_Connect) {
@@ -346,12 +469,21 @@ _connect :: proc(io: ^IO, ep: net.Endpoint, user: rawptr, callback: On_Connect) 
 		return
 	}
 
-	internal_callback :: proc(winio: ^Windows, comp: ^Completion, op: ^Op_Connect) -> (err: win.c_int) {
+	internal_callback :: proc(io: ^IO, comp: ^Completion, op: ^Op_Connect) -> (err: win.c_int) {
 		transferred: win.DWORD
 		ok: win.BOOL
-		if op.socket == win.INVALID_SOCKET {
-			op.socket, err = open_socket(winio, .IP4, .TCP)
+		if op.pending {
+			flags: win.DWORD
+			ok = win.WSAGetOverlappedResult(op.socket, &comp.over, &transferred, win.FALSE, &flags)
+		} else {
+			op.pending = true
+
+			osocket, oerr := open_socket(io, .IP4, .TCP)
+
+			err = win.c_int(net_err_to_code(oerr))
 			if err != win.NO_ERROR do return
+
+			op.socket = win.SOCKET(net.any_socket_to_socket(osocket))
 
 			sockaddr := _endpoint_to_sockaddr({net.IP4_Any, 0})
 			res := win.bind(op.socket, &sockaddr, size_of(sockaddr))
@@ -375,9 +507,6 @@ _connect :: proc(io: ^IO, ep: net.Endpoint, user: rawptr, callback: On_Connect) 
 			if res == win.SOCKET_ERROR do return win.WSAGetLastError()
 
 			ok = connect_ex(op.socket, &op.addr, size_of(op.addr), nil, 0, &transferred, &comp.over)
-		} else {
-			flags: win.DWORD
-			ok = win.WSAGetOverlappedResult(op.socket, &comp.over, &transferred, win.FALSE, &flags)
 		}
 		if !ok do return win.WSAGetLastError()
 
@@ -404,8 +533,11 @@ _close :: proc(io: ^IO, fd: os.Handle, user: rawptr, callback: On_Close) {
 		// Might want to call win.CancelloEx to cancel all pending operations first.
 
 		// Close is used for both file and socket handles, we call a close proc based on what it is.
-		if   (is_socket(op.fd) or_return) do return win.closesocket(win.SOCKET(op.fd)) == win.NO_ERROR
-		else                              do return win.CloseHandle(win.HANDLE(op.fd)) == true
+		if is_socket(op.fd) or_return {
+			return win.closesocket(win.SOCKET(op.fd)) == win.NO_ERROR
+		} else {
+			return win.CloseHandle(win.HANDLE(op.fd)) == true
+		}
 	}
 
 	submit(io, user, rawptr(callback), Op_Close{
@@ -425,8 +557,7 @@ _read :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_Re
 	internal_callback :: proc(winio: ^Windows, comp: ^Completion, op: ^Op_Read) -> (read: win.DWORD, err: win.DWORD) {
 		ok: win.BOOL
 		if op.pending {
-			flags: win.DWORD
-			ok = win.WSAGetOverlappedResult(win.SOCKET(op.fd), &comp.over, &read, win.FALSE, &flags)
+			ok = win.GetOverlappedResult(win.HANDLE(op.fd), &comp.over, &read, win.FALSE)
 		} else {
 			// TODO: this requires the file to be opened with win.FILE_FLAG_OVERLAPPED.
 			ok = win.ReadFile(win.HANDLE(op.fd), raw_data(op.buf), win.DWORD(len(op.buf)), nil, &comp.over)
@@ -456,8 +587,7 @@ _write :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_W
 	internal_callback :: proc(winio: ^Windows, comp: ^Completion, op: ^Op_Write) -> (written: win.DWORD, err: win.DWORD) {
 		ok: win.BOOL
 		if op.pending {
-			flags: win.DWORD
-			ok = win.WSAGetOverlappedResult(win.SOCKET(op.fd), &comp.over, &written, win.FALSE, &flags)
+			ok = win.GetOverlappedResult(win.HANDLE(op.fd), &comp.over, &written, win.FALSE)
 		} else {
 			// TODO: this requires the file to be opened with win.FILE_FLAG_OVERLAPPED.
 			ok = win.WriteFile(win.HANDLE(op.fd), raw_data(op.buf), win.DWORD(len(op.buf)), nil, &comp.over)
@@ -570,7 +700,8 @@ _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout
 	completion.user_callback = rawptr(callback)
 	completion.ctx = context
 
-	completion.callback = proc(winio: ^Windows, completion: ^Completion) {
+	completion.callback = proc(io: ^IO, completion: ^Completion) {
+		winio := cast(^Windows)io.impl_data
 		context = completion.ctx
 
 		cb := cast(On_Timeout)completion.user_callback
@@ -580,62 +711,6 @@ _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout
 	}
 
 	append(&winio.timeouts, completion)
-}
-
-// TODO: cross platform.
-open_socket :: proc(winio: ^Windows, family: net.Address_Family, protocol: net.Socket_Protocol) -> (socket: win.SOCKET, err: win.c_int) {
-	c_type, c_protocol, c_family: c.int
-
-	switch family {
-	case .IP4:  c_family = win.AF_INET
-	case .IP6:  c_family = win.AF_INET6
-	case: unreachable()
-	}
-
-	switch protocol {
-	case .TCP:  c_type = win.SOCK_STREAM; c_protocol = win.IPPROTO_TCP
-	case .UDP:  c_type = win.SOCK_DGRAM;  c_protocol = win.IPPROTO_UDP
-	case: unreachable()
-	}
-
-	flags: win.DWORD
-	flags |= win.WSA_FLAG_OVERLAPPED
-	flags |= win.WSA_FLAG_NO_HANDLE_INHERIT
-
-	socket = win.WSASocketW(c_family, c_type, c_protocol, nil, 0, flags)
-	if socket == win.INVALID_SOCKET {
-		err = win.WSAGetLastError()
-		return
-	}
-	defer if err != win.NO_ERROR do win.closesocket(socket)
-
-	handle := win.HANDLE(socket)
-
-	sock_iocp := win.CreateIoCompletionPort(handle, winio.iocp, nil, 0)
-	assert(sock_iocp == winio.iocp)
-
-	mode: byte
-	mode |= FILE_SKIP_COMPLETION_PORT_ON_SUCCESS
-	mode |= FILE_SKIP_SET_EVENT_ON_HANDLE
-	if !win.SetFileCompletionNotificationModes(handle, mode) {
-		err = win.c_int(win.GetLastError()) // techincally unsafe u32 -> i32.
-		return
-	}
-
-	switch protocol {
-	case .TCP:
-		if perr := prepare(net.TCP_Socket(socket)); perr != nil {
-			err = 1 // TODO: Losing the error here!
-			return
-		}
-	case .UDP:
-		if perr := prepare(net.UDP_Socket(socket)); perr != nil {
-			err = 1 // TODO: Losing the error here!
-			return
-		}
-	}
-
-	return
 }
 
 wsa_err_incomplete :: proc(err: win.c_int) -> bool {
@@ -697,7 +772,7 @@ is_socket :: proc(fd: os.Handle) -> (is_socket: bool, ok: bool) {
 	size: win.c_int = size_of(win.c_int)
 	err_code: [size_of(win.c_int)]byte
 	if err := win.getsockopt(win.SOCKET(fd), win.SOL_SOCKET, win.SO_ERROR, raw_data(err_code[:]), &size); err != win.NO_ERROR {
-		aerr := win.WSAGetLastError()
+		aerr := win.GetLastError()
 		if aerr == win.WSAENOTSOCK do return false, true
 		else                       do return false, false
 	}
@@ -709,4 +784,45 @@ is_socket :: proc(fd: os.Handle) -> (is_socket: bool, ok: bool) {
 	}
 
 	return true, true
+}
+
+net_err_to_code :: proc(err: net.Network_Error) -> os.Errno {
+	switch e in err {
+	case net.Create_Socket_Error:
+		return os.Errno(e)
+	case net.Socket_Option_Error:
+		return os.Errno(e)
+	case net.General_Error:
+		return os.Errno(e)
+	case net.Platform_Error:
+		return os.Errno(e)
+	case net.Dial_Error:
+		return os.Errno(e)
+	case net.Listen_Error:
+		return os.Errno(e)
+	case net.Accept_Error:
+		return os.Errno(e)
+	case net.Bind_Error:
+		return os.Errno(e)
+	case net.TCP_Send_Error:
+		return os.Errno(e)
+	case net.UDP_Send_Error:
+		return os.Errno(e)
+	case net.TCP_Recv_Error:
+		return os.Errno(e)
+	case net.UDP_Recv_Error:
+		return os.Errno(e)
+	case net.Shutdown_Error:
+		return os.Errno(e)
+	case net.Set_Blocking_Error:
+		return os.Errno(e)
+	case net.Parse_Endpoint_Error:
+		return os.Errno(e)
+	case net.Resolve_Error:
+		return os.Errno(e)
+	case net.DNS_Error:
+		return os.Errno(e)
+	case:
+		return os.ERROR_NONE
+	}
 }

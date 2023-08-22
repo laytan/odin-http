@@ -38,6 +38,7 @@ pool_get :: proc(p: ^Pool($T)) -> (^T, mem.Allocator_Error) #optional_allocator_
 		return new(T, p.objects_allocator)
 	}
 
+	mem.zero_item(elem)
 	return elem, nil
 }
 

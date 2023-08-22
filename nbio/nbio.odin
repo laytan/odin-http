@@ -33,37 +33,26 @@ tick :: proc(io: ^IO) -> os.Errno {
 	return _tick(io)
 }
 
-// TODO: set LINGER option?
-//
-// Prepares a socket for non blocking IO,
-// user should call this before passing the socket to any other nbio procs.
-//
-// Sockets returned/created from nbio (accept() for example) are prepared by nbio.
-prepare_socket :: proc(socket: net.Any_Socket) -> net.Network_Error {
-	_ = net.set_option(socket, .Reuse_Address, true)
-	_ = net.set_option(socket, .TCP_Nodelay, true)
-
-	when ODIN_OS != .Windows {
-		net.set_blocking(socket, false) or_return
-	}
-
-	return nil
+// Opens a file hande, sets non blocking mode and relates it to the given IO.
+open :: proc(io: ^IO, path: string, mode: int = os.O_RDONLY, perm: int = 0) -> (os.Handle, os.Errno) {
+	return _open(io, path, mode, perm)
 }
 
-// Prepares a handle for non blocking IO,
-// user should call this before passing the handle to any other nbio procs.
-prepare_handle :: proc(handle: os.Handle) -> net.Network_Error {
-	when ODIN_OS != .Windows {
-		// NOTE: TCP_Socket gets cast to int right away in net, so this is safe to do.
-		return net.set_blocking(net.TCP_Socket(handle), false)
-	} else {
-		return nil
-	}
+// Creates a socket, sets non blocking mode and relates it to the given IO.
+open_socket :: proc(io: ^IO, family: net.Address_Family, protocol: net.Socket_Protocol) -> (net.Any_Socket, net.Network_Error) {
+	return _open_socket(io, family, protocol)
 }
 
-prepare :: proc {
-	prepare_socket,
-	prepare_handle,
+open_and_listen_tcp :: proc(io: ^IO, ep: net.Endpoint) -> (socket: net.TCP_Socket, err: net.Network_Error) {
+	family: net.Address_Family
+	switch _ in ep.address {
+	case net.IP4_Address: family = .IP4
+	case net.IP6_Address: family = .IP6
+	}
+
+	sock := open_socket(io, family, .TCP) or_return
+	if err = listen(socket); err != nil do net.close(sock)
+	return
 }
 
 // Not a non-blocking call,
