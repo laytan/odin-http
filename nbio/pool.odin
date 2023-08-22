@@ -3,6 +3,8 @@ package nbio
 import "core:mem"
 import "core:mem/virtual"
 import "core:container/queue"
+import "core:log"
+import tracy "../odin-tracy"
 
 // An object pool where the objects are allocated on a growing arena.
 Pool :: struct($T: typeid) {
@@ -21,6 +23,8 @@ pool_init :: proc(p: ^Pool($T), cap := DEFAULT_STARTING_CAP, allocator := contex
 	p.allocator = allocator
 	queue.init(&p.objects, cap, allocator) or_return
 	for _ in 0 ..< cap {
+		log.debug("new instance from pool")
+		tracy.Message("new instance from pool")
 		_ = queue.push_back(&p.objects, new(T, p.objects_allocator)) or_return
 	}
 
@@ -35,6 +39,8 @@ pool_destroy :: proc(p: ^Pool($T)) {
 pool_get :: proc(p: ^Pool($T)) -> (^T, mem.Allocator_Error) #optional_allocator_error {
 	elem, ok := queue.pop_front_safe(&p.objects)
 	if !ok {
+		log.debug("new instance from pool")
+		tracy.Message("new instance from pool")
 		return new(T, p.objects_allocator)
 	}
 

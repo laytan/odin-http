@@ -13,6 +13,8 @@ import "core:fmt"
 
 import "nbio"
 
+import tracy "odin-tracy"
+
 Server_Opts :: struct {
 	// Whether the server should accept every request that sends a "Expect: 100-continue" header automatically.
 	// Defaults to true.

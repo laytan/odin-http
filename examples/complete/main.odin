@@ -5,20 +5,41 @@ import "core:log"
 import "core:time"
 import "core:fmt"
 import "core:mem"
+import "core:runtime"
+import "core:os"
+
+import tracy "../../odin-tracy"
 
 import http "../.."
 
 LoggerOpts :: log.Options{.Level, .Time, .Short_File_Path, .Line, .Terminal_Color}
 
-TRACK_LEAKS :: true
+TRACK_LEAKS :: #config(TRACK_LEAKS, false)
+TRACY_ENABLE :: #config(TRACY_ENABLE, false)
 
 main :: proc() {
+	tracy.SetThreadName("main")
+
 	context.logger = log.create_console_logger(log.Level.Debug, LoggerOpts)
+
+	runtime.default_temp_allocator_destroy(&runtime.global_default_temp_allocator_data)
+	temp: mem.Scratch_Allocator
+	mem.scratch_allocator_init(&temp, mem.Kilobyte * 128, context.allocator)
+	context.temp_allocator = mem.scratch_allocator(&temp)
 
 	when TRACK_LEAKS {
 		track: mem.Tracking_Allocator
 		mem.tracking_allocator_init(&track, context.allocator)
 		context.allocator = mem.tracking_allocator(&track)
+	}
+
+	when TRACY_ENABLE {
+		context.allocator = tracy.MakeProfiledAllocator(
+			self              = &tracy.ProfiledAllocatorData{},
+			callstack_size    = 5,
+			backing_allocator = context.allocator,
+			secure            = true,
+		)
 	}
 
 	serve()
