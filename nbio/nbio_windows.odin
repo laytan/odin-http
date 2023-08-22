@@ -276,12 +276,12 @@ _open_socket :: proc(io: ^IO, family: net.Address_Family, protocol: net.Socket_P
 	socket, err = net.create_socket(family, protocol)
 	if err != nil do return
 
-	err = _prepare_socket(io, socket)
+	err = prepare_socket(io, socket)
 	if err != nil do net.close(socket)
 	return
 }
 
-_prepare_socket :: proc(io: ^IO, socket: net.Any_Socket) -> net.Network_Error {
+prepare_socket :: proc(io: ^IO, socket: net.Any_Socket) -> net.Network_Error {
 	net.set_option(socket, .Reuse_Address, true) or_return
 	net.set_option(socket, .TCP_Nodelay, true)   or_return
 
@@ -445,7 +445,7 @@ _accept :: proc(io: ^IO, socket: net.TCP_Socket, user: rawptr, callback: On_Acce
 		// enables getsockopt, setsockopt, getsockname, getpeername.
 		win.setsockopt(op.client, win.SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, nil, 0)
 
-		source = _sockaddr_to_endpoint(&op.addr)
+		source = sockaddr_to_endpoint(&op.addr)
 		return
 	}
 
@@ -485,7 +485,7 @@ _connect :: proc(io: ^IO, ep: net.Endpoint, user: rawptr, callback: On_Connect) 
 
 			op.socket = win.SOCKET(net.any_socket_to_socket(osocket))
 
-			sockaddr := _endpoint_to_sockaddr({net.IP4_Any, 0})
+			sockaddr := endpoint_to_sockaddr({net.IP4_Any, 0})
 			res := win.bind(op.socket, &sockaddr, size_of(sockaddr))
 			if res < 0 do return win.WSAGetLastError()
 
@@ -517,7 +517,7 @@ _connect :: proc(io: ^IO, ep: net.Endpoint, user: rawptr, callback: On_Connect) 
 
 	submit(io, user, rawptr(callback), Op_Connect{
 		callback = internal_callback,
-		addr     = _endpoint_to_sockaddr(ep),
+		addr     = endpoint_to_sockaddr(ep),
 	})
 }
 
@@ -725,7 +725,7 @@ err_incomplete :: proc(err: win.DWORD) -> bool {
 }
 
 // Verbatim copy of private proc in core:net.
-_sockaddr_to_endpoint :: proc(native_addr: ^win.SOCKADDR_STORAGE_LH) -> (ep: net.Endpoint) {
+sockaddr_to_endpoint :: proc(native_addr: ^win.SOCKADDR_STORAGE_LH) -> (ep: net.Endpoint) {
 	switch native_addr.ss_family {
 	case u16(win.AF_INET):
 		addr := cast(^win.sockaddr_in) native_addr
@@ -748,7 +748,7 @@ _sockaddr_to_endpoint :: proc(native_addr: ^win.SOCKADDR_STORAGE_LH) -> (ep: net
 }
 
 // Verbatim copy of private proc in core:net.
-_endpoint_to_sockaddr :: proc(ep: net.Endpoint) -> (sockaddr: win.SOCKADDR_STORAGE_LH) {
+endpoint_to_sockaddr :: proc(ep: net.Endpoint) -> (sockaddr: win.SOCKADDR_STORAGE_LH) {
 	switch a in ep.address {
 	case net.IP4_Address:
 		(^win.sockaddr_in)(&sockaddr)^ = win.sockaddr_in {
