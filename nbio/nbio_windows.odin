@@ -325,7 +325,10 @@ submit :: proc(io: ^IO, user: rawptr, callback: rawptr, op: Operation) {
 			rerr := net.Accept_Error(err)
 			if rerr != nil do win.closesocket(op.client)
 
+			assert(completion.user_callback != nil)
 			cb := cast(On_Accept)completion.user_callback
+			assert(cb != nil)
+			assert(completion.user_data != nil)
 			cb(completion.user_data, net.TCP_Socket(op.client), source, rerr)
 
 		case Op_Connect:
