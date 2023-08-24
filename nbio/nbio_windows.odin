@@ -11,21 +11,6 @@ import "core:time"
 
 import win "core:sys/windows"
 
-foreign import mswsock "system:mswsock.lib"
-@(default_calling_convention="stdcall")
-foreign mswsock {
-	AcceptEx :: proc(
-		socket: win.SOCKET,
-		accept: win.SOCKET,
-		addr_buf: win.PVOID,
-		addr_len: win.DWORD,
-		local_addr_len: win.DWORD,
-		remote_addr_len: win.DWORD,
-		bytes_received: win.LPDWORD,
-		overlapped: win.LPOVERLAPPED,
-	) -> win.BOOL ---
-}
-
 FILE_SKIP_COMPLETION_PORT_ON_SUCCESS :: 0x1
 FILE_SKIP_SET_EVENT_ON_HANDLE :: 0x2
 
@@ -35,13 +20,24 @@ WSA_IO_INCOMPLETE :: 996
 WSA_IO_PENDING :: 997
 
 WSAID_CONNECTEX :: win.GUID{0x25a207b9, 0xddf3, 0x4660, [8]win.BYTE{0x8e, 0xe9, 0x76, 0xe5, 0x8c, 0x74, 0x06, 0x3e}}
-LPFN_CONNECTEX :: #type proc(
+LPFN_CONNECTEX :: #type proc "stdcall" (
 	socket: win.SOCKET,
 	addr: ^win.SOCKADDR_STORAGE_LH,
 	namelen: win.c_int,
 	send_buf: win.PVOID,
 	send_data_len: win.DWORD,
 	bytes_sent: win.LPDWORD,
+	overlapped: win.LPOVERLAPPED,
+) -> win.BOOL
+
+LPFN_ACCEPTEX :: #type proc "stdcall" (
+	listen_sock: win.SOCKET,
+	accept_sock: win.SOCKET,
+	addr_buf: win.PVOID,
+	addr_len: win.DWORD,
+	local_addr_len: win.DWORD,
+	remote_addr_len: win.DWORD,
+	bytes_received: win.LPDWORD,
 	overlapped: win.LPOVERLAPPED,
 ) -> win.BOOL
 
@@ -56,15 +52,16 @@ Windows :: struct {
 	io_pending:      int,
 }
 
+#assert(size_of(win.OVERLAPPED) == 32)
 Completion :: struct {
 	// NOTE: needs to be the first field.
 	over: win.OVERLAPPED,
 
-	op: Operation,
 	callback: proc(io: ^IO, completion: ^Completion),
 	ctx: runtime.Context,
 	user_callback: rawptr,
 	user_data: rawptr,
+	op: Operation,
 }
 
 _init :: proc(io: ^IO, entries: u32 = DEFAULT_ENTRIES, _: u32 = 0, allocator := context.allocator) -> (err: os.Errno) {
@@ -111,6 +108,7 @@ _tick :: proc(io: ^IO) -> (err: os.Errno) {
 		next_timeout := flush_timeouts(winio)
 
 		// Wait a maximum of a ms if there is nothing to do.
+		// TODO: this is pretty naive, a typical server always has accept completions pending and will be at 100% cpu.
 		wait_ms: win.DWORD = 1 if winio.io_pending == 0 else 0
 
 		// But, to counter inaccuracies in low timeouts,
@@ -118,13 +116,13 @@ _tick :: proc(io: ^IO) -> (err: os.Errno) {
 		if nt, ok := next_timeout.?; ok && nt <= time.Millisecond * 15 {
 			wait_ms = 0
 		}
-
-		events: [64]win.OVERLAPPED_ENTRY
+		// TODO: something goes wrong when you increase this, we get 1 good entry and garbage for the others.
+		events: [1]win.OVERLAPPED_ENTRY
 		entries_removed: win.ULONG
 		if !win.GetQueuedCompletionStatusEx(
 			winio.iocp,
 			raw_data(events[:]),
-			64,
+			len(events),
 			&entries_removed,
 			wait_ms,
 			false,
@@ -139,9 +137,11 @@ _tick :: proc(io: ^IO) -> (err: os.Errno) {
 		winio.io_pending -= int(entries_removed)
 
 		for event in events[:entries_removed] {
+			assert(event.lpOverlapped != nil)
+
 			// This is actually pointing at the Completion.over field, but because it is the first field
 			// It is also a valid pointer to the Completion struct.
-			completion := cast(^Completion)event.lpOverlapped
+			completion := transmute(^Completion)event.lpOverlapped
 			queue.push_back(&winio.completed, completion)
 		}
 	}
@@ -316,6 +316,7 @@ submit :: proc(io: ^IO, user: rawptr, callback: rawptr, op: Operation) {
 
 		switch &op in completion.op {
 		case Op_Accept:
+			// TODO: we should directly call the accept callback here, no need for it to be on the Op_Acccept struct.
 			source, err := op.callback(io, completion, &op)
 			if wsa_err_incomplete(err) {
 				winio.io_pending += 1
@@ -325,10 +326,7 @@ submit :: proc(io: ^IO, user: rawptr, callback: rawptr, op: Operation) {
 			rerr := net.Accept_Error(err)
 			if rerr != nil do win.closesocket(op.client)
 
-			assert(completion.user_callback != nil)
 			cb := cast(On_Accept)completion.user_callback
-			assert(cb != nil)
-			assert(completion.user_data != nil)
 			cb(completion.user_data, net.TCP_Socket(op.client), source, rerr)
 
 		case Op_Connect:
@@ -427,14 +425,18 @@ _accept :: proc(io: ^IO, socket: net.TCP_Socket, user: rawptr, callback: On_Acce
 
 			op.client = win.SOCKET(net.any_socket_to_socket(oclient))
 
+			accept_ex: LPFN_ACCEPTEX
+			load_socket_fn(op.socket, win.WSAID_ACCEPTEX, &accept_ex)
+
+			#assert(size_of(win.SOCKADDR_STORAGE_LH) >= size_of(win.sockaddr_in) + 16)
 			bytes_read: win.DWORD
-			ok = AcceptEx(
+			ok = accept_ex(
 				op.socket,
 				op.client,
 				&op.addr,
 				0,
-				size_of(op.addr),
-				size_of(op.addr),
+				size_of(win.sockaddr_in) + 16,
+				size_of(win.sockaddr_in) + 16,
 				&bytes_read,
 				&comp.over,
 			)
@@ -493,23 +495,17 @@ _connect :: proc(io: ^IO, ep: net.Endpoint, user: rawptr, callback: On_Connect) 
 			if res < 0 do return win.WSAGetLastError()
 
 			connect_ex: LPFN_CONNECTEX
-			num_bytes: win.DWORD
-			guid := WSAID_CONNECTEX
-			// TODO: this can also be done asynchronously.
-			res = win.WSAIoctl(
+			load_socket_fn(op.socket, WSAID_CONNECTEX, &connect_ex)
+			// TODO: size_of(win.sockaddr_in6) when ip6.
+			ok = connect_ex(
 				op.socket,
-				win.SIO_GET_EXTENSION_FUNCTION_POINTER,
-				&guid,
-				size_of(win.GUID),
-				&connect_ex,
-				size_of(LPFN_CONNECTEX),
-				&num_bytes,
+				&op.addr,
+				size_of(win.sockaddr_in) + 16,
 				nil,
-				nil,
+				0,
+				&transferred,
+				&comp.over,
 			)
-			if res == win.SOCKET_ERROR do return win.WSAGetLastError()
-
-			ok = connect_ex(op.socket, &op.addr, size_of(op.addr), nil, 0, &transferred, &comp.over)
 		}
 		if !ok do return win.WSAGetLastError()
 
@@ -628,8 +624,9 @@ _recv :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, callba
 			ok = win.WSAGetOverlappedResult(sock, &comp.over, &received, win.FALSE, &flags)
 		} else {
 			flags: win.DWORD
-			err_code := win.WSARecv(sock, &op.buf, 1, nil, &flags, win.LPWSAOVERLAPPED(&comp.over), nil)
-			assert(err_code == win.SOCKET_ERROR)
+			err_code := win.WSARecv(sock, &op.buf, 1, &received, &flags, win.LPWSAOVERLAPPED(&comp.over), nil)
+			ok = err_code != win.SOCKET_ERROR
+			op.pending = true
 		}
 
 		if !ok do err = win.WSAGetLastError()
@@ -671,8 +668,9 @@ _send :: proc(
 			flags: win.DWORD
 			ok = win.WSAGetOverlappedResult(sock, &comp.over, &sent, win.FALSE, &flags)
 		} else {
-			err_code := win.WSASend(sock, &op.buf, 1, nil, 0, win.LPWSAOVERLAPPED(&comp.over), nil)
-			assert(err_code == win.SOCKET_ERROR)
+			err_code := win.WSASend(sock, &op.buf, 1, &sent, 0, win.LPWSAOVERLAPPED(&comp.over), nil)
+			ok = err_code != win.SOCKET_ERROR
+			op.pending = true
 		}
 
 		if !ok do err = win.WSAGetLastError()
@@ -828,4 +826,13 @@ net_err_to_code :: proc(err: net.Network_Error) -> os.Errno {
 	case:
 		return os.ERROR_NONE
 	}
+}
+
+// TODO: loading this takes a overlapped parameter, maybe we can do this async?
+load_socket_fn :: proc(subject: win.SOCKET, guid: win.GUID, fn: ^$T) {
+	guid := guid
+	bytes: u32
+	rc := win.WSAIoctl(subject, win.SIO_GET_EXTENSION_FUNCTION_POINTER, &guid, size_of(guid), fn, size_of(fn), &bytes, nil, nil)
+	assert(rc != win.SOCKET_ERROR)
+	assert(bytes == size_of(fn^))
 }
