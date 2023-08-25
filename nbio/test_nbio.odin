@@ -148,6 +148,7 @@ test_write_read_close :: proc(t: ^testing.T) {
 			os.S_IRUSR | os.S_IWUSR | os.S_IRGRP | os.S_IROTH when ODIN_OS != .Windows else 0,
 		)
 		expect(t, errno == os.ERROR_NONE, fmt.tprintf("open file error: %i", errno))
+		defer os.close(handle)
 		defer os.remove(path)
 
 		tctx.fd = handle
@@ -391,3 +392,60 @@ test_client_and_server_send_recv :: proc(t: ^testing.T) {
 // 		}
 // 	}
 // }
+
+@test
+test_relies_on_offset :: proc(t: ^testing.T) {
+	io: IO
+	init(&io)
+	defer destroy(&io)
+
+	path := "test_relies_on_offset"
+	handle, errno := open(
+		&io,
+		path,
+		os.O_RDWR | os.O_CREATE | os.O_TRUNC,
+		os.S_IRUSR | os.S_IWUSR | os.S_IRGRP | os.S_IROTH when ODIN_OS != .Windows else 0,
+	)
+	expect(t, errno == os.ERROR_NONE, fmt.tprintf("open file error: %i", errno))
+	defer os.close(handle)
+	defer os.remove(path)
+
+	// Write 10 bytes, expect the internal cursor to be 10.
+	written, werrno := write_and_wait(&io, handle, {1, 2, 3, 4, 5, 6, 7, 8, 9, 10})
+	expect(t, werrno == os.ERROR_NONE, fmt.tprintf("write file error: %i", werrno))
+
+	// Write another 10 bytes, expect the internal cursor to be at the end.
+	written, werrno = write_and_wait(&io, handle, {10, 9, 8, 7, 6, 5, 4, 3, 2, 1})
+	expect(t, werrno == os.ERROR_NONE, fmt.tprintf("write file error: %i", werrno))
+
+	buf: [20]byte
+
+	// Because the internal cursor is at the end, a read should result nothing.
+	read, rerrno := read_and_wait(&io, handle, buf[:])
+	expect(t, rerrno == os.ERROR_NONE, fmt.tprintf("read file error: %i", rerrno))
+	expect(t, read == 0, fmt.tprintf("we read %i bytes, should be 0 because we are at the end", read))
+
+	// Seek back to the start, internal cursor to 0.
+	offset, seek_errorno := os.seek(handle, 0, 0)
+	expect(t, seek_errorno == os.ERROR_NONE, fmt.tprintf("seek file error: %i", seek_errorno))
+	expect(t, offset == 0, fmt.tprintf("expected new offset to be start, got: %i", offset))
+
+	// Read 5 bytes from the start, advancing the cursor, that would be {1, 2, 3, 4, 5} from the first write.
+	read, rerrno = read_and_wait(&io, handle, buf[:5])
+	expect(t, rerrno == os.ERROR_NONE, fmt.tprintf("read error: %i", rerrno))
+	expect(t, read == 5, fmt.tprintf("expected to have read 5 bytes, got: %i", read))
+	expect(t, buf[4] == 5, fmt.tprintf("expected the 4th index in buf to be 5, got %v", buf[4]))
+
+	// Read the next 5 bytes, that would be {6, 7, 8, 9, 10} still from the first write.
+	read, rerrno = read_and_wait(&io, handle, buf[5:10])
+	expect(t, rerrno == os.ERROR_NONE, fmt.tprintf("read error: %i", rerrno))
+	expect(t, read == 5, fmt.tprintf("expected to have read 5 bytes, got: %i", read))
+	expect(t, buf[7] == 8, fmt.tprintf("expected the 7th index in buf to be 8, got %v", buf[7]))
+
+	// Explicitly read 5 bytes at offset 5, that would be {5, 6, 7, 8, 9, 10} from the first write.
+	read, rerrno = read_at_and_wait(&io, handle, 5, buf[10:15])
+	expect(t, rerrno == os.ERROR_NONE, fmt.tprintf("read error: %i", rerrno))
+	expect(t, read == 5, fmt.tprintf("expected to have read 5 bytes, got: %i", read))
+	expect(t, buf[12] == 8, fmt.tprintf("expected the 12th index in buf to be 8, got %v", buf[12]))
+}
+
