@@ -7,7 +7,14 @@ import "core:time"
 // INITIAL EXPERIMENTAL AND ALL OTHER WORDS TO SAY THIS IS NOT FINAL.
 // DOESN'T REALLY WORK AT ALL ON SOME PLATFORMS (RANDOM ERRORS) BUT WOULD BE NICE.
 
-accept_and_wait :: proc(io: ^IO, socket: net.TCP_Socket) -> (client: net.TCP_Socket, source: net.Endpoint, err: net.Network_Error) {
+accept_and_wait :: proc(
+	io: ^IO,
+	socket: net.TCP_Socket,
+) -> (
+	client: net.TCP_Socket,
+	source: net.Endpoint,
+	err: net.Network_Error,
+) {
 	Accept_Result :: struct {
 		done:   bool,
 		client: net.TCP_Socket,
@@ -17,13 +24,18 @@ accept_and_wait :: proc(io: ^IO, socket: net.TCP_Socket) -> (client: net.TCP_Soc
 
 	result: Accept_Result
 
-	_accept(io, socket, &result, proc(user: rawptr, client: net.TCP_Socket, source: net.Endpoint, err: net.Network_Error) {
-		result := cast(^Accept_Result)user
-		result.done = true
-		result.client = client
-		result.source = source
-		result.err = err
-	})
+	_accept(
+		io,
+		socket,
+		&result,
+		proc(user: rawptr, client: net.TCP_Socket, source: net.Endpoint, err: net.Network_Error) {
+			result := cast(^Accept_Result)user
+			result.done = true
+			result.client = client
+			result.source = source
+			result.err = err
+		},
+	)
 
 	for !result.done {
 		assert(tick(io) == os.ERROR_NONE)
@@ -82,7 +94,7 @@ connect_and_wait :: proc(io: ^IO, endpoint: net.Endpoint) -> (socket: net.TCP_So
 
 //
 
-@private
+@(private)
 internal_read_and_wait :: proc(io: ^IO, fd: os.Handle, offset: Maybe(int), buf: []byte) -> (read: int, err: os.Errno) {
 	Read_Result :: struct {
 		done: bool,
@@ -96,7 +108,7 @@ internal_read_and_wait :: proc(io: ^IO, fd: os.Handle, offset: Maybe(int), buf: 
 		result := cast(^Read_Result)user
 		result.done = true
 		result.read = read
-		result.err  = err
+		result.err = err
 	})
 
 	for !result.done {
@@ -116,8 +128,16 @@ read_at_and_wait :: proc(io: ^IO, fd: os.Handle, offset: int, buf: []byte) -> (r
 
 //
 
-@private
-internal_recv_and_wait :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte) -> (received: int, client: Maybe(net.Endpoint), err: net.Network_Error) {
+@(private)
+internal_recv_and_wait :: proc(
+	io: ^IO,
+	socket: net.Any_Socket,
+	buf: []byte,
+) -> (
+	received: int,
+	client: Maybe(net.Endpoint),
+	err: net.Network_Error,
+) {
 	Recv_Result :: struct {
 		done:     bool,
 		received: int,
@@ -127,13 +147,19 @@ internal_recv_and_wait :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte) -> 
 
 	result: Recv_Result
 
-	_recv(io, socket, buf, &result, proc(user: rawptr, received: int, client: Maybe(net.Endpoint), err: net.Network_Error) {
-		result := cast(^Recv_Result)user
-		result.done     = true
-		result.err      = err
-		result.client   = client
-		result.received = received
-	})
+	_recv(
+		io,
+		socket,
+		buf,
+		&result,
+		proc(user: rawptr, received: int, client: Maybe(net.Endpoint), err: net.Network_Error) {
+			result := cast(^Recv_Result)user
+			result.done = true
+			result.err = err
+			result.client = client
+			result.received = received
+		},
+	)
 
 	for !result.done {
 		assert(tick(io) == os.ERROR_NONE)
@@ -147,7 +173,15 @@ recv_tcp_and_wait :: proc(io: ^IO, socket: net.TCP_Socket, buf: []byte) -> (rece
 	return
 }
 
-recv_udp_and_wait :: proc(io: ^IO, socket: net.UDP_Socket, buf: []byte) -> (received: int, client: net.Endpoint, err: net.Network_Error) {
+recv_udp_and_wait :: proc(
+	io: ^IO,
+	socket: net.UDP_Socket,
+	buf: []byte,
+) -> (
+	received: int,
+	client: net.Endpoint,
+	err: net.Network_Error,
+) {
 	mc: Maybe(net.Endpoint)
 	received, mc, err = internal_recv_and_wait(io, socket, buf)
 	return received, mc.?, err
@@ -160,8 +194,16 @@ recv_and_wait :: proc {
 
 //
 
-@private
-internal_send_and_wait :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, endpoint: Maybe(net.Endpoint) = nil) -> (sent: int, err: net.Network_Error) {
+@(private)
+internal_send_and_wait :: proc(
+	io: ^IO,
+	socket: net.Any_Socket,
+	buf: []byte,
+	endpoint: Maybe(net.Endpoint) = nil,
+) -> (
+	sent: int,
+	err: net.Network_Error,
+) {
 	Send_Result :: struct {
 		done: bool,
 		sent: int,
@@ -171,11 +213,11 @@ internal_send_and_wait :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, end
 	result: Send_Result
 
 	_send(io, socket, buf, &result, proc(user: rawptr, sent: int, err: net.Network_Error) {
-		result := cast(^Send_Result)user
-		result.done = true
-		result.sent = sent
-		result.err  = err
-	}, endpoint)
+			result := cast(^Send_Result)user
+			result.done = true
+			result.sent = sent
+			result.err = err
+		}, endpoint)
 
 	for !result.done {
 		assert(tick(io) == os.ERROR_NONE)
@@ -184,8 +226,16 @@ internal_send_and_wait :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, end
 	return result.sent, result.err
 }
 
-@private
-internal_send_all_and_wait :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, endpoint: Maybe(net.Endpoint) = nil) -> (sent: int, err: net.Network_Error) {
+@(private)
+internal_send_all_and_wait :: proc(
+	io: ^IO,
+	socket: net.Any_Socket,
+	buf: []byte,
+	endpoint: Maybe(net.Endpoint) = nil,
+) -> (
+	sent: int,
+	err: net.Network_Error,
+) {
 	for sent < len(buf) {
 		sent += internal_send_and_wait(io, socket, buf[sent:], endpoint) or_return
 	}
@@ -200,11 +250,27 @@ send_tcp_all_and_wait :: proc(io: ^IO, socket: net.TCP_Socket, buf: []byte) -> (
 	return internal_send_all_and_wait(io, socket, buf)
 }
 
-send_udp_and_wait :: proc(io: ^IO, socket: net.UDP_Socket, endpoint: net.Endpoint, buf: []byte) -> (sent: int, err: net.Network_Error) {
+send_udp_and_wait :: proc(
+	io: ^IO,
+	socket: net.UDP_Socket,
+	endpoint: net.Endpoint,
+	buf: []byte,
+) -> (
+	sent: int,
+	err: net.Network_Error,
+) {
 	return internal_send_and_wait(io, socket, buf, endpoint)
 }
 
-send_udp_all_and_wait :: proc(io: ^IO, socket: net.UDP_Socket, endpoint: net.Endpoint, buf: []byte) -> (sent: int, err: net.Network_Error) {
+send_udp_all_and_wait :: proc(
+	io: ^IO,
+	socket: net.UDP_Socket,
+	endpoint: net.Endpoint,
+	buf: []byte,
+) -> (
+	sent: int,
+	err: net.Network_Error,
+) {
 	return internal_send_all_and_wait(io, socket, buf, endpoint)
 }
 
@@ -220,8 +286,16 @@ send_all_and_wait :: proc {
 
 //
 
-@private
-internal_write_and_wait :: proc(io: ^IO, fd: os.Handle, buf: []byte, offset: Maybe(int) = nil) -> (written: int, err: os.Errno) {
+@(private)
+internal_write_and_wait :: proc(
+	io: ^IO,
+	fd: os.Handle,
+	buf: []byte,
+	offset: Maybe(int) = nil,
+) -> (
+	written: int,
+	err: os.Errno,
+) {
 	Write_Result :: struct {
 		done:    bool,
 		written: int,
@@ -244,8 +318,16 @@ internal_write_and_wait :: proc(io: ^IO, fd: os.Handle, buf: []byte, offset: May
 	return result.written, result.err
 }
 
-@private
-internal_write_all_and_wait :: proc(io: ^IO, fd: os.Handle, buf: []byte, offset: Maybe(int) = nil) -> (written: int, err: os.Errno) {
+@(private)
+internal_write_all_and_wait :: proc(
+	io: ^IO,
+	fd: os.Handle,
+	buf: []byte,
+	offset: Maybe(int) = nil,
+) -> (
+	written: int,
+	err: os.Errno,
+) {
 	for written < len(buf) {
 		off: Maybe(int) = offset if offset == nil else offset.? + written
 		iwrote, ierr := internal_write_and_wait(io, fd, buf[written:], off)

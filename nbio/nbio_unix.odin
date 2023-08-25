@@ -22,7 +22,14 @@ _prepare_handle :: proc(fd: os.Handle) -> os.Errno {
 	return os.ERROR_NONE
 }
 
-_open_socket :: proc(_: ^IO, family: net.Address_Family, protocol: net.Socket_Protocol) -> (socket: net.Any_Socket, err: net.Network_Error) {
+_open_socket :: proc(
+	_: ^IO,
+	family: net.Address_Family,
+	protocol: net.Socket_Protocol,
+) -> (
+	socket: net.Any_Socket,
+	err: net.Network_Error,
+) {
 	socket, err = net.create_socket(family, protocol)
 	if err != nil do return
 
@@ -34,7 +41,7 @@ _open_socket :: proc(_: ^IO, family: net.Address_Family, protocol: net.Socket_Pr
 _prepare_socket :: proc(socket: net.Any_Socket) -> net.Network_Error {
 	// TODO: set LINGER option?
 	net.set_option(socket, .Reuse_Address, true) or_return
-	net.set_option(socket, .TCP_Nodelay, true)   or_return
-	net.set_blocking(socket, false)              or_return
+	net.set_option(socket, .TCP_Nodelay, true) or_return
+	net.set_blocking(socket, false) or_return
 	return nil
 }

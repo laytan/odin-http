@@ -1,8 +1,8 @@
 package nbio
 
+import "core:net"
 import "core:os"
 import "core:time"
-import "core:net"
 
 @(private)
 DEFAULT_ENTRIES :: 32
@@ -14,6 +14,7 @@ IO :: struct {
 	impl_data: rawptr,
 }
 
+// TODO: remove the entries and flags parameters, maybe use a settings struct or just leave defaults?
 init :: proc(
 	io: ^IO,
 	entries: u32 = DEFAULT_ENTRIES,
@@ -39,14 +40,21 @@ open :: proc(io: ^IO, path: string, mode: int = os.O_RDONLY, perm: int = 0) -> (
 }
 
 // Creates a socket, sets non blocking mode and relates it to the given IO.
-open_socket :: proc(io: ^IO, family: net.Address_Family, protocol: net.Socket_Protocol) -> (net.Any_Socket, net.Network_Error) {
+open_socket :: proc(
+	io: ^IO,
+	family: net.Address_Family,
+	protocol: net.Socket_Protocol,
+) -> (
+	net.Any_Socket,
+	net.Network_Error,
+) {
 	return _open_socket(io, family, protocol)
 }
 
 open_and_listen_tcp :: proc(io: ^IO, ep: net.Endpoint) -> (socket: net.TCP_Socket, err: net.Network_Error) {
 	family := net.family_from_endpoint(ep)
-	sock   := open_socket(io, family, .TCP) or_return
-	socket  = sock.(net.TCP_Socket)
+	sock := open_socket(io, family, .TCP) or_return
+	socket = sock.(net.TCP_Socket)
 
 	if err = net.bind(socket, ep); err != nil {
 		net.close(socket)
@@ -108,20 +116,14 @@ recv_udp :: proc(io: ^IO, socket: net.UDP_Socket, buf: []byte, user: rawptr, cal
 	_recv(io, socket, buf, user, callback)
 }
 
-recv ::proc {
+recv :: proc {
 	recv_tcp,
 	recv_udp,
 }
 
 On_Sent :: proc(user: rawptr, sent: int, err: net.Network_Error)
 
-send_tcp :: proc(
-	io: ^IO,
-	socket: net.TCP_Socket,
-	buf: []byte,
-	user: rawptr,
-	callback: On_Sent,
-) {
+send_tcp :: proc(io: ^IO, socket: net.TCP_Socket, buf: []byte, user: rawptr, callback: On_Sent) {
 	_send(io, socket, buf, user, callback)
 }
 

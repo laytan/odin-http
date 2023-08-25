@@ -1,8 +1,8 @@
 package nbio
 
+import "core:container/queue"
 import "core:mem"
 import "core:mem/virtual"
-import "core:container/queue"
 
 // An object pool where the objects are allocated on a growing arena.
 Pool :: struct($T: typeid) {

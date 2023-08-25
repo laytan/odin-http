@@ -3,9 +3,11 @@ package io_uring
 
 import "core:intrinsics"
 
+//odinfmt:disable
 SYS_io_uring_setup:    uintptr : 425
 SYS_io_uring_enter:    uintptr : 426
 SYS_io_uring_register: uintptr : 427
+//odinfmt:enable
 
 NSIG :: 65
 
