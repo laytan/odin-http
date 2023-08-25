@@ -5,6 +5,7 @@ import "core:os"
 import "core:time"
 
 // INITIAL EXPERIMENTAL AND ALL OTHER WORDS TO SAY THIS IS NOT FINAL.
+// DOESN'T REALLY WORK AT ALL ON SOME PLATFORMS (RANDOM ERRORS) BUT WOULD BE NICE.
 
 accept_and_wait :: proc(io: ^IO, socket: net.TCP_Socket) -> (client: net.TCP_Socket, source: net.Endpoint, err: net.Network_Error) {
 	Accept_Result :: struct {

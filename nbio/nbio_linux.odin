@@ -42,6 +42,10 @@ _init :: proc(io: ^IO, entries: u32 = DEFAULT_ENTRIES, flags: u32 = 0, alloc := 
 	pool_init(&lx.completion_pool, allocator = alloc)
 
 	params: io_uring.io_uring_params
+
+	// Make read, write etc. increment and use the file cursor.
+	params.features |= io_uring.IORING_FEAT_RW_CUR_POS
+
 	ring, rerr := io_uring.io_uring_make(&params, entries, flags)
 	#partial switch rerr {
 	case .None:
@@ -249,14 +253,19 @@ accept_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
 
 Op_Close :: distinct os.Handle
 
-_close :: proc(io: ^IO, fd: os.Handle, user: rawptr, callback: On_Close) {
+_close :: proc(io: ^IO, fd: Closable, user: rawptr, callback: On_Close) {
 	lx := cast(^Linux)io.impl_data
 
 	completion := pool_get(&lx.completion_pool)
 	completion.ctx = context
 	completion.user_data = user
 	completion.user_callback = rawptr(callback)
-	completion.operation = Op_Close(fd)
+
+	switch h in fd {
+	case net.TCP_Socket: completion.operation = Op_Close(h)
+	case net.UDP_Socket: completion.operation = Op_Close(h)
+	case os.Handle:      completion.operation = Op_Close(h)
+	}
 
 	completion.callback = proc(lx: ^Linux, completion: ^Completion) {
 		callback := cast(On_Close)completion.user_callback
@@ -361,11 +370,12 @@ connect_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
 }
 
 Op_Read :: struct {
-	fd:  os.Handle,
-	buf: []byte,
+	fd:     os.Handle,
+	buf:    []byte,
+	offset: Maybe(int),
 }
 
-_read :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_Read) {
+_read :: proc(io: ^IO, fd: os.Handle, offset: Maybe(int), buf: []byte, user: rawptr, callback: On_Read) {
 	lx := cast(^Linux)io.impl_data
 
 	completion := pool_get(&lx.completion_pool)
@@ -373,8 +383,9 @@ _read :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_Re
 	completion.user_data = user
 	completion.user_callback = rawptr(callback)
 	completion.operation = Op_Read {
-		fd  = fd,
-		buf = buf,
+		fd     = fd,
+		buf    = buf,
+		offset = offset,
 	}
 
 	completion.callback = proc(lx: ^Linux, completion: ^Completion) {
@@ -402,7 +413,12 @@ _read :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_Re
 read_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
 	op := completion.operation.(Op_Read)
 
-	_, err := io_uring.read(&lx.ring, u64(uintptr(completion)), op.fd, op.buf, 0)
+	offset: u64 = max(u64) // Max tells linux to use the file cursor as the offset.
+	if off, ok := op.offset.?; ok {
+		offset = u64(off)
+	}
+
+	_, err := io_uring.read(&lx.ring, u64(uintptr(completion)), op.fd, op.buf, offset)
 	if err == .Submission_Queue_Full {
 		queue.push_back(&lx.unqueued, completion)
 		return
@@ -534,11 +550,12 @@ send_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
 }
 
 Op_Write :: struct {
-	fd:  os.Handle,
-	buf: []byte,
+	fd:     os.Handle,
+	buf:    []byte,
+	offset: Maybe(int),
 }
 
-_write :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_Write) {
+_write :: proc(io: ^IO, fd: os.Handle, offset: Maybe(int), buf: []byte, user: rawptr, callback: On_Write) {
 	lx := cast(^Linux)io.impl_data
 
 	completion := pool_get(&lx.completion_pool)
@@ -546,8 +563,9 @@ _write :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_W
 	completion.user_data = user
 	completion.user_callback = rawptr(callback)
 	completion.operation = Op_Write {
-		fd  = fd,
-		buf = buf,
+		fd     = fd,
+		buf    = buf,
+		offset = offset,
 	}
 
 	completion.callback = proc(lx: ^Linux, completion: ^Completion) {
@@ -575,7 +593,12 @@ _write :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_W
 write_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
 	op := &completion.operation.(Op_Write)
 
-	_, err := io_uring.write(&lx.ring, u64(uintptr(completion)), op.fd, op.buf, 0)
+	offset: u64 = max(u64) // Max tells linux to use the file cursor as the offset.
+	if off, ok := op.offset.?; ok {
+		offset = u64(off)
+	}
+
+	_, err := io_uring.write(&lx.ring, u64(uintptr(completion)), op.fd, op.buf, offset)
 	if err == .Submission_Queue_Full {
 		queue.push_back(&lx.unqueued, completion)
 		return

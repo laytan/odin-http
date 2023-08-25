@@ -22,6 +22,7 @@ Request :: struct {
 	url_params:      []string,
 
 	// A growing arena where allocations are freed after the response is sent.
+	// PERF: we can remove this field, and use the context.temp_allocator.
 	allocator:       mem.Allocator,
 
 	// Body memoization and scanner.

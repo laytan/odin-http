@@ -5,7 +5,7 @@ import "core:log"
 
 import http "../.."
 
-// Minimal server that listens on 127.0.0.1:8080 and responds to every request with "Hello, Odin!".
+// Minimal server that listens on 127.0.0.1:8080 and responds to every request with 200 Ok.
 main :: proc() {
 	context.logger = log.create_console_logger(.Info)
 
