@@ -43,7 +43,7 @@ Default_Server_Opts :: Server_Opts {
 	redirect_head_to_get  = true,
 	limit_request_line    = 8000,
 	limit_headers         = 8000,
-	connection_arena_size = mem.Kilobyte * 256,
+	connection_arena_size = mem.Kilobyte,
 }
 
 Server_State :: enum {
@@ -203,8 +203,6 @@ server_shutdown_on_interrupt :: proc(s: ^Server) {
 
 @(private)
 server_on_connection_close :: proc(s: ^Server, c: ^Connection) {
-	scanner_destroy(&c.scanner)
-	virtual.arena_destroy(&c.arena)
 	delete_key(&s.conns, c.socket)
 	free(c, s.conn_allocator)
 }
@@ -273,15 +271,18 @@ connection_close :: proc(c: ^Connection) {
 	// to process the closing and receive any remaining data.
 	net.shutdown(c.socket, net.Shutdown_Manner.Send)
 
+	scanner_destroy(&c.scanner)
+	virtual.arena_destroy(&c.arena)
+
 	nbio.timeout(&c.server.io, Conn_Close_Delay, c, proc(_c: rawptr) {
 		c := cast(^Connection)_c
 
 		sock := c.socket
 		defer log.infof("closed connection: %i", sock)
 
-		net.close(c.socket)
-		c.state = .Closed
+		net.close(sock)
 
+		c.state = .Closed
 		server_on_connection_close(c.server, c)
 	})
 }
@@ -289,6 +290,9 @@ connection_close :: proc(c: ^Connection) {
 @(private)
 on_accept :: proc(server: rawptr, sock: net.TCP_Socket, source: net.Endpoint, err: net.Network_Error) {
 	server := cast(^Server)server
+
+	// TODO: error handling.
+	fmt.assertf(err == nil, "accept error: %v", err)
 
 	// Accept next connection.
 	// TODO: is this how it should be done (performance wise)?
@@ -384,7 +388,6 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.allocator) {
 		}
 
 		l.req.url = url_parse(rline.target.(string), l.req.allocator)
-
 		l.conn.scanner.max_token_size = l.conn.server.opts.limit_headers
 		scanner_scan(&l.conn.scanner, loop, on_header_line)
 	}
