@@ -26,7 +26,7 @@ request_init :: proc(r: ^Request, method := http.Method.Get, allocator := contex
 	r.method = method
 	r.headers = make(http.Headers, 3, allocator)
 	r.cookies = make([dynamic]http.Cookie, allocator)
-	bytes.buffer_init_allocator(&r.body, 0, 1, allocator)
+	bytes.buffer_init_allocator(&r.body, 0, 0, allocator)
 }
 
 // Destroys the request.
@@ -301,7 +301,7 @@ response_body_length :: proc(headers: ^http.Headers, _body: ^bufio.Scanner, max_
 response_body_chunked :: proc(headers: ^http.Headers, _body: ^bufio.Scanner, max_length: int, allocator := context.allocator) -> (body: string, err: http.Body_Error) {
 	body_buff: bytes.Buffer
 
-	bytes.buffer_init_allocator(&body_buff, 0, 1, allocator)
+	bytes.buffer_init_allocator(&body_buff, 0, 0, allocator)
     defer if err != nil do bytes.buffer_destroy(&body_buff)
 
 	for {

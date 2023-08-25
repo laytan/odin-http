@@ -465,7 +465,7 @@ request_body_chunked :: proc(pb: ^Parsing_Body, allocator := context.allocator) 
 		pb.parsing_callback(pb, bytes.buffer_to_string(&pb.buf), true, .None)
 	}
 
-	bytes.buffer_init_allocator(&pb.buf, 0, 1, allocator)
+	bytes.buffer_init_allocator(&pb.buf, 0, 0, allocator)
 	scanner_scan(pb.scanner, pb, on_scan)
 }
 
