@@ -103,21 +103,21 @@ flush :: proc(lx: ^Linux, wait_nr: u32, timeouts: ^uint, etime: ^bool) -> os.Err
 	for _ in 0..<n {
 		unqueued := queue.pop_front(&lx.unqueued)
 		switch op in unqueued.operation {
-		case Op_Accept:  accept_enqueue(lx, unqueued)
-		case Op_Close:   close_enqueue(lx, unqueued)
+		case Op_Accept:  accept_enqueue (lx, unqueued)
+		case Op_Close:   close_enqueue  (lx, unqueued)
 		case Op_Connect: connect_enqueue(lx, unqueued)
-		case Op_Read:    read_enqueue(lx, unqueued)
-		case Op_Recv:    recv_enqueue(lx, unqueued)
-		case Op_Send:    send_enqueue(lx, unqueued)
-		case Op_Write:   write_enqueue(lx, unqueued)
+		case Op_Read:    read_enqueue   (lx, unqueued)
+		case Op_Recv:    recv_enqueue   (lx, unqueued)
+		case Op_Send:    send_enqueue   (lx, unqueued)
+		case Op_Write:   write_enqueue  (lx, unqueued)
 		case Op_Timeout: timeout_enqueue(lx, unqueued)
 		}
 	}
 	// odinfmt: enable
 
-	// Store length to prevent infinite loop if the callback adds to completed.
+
 	n = queue.len(lx.completed)
-	for _ in 0..<n {
+	for _ in 0 ..< n {
 		completed := queue.pop_front(&lx.completed)
 		context = completed.ctx
 		completed.callback(lx, completed)
@@ -224,7 +224,7 @@ _accept :: proc(io: ^IO, socket: net.TCP_Socket, user: rawptr, callback: On_Acce
 
 		client := net.TCP_Socket(completion.result)
 		err := _prepare_socket(client)
-		source := _sockaddr_storage_to_endpoint(&op.sockaddr)
+		source := sockaddr_storage_to_endpoint(&op.sockaddr)
 
 		callback(completion.user_data, client, source, err)
 		pool_put(&lx.completion_pool, completion)
@@ -261,11 +261,14 @@ _close :: proc(io: ^IO, fd: Closable, user: rawptr, callback: On_Close) {
 	completion.user_data = user
 	completion.user_callback = rawptr(callback)
 
+
+
+	//odinfmt:disable
 	switch h in fd {
 	case net.TCP_Socket: completion.operation = Op_Close(h)
 	case net.UDP_Socket: completion.operation = Op_Close(h)
 	case os.Handle:      completion.operation = Op_Close(h)
-	}
+	} //odinfmt:enable
 
 	completion.callback = proc(lx: ^Linux, completion: ^Completion) {
 		callback := cast(On_Close)completion.user_callback
@@ -325,7 +328,7 @@ _connect :: proc(io: ^IO, endpoint: net.Endpoint, user: rawptr, callback: On_Con
 	completion.user_callback = rawptr(callback)
 	completion.operation = Op_Connect {
 		socket   = sock.(net.TCP_Socket),
-		sockaddr = _endpoint_to_sockaddr(endpoint),
+		sockaddr = endpoint_to_sockaddr(endpoint),
 	}
 
 	completion.callback = proc(lx: ^Linux, completion: ^Completion) {
@@ -688,7 +691,7 @@ ring_err_to_os_err :: proc(err: io_uring.IO_Uring_Error) -> os.Errno {
 }
 
 // verbatim copy of net._sockaddr_storage_to_endpoint.
-_sockaddr_storage_to_endpoint :: proc(native_addr: ^os.SOCKADDR_STORAGE_LH) -> (ep: net.Endpoint) {
+sockaddr_storage_to_endpoint :: proc(native_addr: ^os.SOCKADDR_STORAGE_LH) -> (ep: net.Endpoint) {
 	switch native_addr.ss_family {
 	case u16(os.AF_INET):
 		addr := cast(^os.sockaddr_in)native_addr
@@ -711,7 +714,7 @@ _sockaddr_storage_to_endpoint :: proc(native_addr: ^os.SOCKADDR_STORAGE_LH) -> (
 }
 
 // verbatim copy of net._endpoint_to_sockaddr.
-_endpoint_to_sockaddr :: proc(ep: net.Endpoint) -> (sockaddr: os.SOCKADDR_STORAGE_LH) {
+endpoint_to_sockaddr :: proc(ep: net.Endpoint) -> (sockaddr: os.SOCKADDR_STORAGE_LH) {
 	switch a in ep.address {
 	case net.IP4_Address:
 		(^os.sockaddr_in)(&sockaddr)^ = os.sockaddr_in {

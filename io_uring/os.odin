@@ -1,10 +1,10 @@
 //+build linux
 package io_uring
 
-import "core:os"
 import "core:math"
-import "core:sys/unix"
+import "core:os"
 import "core:sync"
+import "core:sys/unix"
 
 DEFAULT_THREAD_IDLE_MS :: 1000
 DEFAULT_ENTRIES :: 32
@@ -34,11 +34,11 @@ IO_Uring_Error :: enum {
 }
 
 IO_Uring :: struct {
-	fd:        os.Handle,
-	sq:        Submission_Queue,
-	cq:        Completion_Queue,
-	flags:     u32,
-	features:  u32,
+	fd:       os.Handle,
+	sq:       Submission_Queue,
+	cq:       Completion_Queue,
+	flags:    u32,
+	features: u32,
 }
 
 // Set up an IO_Uring with default parameters, `entries` must be a power of 2 between 1 and 4096.
@@ -57,13 +57,7 @@ io_uring_make :: proc(
 }
 
 // Initialize and setup a io_uring with more control than io_uring_make.
-io_uring_init :: proc(
-	ring: ^IO_Uring,
-	entries: u32,
-	params: ^io_uring_params,
-) -> (
-	err: IO_Uring_Error,
-) {
+io_uring_init :: proc(ring: ^IO_Uring, entries: u32, params: ^io_uring_params) -> (err: IO_Uring_Error) {
 	check_entries(entries) or_return
 
 	res := sys_io_uring_setup(entries, params)
@@ -268,14 +262,7 @@ cq_ready :: proc(ring: ^IO_Uring) -> (n_ready: u32) {
 // If none are available, enters into the kernel to wait for at most `wait_nr` CQEs.
 // Returns the number of CQEs copied, advancing the CQ ring.
 // Provides all the wait/peek methods found in liburing, but with batching and a single method.
-copy_cqes :: proc(
-	ring: ^IO_Uring,
-	cqes: []io_uring_cqe,
-	wait_nr: u32,
-) -> (
-	n_copied: u32,
-	err: IO_Uring_Error,
-) {
+copy_cqes :: proc(ring: ^IO_Uring, cqes: []io_uring_cqe, wait_nr: u32) -> (n_copied: u32, err: IO_Uring_Error) {
 	n_copied = copy_cqes_ready(ring, cqes)
 	if n_copied > 0 do return
 	if wait_nr > 0 || cq_ring_needs_flush(ring) {
@@ -511,14 +498,7 @@ openat :: proc(
 }
 
 // Queues (but does not submit) an SQE to perform a `close(2)`.
-close :: proc(
-	ring: ^IO_Uring,
-	user_data: u64,
-	fd: os.Handle,
-) -> (
-	sqe: ^io_uring_sqe,
-	err: IO_Uring_Error,
-) {
+close :: proc(ring: ^IO_Uring, user_data: u64, fd: os.Handle) -> (sqe: ^io_uring_sqe, err: IO_Uring_Error) {
 	sqe, err = get_sqe(ring)
 	if err != .None {return}
 	sqe^ = {}
@@ -645,13 +625,7 @@ Submission_Queue :: struct {
 	sqe_tail:  u32,
 }
 
-submission_queue_make :: proc(
-	fd: os.Handle,
-	params: ^io_uring_params,
-) -> (
-	sq: Submission_Queue,
-	ok: bool,
-) {
+submission_queue_make :: proc(fd: os.Handle, params: ^io_uring_params) -> (sq: Submission_Queue, ok: bool) {
 	assert(fd >= 0)
 	// Unsupported feature.
 	assert((params.features & IORING_FEAT_SINGLE_MMAP) != 0)
@@ -664,7 +638,8 @@ submission_queue_make :: proc(
 		nil,
 		uint(size),
 		unix.PROT_READ | unix.PROT_WRITE,
-		unix.MAP_SHARED /* | unix.MAP_POPULATE */,
+		unix.MAP_SHARED,
+		/* | unix.MAP_POPULATE */
 		int(fd),
 		IORING_OFF_SQ_RING,
 	)
@@ -678,7 +653,8 @@ submission_queue_make :: proc(
 		nil,
 		uint(size_sqes),
 		unix.PROT_READ | unix.PROT_WRITE,
-		unix.MAP_SHARED /* | unix.MAP_POPULATE */,
+		unix.MAP_SHARED,
+		/* | unix.MAP_POPULATE */
 		int(fd),
 		IORING_OFF_SQES,
 	)
@@ -716,11 +692,7 @@ Completion_Queue :: struct {
 	cqes:     []io_uring_cqe,
 }
 
-completion_queue_make :: proc(
-	fd: os.Handle,
-	params: ^io_uring_params,
-	sq: ^Submission_Queue,
-) -> Completion_Queue {
+completion_queue_make :: proc(fd: os.Handle, params: ^io_uring_params, sq: ^Submission_Queue) -> Completion_Queue {
 	assert(fd >= 0)
 	// Unsupported feature.
 	assert((params.features & IORING_FEAT_SINGLE_MMAP) != 0)

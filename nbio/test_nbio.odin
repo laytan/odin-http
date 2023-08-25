@@ -1,11 +1,11 @@
 package nbio
 
-import "core:testing"
-import "core:os"
-import "core:net"
 import "core:fmt"
-import "core:slice"
 import "core:mem"
+import "core:net"
+import "core:os"
+import "core:slice"
+import "core:testing"
 import "core:time"
 
 expect :: testing.expect
@@ -393,7 +393,7 @@ test_client_and_server_send_recv :: proc(t: ^testing.T) {
 // 	}
 // }
 
-@test
+@(test)
 test_relies_on_offset :: proc(t: ^testing.T) {
 	io: IO
 	init(&io)
@@ -448,4 +448,3 @@ test_relies_on_offset :: proc(t: ^testing.T) {
 	expect(t, read == 5, fmt.tprintf("expected to have read 5 bytes, got: %i", read))
 	expect(t, buf[12] == 8, fmt.tprintf("expected the 12th index in buf to be 8, got %v", buf[12]))
 }
-
