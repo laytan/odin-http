@@ -80,6 +80,7 @@ listen_and_serve :: proc(
 	err: net.Network_Error,
 ) {
 	s.handler = h
+	s.opts = opts
 
 	// Save allocator so we can free connections later.
 	s.conns = make(map[net.TCP_Socket]^Connection)
