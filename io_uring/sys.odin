@@ -23,6 +23,7 @@ io_uring_params :: struct {
 	sq_off:         io_sqring_offsets,
 	cq_off:         io_cqring_offsets,
 }
+#assert(size_of(io_uring_params) == 120)
 
 io_sqring_offsets :: struct {
 	head:         u32,
@@ -119,6 +120,7 @@ io_uring_sqe :: struct {
 		// cmd:     [^]u8,
 	},
 }
+#assert(size_of(io_uring_sqe) == 64)
 
 // Completion queue entry.
 io_uring_cqe :: struct {
@@ -132,6 +134,7 @@ io_uring_cqe :: struct {
 	 */
 	// big_cqe:   [^]u64,
 }
+#assert(size_of(io_uring_cqe) == 16)
 
 /*
  * sqe.flags

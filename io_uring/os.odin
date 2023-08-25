@@ -68,7 +68,7 @@ io_uring_init :: proc(
 
 	res := sys_io_uring_setup(entries, params)
 	if res < 0 {
-		switch os.Errno(res) {
+		switch os.Errno(-res) {
 		case os.EFAULT:
 			return .Params_Outside_Accessible_Address_Space
 		// The resv array contains non-zero data, p.flags contains an unsupported flag,
@@ -180,7 +180,7 @@ enter :: proc(
 	assert(ring.fd >= 0)
 	ns := sys_io_uring_enter(i32(ring.fd), n_to_submit, min_complete, flags, nil)
 	if ns < 0 {
-		switch os.Errno(ns) {
+		switch os.Errno(-ns) {
 		case os.ERROR_NONE:
 			err = .None
 		case os.EAGAIN:
@@ -370,7 +370,7 @@ read :: proc(
 	sqe.opcode = .READ
 	sqe.fd = i32(fd)
 	sqe.addr = cast(u64)uintptr(&buf[0])
-	sqe.len = u32(len(buf)) // TODO: should we minus the offset here?
+	sqe.len = u32(len(buf))
 	sqe.off = offset
 	sqe.user_data = user_data
 	return
@@ -438,7 +438,7 @@ connect :: proc(
 	sqe.opcode = IORING_OP.CONNECT
 	sqe.fd = i32(sockfd)
 	sqe.addr = cast(u64)uintptr(addr)
-	sqe.off = cast(u64)uintptr(addr_len)
+	sqe.off = cast(u64)addr_len
 	sqe.user_data = user_data
 	return
 }
