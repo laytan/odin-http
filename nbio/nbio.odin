@@ -44,14 +44,16 @@ open_socket :: proc(io: ^IO, family: net.Address_Family, protocol: net.Socket_Pr
 }
 
 open_and_listen_tcp :: proc(io: ^IO, ep: net.Endpoint) -> (socket: net.TCP_Socket, err: net.Network_Error) {
-	family: net.Address_Family
-	switch _ in ep.address {
-	case net.IP4_Address: family = .IP4
-	case net.IP6_Address: family = .IP6
+	family := net.family_from_endpoint(ep)
+	sock   := open_socket(io, family, .TCP) or_return
+	socket  = sock.(net.TCP_Socket)
+
+	if err = net.bind(socket, ep); err != nil {
+		net.close(socket)
+		return
 	}
 
-	sock := open_socket(io, family, .TCP) or_return
-	if err = listen(socket); err != nil do net.close(sock)
+	if err = listen(socket); err != nil do net.close(socket)
 	return
 }
 
