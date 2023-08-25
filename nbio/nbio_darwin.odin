@@ -224,14 +224,19 @@ _accept :: proc(io: ^IO, socket: net.TCP_Socket, user: rawptr, callback: On_Acce
 Op_Close :: distinct os.Handle
 
 // Wraps os.close using the kqueue.
-_close :: proc(io: ^IO, fd: os.Handle, user: rawptr, callback: On_Close) {
+_close :: proc(io: ^IO, fd: Closable, user: rawptr, callback: On_Close) {
 	kq := cast(^KQueue)io.impl_data
 
 	completion := pool_get(&kq.completion_pool)
 	completion.ctx = context
 	completion.user_data = user
 	completion.user_callback = rawptr(callback)
-	completion.operation = Op_Close(fd)
+
+	switch h in fd {
+	case net.TCP_Socket: completion.operation = Op_Close(os.Handle(h))
+	case net.UDP_Socket: completion.operation = Op_Close(os.Handle(h))
+	case os.Handle:      completion.operation = Op_Close(h)
+	}
 
 	completion.callback = proc(kq: ^KQueue, completion: ^Completion) {
 		op := completion.operation.(Op_Close)
@@ -314,11 +319,12 @@ _connect :: proc(io: ^IO, endpoint: net.Endpoint, user: rawptr, callback: On_Con
 }
 
 Op_Read :: struct {
-	fd:  os.Handle,
-	buf: []byte,
+	fd:     os.Handle,
+	buf:    []byte,
+	offset: Maybe(int),
 }
 
-_read :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_Read) {
+_read :: proc(io: ^IO, fd: os.Handle, offset: Maybe(int), buf: []byte, user: rawptr, callback: On_Read) {
 	kq := cast(^KQueue)io.impl_data
 
 	completion := pool_get(&kq.completion_pool)
@@ -326,14 +332,21 @@ _read :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_Re
 	completion.user_data = user
 	completion.user_callback = rawptr(callback)
 	completion.operation = Op_Read {
-		fd  = fd,
-		buf = buf,
+		fd     = fd,
+		buf    = buf,
+		offset = offset,
 	}
 
 	completion.callback = proc(kq: ^KQueue, completion: ^Completion) {
 		op := completion.operation.(Op_Read)
 
-		read, err := os.read(op.fd, op.buf)
+		read: int
+		err: os.Errno
+		switch off in op.offset {
+		case int: read, err = os.read_at(op.fd, op.buf, i64(off))
+		case:     read, err = os.read(op.fd, op.buf)
+		}
+
 		if err == os.EWOULDBLOCK {
 			append(&kq.io_pending, completion)
 			return
@@ -371,7 +384,7 @@ _recv :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, callba
 
 		received: int
 		err: net.Network_Error
-		remote_endpoint: net.Endpoint
+		remote_endpoint: Maybe(net.Endpoint)
 		switch sock in op.socket {
 		case net.TCP_Socket:
 			received, err = net.recv_tcp(sock, op.buf)
@@ -465,9 +478,10 @@ _send :: proc(
 Op_Write :: struct {
 	fd:  os.Handle,
 	buf: []byte,
+	offset: Maybe(int),
 }
 
-_write :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_Write) {
+_write :: proc(io: ^IO, fd: os.Handle, offset: Maybe(int), buf: []byte, user: rawptr, callback: On_Write) {
 	kq := cast(^KQueue)io.impl_data
 
 	completion := pool_get(&kq.completion_pool)
@@ -475,14 +489,21 @@ _write :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_W
 	completion.user_data = user
 	completion.user_callback = rawptr(callback)
 	completion.operation = Op_Write {
-		fd  = fd,
-		buf = buf,
+		fd     = fd,
+		buf    = buf,
+		offset = offset,
 	}
 
 	completion.callback = proc(kq: ^KQueue, completion: ^Completion) {
 		op := completion.operation.(Op_Write)
 
-		written, err := os.write(op.fd, op.buf)
+		written: int
+		err: os.Errno
+		switch off in op.offset {
+		case int: written, err = os.write_at(op.fd, op.buf, i64(off))
+		case:     written, err = os.write(op.fd, op.buf)
+		}
+
 		if err == os.EWOULDBLOCK {
 			append(&kq.io_pending, completion)
 			return
