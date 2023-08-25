@@ -72,7 +72,13 @@ accept :: proc(io: ^IO, socket: net.TCP_Socket, user: rawptr, callback: On_Accep
 
 On_Close :: proc(user: rawptr, ok: bool)
 
-close :: proc(io: ^IO, fd: os.Handle, user: rawptr, callback: On_Close) {
+Closable :: union #no_nil {
+	net.TCP_Socket,
+	net.UDP_Socket,
+	os.Handle,
+}
+
+close :: proc(io: ^IO, fd: Closable, user: rawptr, callback: On_Close) {
 	_close(io, fd, user, callback)
 }
 
@@ -84,36 +90,65 @@ connect :: proc(io: ^IO, endpoint: net.Endpoint, user: rawptr, callback: On_Conn
 
 On_Read :: proc(user: rawptr, read: int, err: os.Errno)
 
-// TODO: accept and use offset.
 read :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_Read) {
-	_read(io, fd, buf, user, callback)
+	_read(io, fd, nil, buf, user, callback)
 }
 
-// udp_remote is set if the socket is a UDP socket.
-On_Recv :: proc(user: rawptr, received: int, udp_remote: net.Endpoint, err: net.Network_Error)
+read_at :: proc(io: ^IO, fd: os.Handle, offset: int, buf: []byte, user: rawptr, callback: On_Read) {
+	_read(io, fd, offset, buf, user, callback)
+}
 
-recv :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, callback: On_Recv) {
+On_Recv :: proc(user: rawptr, received: int, udp_client: Maybe(net.Endpoint), err: net.Network_Error)
+
+recv_tcp :: proc(io: ^IO, socket: net.TCP_Socket, buf: []byte, user: rawptr, callback: On_Recv) {
 	_recv(io, socket, buf, user, callback)
+}
+
+recv_udp :: proc(io: ^IO, socket: net.UDP_Socket, buf: []byte, user: rawptr, callback: On_Recv) {
+	_recv(io, socket, buf, user, callback)
+}
+
+recv ::proc {
+	recv_tcp,
+	recv_udp,
 }
 
 On_Sent :: proc(user: rawptr, sent: int, err: net.Network_Error)
 
-// set endpoint if the socket is a UDP socket.
-send :: proc(
+send_tcp :: proc(
 	io: ^IO,
-	socket: net.Any_Socket,
+	socket: net.TCP_Socket,
 	buf: []byte,
 	user: rawptr,
 	callback: On_Sent,
-	endpoint: Maybe(net.Endpoint) = nil,
 ) {
 	_send(io, socket, buf, user, callback)
+}
+
+send_udp :: proc(
+	io: ^IO,
+	endpoint: net.Endpoint,
+	socket: net.UDP_Socket,
+	buf: []byte,
+	user: rawptr,
+	callback: On_Sent,
+) {
+	_send(io, socket, buf, user, callback, endpoint)
+}
+
+send :: proc {
+	send_udp,
+	send_tcp,
 }
 
 On_Write :: proc(user: rawptr, written: int, err: os.Errno)
 
 write :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_Write) {
-	_write(io, fd, buf, user, callback)
+	_write(io, fd, nil, buf, user, callback)
+}
+
+write_at :: proc(io: ^IO, fd: os.Handle, offset: int, buf: []byte, user: rawptr, callback: On_Write) {
+	_write(io, fd, offset, buf, user, callback)
 }
 
 On_Timeout :: proc(user: rawptr)
