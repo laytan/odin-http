@@ -178,7 +178,7 @@ scanner_scan :: proc(
 	)
 }
 
-scanner_on_read :: proc(s_: rawptr, n: int, _: net.Endpoint, e: net.Network_Error) {
+scanner_on_read :: proc(s_: rawptr, n: int, _: Maybe(net.Endpoint), e: net.Network_Error) {
 	s := cast(^Scanner)s_
 
 	// Basically all errors from recv are for exceptional cases and don't happen under normal circumstances.
