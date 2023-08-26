@@ -136,7 +136,7 @@ flush_completions :: proc(lx: ^Linux, wait_nr: u32, timeouts: ^uint, etime: ^boo
 		wait_remaining = max(0, wait_remaining - completed)
 
 		if completed > 0 {
-			queue.reserve(&lx.completed, completed)
+			queue.reserve(&lx.completed, int(completed))
 			for cqe in cqes[:completed] {
 				lx.ios_in_kernel -= 1
 

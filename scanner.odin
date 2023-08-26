@@ -181,8 +181,6 @@ scanner_scan :: proc(
 scanner_on_read :: proc(s_: rawptr, n: int, _: Maybe(net.Endpoint), e: net.Network_Error) {
 	s := cast(^Scanner)s_
 
-	err: bufio.Scanner_Error
-
 	if e != nil {
 		log.warnf("Unexpected recv error from nbio: %v", e)
 
