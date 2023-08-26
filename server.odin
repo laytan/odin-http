@@ -291,8 +291,22 @@ connection_close :: proc(c: ^Connection) {
 on_accept :: proc(server: rawptr, sock: net.TCP_Socket, source: net.Endpoint, err: net.Network_Error) {
 	server := cast(^Server)server
 
-	// TODO: error handling.
-	fmt.assertf(err == nil, "accept error: %v", err)
+	if err != nil {
+		#partial switch e in err {
+		case net.Accept_Error:
+			#partial switch e {
+			case .No_Socket_Descriptors_Available_For_Client_Socket:
+				log.error("Connection limit reached, trying again in a bit")
+				nbio.timeout(&server.io, time.Second, server, proc(server: rawptr) {
+					server := cast(^Server)server
+					nbio.accept(&server.io, server.tcp_sock, server, on_accept)
+				})
+				return
+			}
+		}
+
+		fmt.panicf("accept error: %v", err)
+	}
 
 	// Accept next connection.
 	// TODO: is this how it should be done (performance wise)?

@@ -135,22 +135,25 @@ flush_completions :: proc(lx: ^Linux, wait_nr: u32, timeouts: ^uint, etime: ^boo
 
 		wait_remaining = max(0, wait_remaining - completed)
 
-		for cqe in cqes[:completed] {
-			lx.ios_in_kernel -= 1
+		if completed > 0 {
+			queue.reserve(&lx.completed, completed)
+			for cqe in cqes[:completed] {
+				lx.ios_in_kernel -= 1
 
-			if cqe.user_data == 0 {
-				timeouts^ -= 1
+				if cqe.user_data == 0 {
+					timeouts^ -= 1
 
-				if (-cqe.res == i32(os.ETIME)) {
-					etime^ = true
+					if (-cqe.res == i32(os.ETIME)) {
+						etime^ = true
+					}
+					continue
 				}
-				continue
+
+				completion := cast(^Completion)uintptr(cqe.user_data)
+				completion.result = cqe.res
+
+				queue.push_back(&lx.completed, completion)
 			}
-
-			completion := cast(^Completion)uintptr(cqe.user_data)
-			completion.result = cqe.res
-
-			queue.push_back(&lx.completed, completion)
 		}
 
 		if completed < len(cqes) do break

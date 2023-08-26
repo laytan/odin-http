@@ -15,7 +15,6 @@ KQueue :: struct {
 	io_inflight:     int,
 	completion_pool: Pool(Completion),
 	timeouts:        [dynamic]^Completion,
-	// TODO: should be a queue.
 	completed:       queue.Queue(^Completion),
 	io_pending:      [dynamic]^Completion,
 	allocator:       mem.Allocator,
@@ -95,10 +94,12 @@ flush :: proc(io: ^IO) -> os.Errno {
 		kq.io_inflight += change_events
 		kq.io_inflight -= new_events
 
-		queue.reserve(&kq.completed, new_events)
-		for event in events[:new_events] {
-			completion := cast(^Completion)event.udata
-			queue.push_back(&kq.completed, completion)
+		if new_events > 0 {
+			queue.reserve(&kq.completed, new_events)
+			for event in events[:new_events] {
+				completion := cast(^Completion)event.udata
+				queue.push_back(&kq.completed, completion)
+			}
 		}
 	}
 
