@@ -181,38 +181,39 @@ scanner_scan :: proc(
 scanner_on_read :: proc(s_: rawptr, n: int, _: Maybe(net.Endpoint), e: net.Network_Error) {
 	s := cast(^Scanner)s_
 
-	// Basically all errors from recv are for exceptional cases and don't happen under normal circumstances.
 	err: bufio.Scanner_Error
-	if e != nil {
-		log.errorf("Unexpected recv error from nbio: %v", e)
-		err = .Unknown
-	}
 
-	set_err :: proc(s: ^Scanner, err: bufio.Scanner_Error) {
-		switch s._err {
-		case nil, .EOF:
-			s._err = err
+	if e != nil {
+		log.warnf("Unexpected recv error from nbio: %v", e)
+
+		#partial switch ee in e {
+		case net.TCP_Recv_Error:
+			#partial switch ee {
+			case .Connection_Closed,
+				net.TCP_Recv_Error(9): // 9 for EBADF (bad file descriptor) happens when OS closes socket.
+				s._err = .EOF
+				return
+			}
 		}
+
+		s._err = .Unknown
+		return
 	}
 
 	defer scanner_scan(s, s.user_data, s.callback)
 
 	// When n == 0, connection is closed or buffer is of length 0.
 	if n == 0 {
-		set_err(s, .EOF)
+		s._err = .EOF
 		return
 	}
 
 	if n < 0 || len(s.buf) - s.end < n {
-		set_err(s, .Bad_Read_Count)
+		s._err = .Bad_Read_Count
 		return
 	}
 
 	s.end += n
-	if err != nil {
-		set_err(s, err)
-		return
-	}
 	if n > 0 {
 		s.successive_empty_token_count = 0
 		return
@@ -224,9 +225,9 @@ scanner_on_read :: proc(s_: rawptr, n: int, _: Maybe(net.Endpoint), e: net.Netwo
 	}
 	if s.consecutive_empty_reads > s.max_consecutive_empty_reads {
 		if s.could_be_too_short {
-			set_err(s, .Too_Short)
+			s._err = .Too_Short
 		} else {
-			set_err(s, .No_Progress)
+			s._err = .No_Progress
 		}
 		return
 	}
