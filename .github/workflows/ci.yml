@@ -9,106 +9,18 @@ env:
   FORCE_COLOR: "1"
 
 jobs:
-  linux:
-    runs-on: ubuntu-latest
+  check:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-2022]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v1
-      - name: Download LLVM, botan
-        run: sudo apt-get install llvm-11 clang-11 libbotan-2-dev botan
-      - name: Get odin
-        run: git clone https://github.com/odin-lang/Odin
-      - name: build odin
-        run: cd Odin && ./build_odin.sh release
-      - name: Odin version
-        run: ./Odin/odin version
-        timeout-minutes: 1
-      - name: Odin report
-        run: ./Odin/odin report
-        timeout-minutes: 1
+      - uses: laytan/setup-odin@v1
       - name: Non-blocking IO test
-        run: ./Odin/odin test nbio
-        timeout-minutes: 10
+        run: odin test nbio
+        timeout-minutes: 1
       - name: Odin check
         if: success() || failure()
-        run: ./Odin/odin check examples/complete -vet --strict-style && ./Odin/odin check examples/client -vet --strict-style
-        timeout-minutes: 10
-      # TODO:
-      # - name: Odin check for Linux i386
-      #   if: success() || failure()
-      #   run: ./Odin/odin check examples/complete -vet -target:linux_i386 --strict-style && ./Odin/odin check examples/client -vet -target:linux_i386 --strict-style
-      #   timeout-minutes: 10
-      # - name: Odin check for FreeBSD amd64
-      #   if: success() || failure()
-      #   run: ./Odin/odin check examples/complete -vet -target:freebsd_amd64 --strict-style && ./Odin/odin check examples/client -vet -target:freebsd_amd64 --strict-style
-      #   timeout-minutes: 10
-      # - name: Odin check for OpenBSD amd64
-      #   if: success() || failure()
-      #   run: ./Odin/odin check examples/complete -vet -target:openbsd_amd64 --strict-style && ./Odin/odin check examples/client -vet -target:openbsd_amd64 --strict-style
-      #   timeout-minutes: 10
-  macOS:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v1
-      - name: Download LLVM, botan and setup PATH
-        run: |
-          brew install llvm@14 botan
-          echo "/usr/local/opt/llvm@14/bin" >> $GITHUB_PATH
-          TMP_PATH=$(xcrun --show-sdk-path)/user/include
-          echo "CPATH=$TMP_PATH" >> $GITHUB_ENV
-      - name: Get odin
-        run: git clone https://github.com/odin-lang/Odin
-      - name: build odin
-        run: cd Odin && ./build_odin.sh release
-      - name: Odin version
-        run: ./Odin/odin version
+        run: odin check examples/complete -vet --strict-style && odin check examples/client -vet --strict-style
         timeout-minutes: 1
-      - name: Odin report
-        run: ./Odin/odin report
-        timeout-minutes: 1
-      - name: Non-blocking IO test
-        run: ./Odin/odin test nbio
-        timeout-minutes: 10
-      - name: Odin check
-        if: success() || failure()
-        run: ./Odin/odin check examples/complete -vet --strict-style && ./Odin/odin check examples/client -vet --strict-style
-        timeout-minutes: 10
-  windows:
-    runs-on: windows-2022
-    steps:
-      - uses: actions/checkout@v1
-      - name: Get odin
-        run: git clone https://github.com/odin-lang/Odin
-      - name: build Odin
-        run: |
-          cd Odin
-          .\build.bat
-      - name: Odin version
-        run: .\Odin\odin.exe version
-        timeout-minutes: 1
-      - name: Odin report
-        run: .\Odin\odin.exe report
-        timeout-minutes: 1
-      - name: Non-blocking IO test
-        shell: cmd
-        run: .\Odin\odin.exe test nbio
-        timeout-minutes: 10
-      - name: Odin check server
-        if: success() || failure()
-        shell: cmd
-        run: .\Odin\odin.exe check examples/complete -vet --strict-style
-        timeout-minutes: 10
-      - name: Odin check client
-        if: success() || failure()
-        shell: cmd
-        run: .\Odin\odin.exe check examples/client -vet --strict-style
-        timeout-minutes: 10
-      - name: Odin check server for Windows 32bits
-        if: success() || failure()
-        shell: cmd
-        run: .\Odin\odin.exe check examples/complete -target:windows_i386 --strict-style
-        timeout-minutes: 10
-      - name: Odin check client for Windows 32bits
-        if: success() || failure()
-        shell: cmd
-        run: .\Odin\odin.exe check examples/client -target:windows_i386 --strict-style
-        timeout-minutes: 10
