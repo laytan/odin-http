@@ -3,7 +3,6 @@ package http
 
 import "core:bufio"
 import "core:intrinsics"
-import "core:log"
 import "core:net"
 
 import "nbio"
