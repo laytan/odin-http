@@ -8,7 +8,7 @@ import "core:net"
 import "core:os"
 import "core:runtime"
 import "core:time"
-import "core:fmt"
+import "core:log"
 
 import win "core:sys/windows"
 
@@ -419,22 +419,25 @@ _read :: proc(io: ^IO, fd: os.Handle, offset: Maybe(int), buf: []byte, user: raw
 		ok: win.BOOL
 		if op.pending {
 			ok = win.GetOverlappedResult(win.HANDLE(op.fd), &comp.over, &read, win.FALSE)
-
-			// Increment offset if this was not a call with an offset set.
-			if _, ok := op.offset.?; !ok {
-				winio.offsets[op.fd] += read
-			}
 		} else {
 			comp.over.Offset     = u32(op.offset.? or_else int(winio.offsets[op.fd]))
 			comp.over.OffsetHigh = comp.over.Offset >> 32
 
-			ok = win.ReadFile(win.HANDLE(op.fd), raw_data(op.buf), win.DWORD(len(op.buf)), nil, &comp.over)
-			assert(!ok, "given handle for reading is not a non-blocking handle")
+			ok = win.ReadFile(win.HANDLE(op.fd), raw_data(op.buf), win.DWORD(len(op.buf)), &read, &comp.over)
+
+			// Not sure if this also happens with correctly set up handles some times.
+			if ok do log.debug("non-blocking write returned immediately, is the handle set up correctly?")
 
 			op.pending = true
 		}
 
 		if !ok do err = win.GetLastError()
+
+		// Increment offset if this was not a call with an offset set.
+		if _, ok := op.offset.?; !ok {
+			winio.offsets[op.fd] += read
+		}
+
 		return
 	}
 
@@ -459,21 +462,24 @@ _write :: proc(io: ^IO, fd: os.Handle, offset: Maybe(int), buf: []byte, user: ra
 		ok: win.BOOL
 		if op.pending {
 			ok = win.GetOverlappedResult(win.HANDLE(op.fd), &comp.over, &written, win.FALSE)
-
-			// Increment offset if this was not a call with an offset set.
-			if _, ok := op.offset.?; !ok {
-				winio.offsets[op.fd] += written
-			}
 		} else {
 			comp.over.Offset     = u32(op.offset.? or_else int(winio.offsets[op.fd]))
 			comp.over.OffsetHigh = comp.over.Offset >> 32
-			ok = win.WriteFile(win.HANDLE(op.fd), raw_data(op.buf), win.DWORD(len(op.buf)), nil, &comp.over)
-			assert(!ok, "given handle for writing is not a non-blocking handle")
+			ok = win.WriteFile(win.HANDLE(op.fd), raw_data(op.buf), win.DWORD(len(op.buf)), &written, &comp.over)
+
+			// Not sure if this also happens with correctly set up handles some times.
+			if ok do log.debug("non-blocking write returned immediately, is the handle set up correctly?")
 
 			op.pending = true
 		}
 
 		if !ok do err = win.GetLastError()
+
+		// Increment offset if this was not a call with an offset set.
+		if _, ok := op.offset.?; !ok {
+			winio.offsets[op.fd] += written
+		}
+
 		return
 	}
 

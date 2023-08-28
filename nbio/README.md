@@ -8,6 +8,7 @@ This package implements an event loop based abstraction.
 
 - Windows implementation has a bug I can't figure out where we can only retrieve one queued event at a time
 - Benchmarking
+- Some UDP implementations
 
 *APIs:*
 
