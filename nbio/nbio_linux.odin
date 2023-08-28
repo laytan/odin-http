@@ -33,7 +33,10 @@ Completion :: struct {
 	user_data:     rawptr,
 }
 
-_init :: proc(io: ^IO, entries: u32 = DEFAULT_ENTRIES, flags: u32 = 0, alloc := context.allocator) -> (err: os.Errno) {
+_init :: proc(io: ^IO, alloc := context.allocator) -> (err: os.Errno) {
+	flags:   u32 = 0
+	entries: u32 = 32
+
 	lx := new(Linux, alloc)
 	io.impl_data = lx
 
@@ -616,6 +619,9 @@ write_enqueue :: proc(lx: ^Linux, completion: ^Completion) {
 Op_Timeout :: struct {
 	expires: os.Unix_File_Time,
 }
+
+@(private="file")
+NANOSECONDS_PER_SECOND :: 1e+9
 
 _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout) {
 	lx := cast(^Linux)io.impl_data
