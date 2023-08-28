@@ -261,11 +261,9 @@ connection_close :: proc(c: ^Connection) {
 		return
 	}
 
-	log.infof("closing connection: %i", c.socket)
+	log.debugf("closing connection: %i", c.socket)
 
 	c.state = .Closing
-
-	// TODO: non blocking net.shutdown and net.close?
 
 	// Close read side of the connection, then wait a little bit, allowing the client
 	// to process the closing and receive any remaining data.
@@ -274,16 +272,16 @@ connection_close :: proc(c: ^Connection) {
 	scanner_destroy(&c.scanner)
 	virtual.arena_destroy(&c.arena)
 
-	nbio.timeout(&c.server.io, Conn_Close_Delay, c, proc(_c: rawptr) {
-		c := cast(^Connection)_c
+	nbio.timeout(&c.server.io, Conn_Close_Delay, c, proc(c: rawptr) {
+		c := cast(^Connection)c
+		nbio.close(&c.server.io, c.socket, c, proc(c: rawptr, ok: bool) {
+			c := cast(^Connection)c
 
-		sock := c.socket
-		defer log.infof("closed connection: %i", sock)
+			log.debugf("closed connection: %i", c.socket)
 
-		net.close(sock)
-
-		c.state = .Closed
-		server_on_connection_close(c.server, c)
+			c.state = .Closed
+			server_on_connection_close(c.server, c)
+		})
 	})
 }
 

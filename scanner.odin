@@ -181,9 +181,9 @@ scanner_scan :: proc(
 scanner_on_read :: proc(s_: rawptr, n: int, _: Maybe(net.Endpoint), e: net.Network_Error) {
 	s := cast(^Scanner)s_
 
-	if e != nil {
-		log.warnf("Unexpected recv error from nbio: %v", e)
+	defer scanner_scan(s, s.user_data, s.callback)
 
+	if e != nil {
 		#partial switch ee in e {
 		case net.TCP_Recv_Error:
 			#partial switch ee {
@@ -197,8 +197,6 @@ scanner_on_read :: proc(s_: rawptr, n: int, _: Maybe(net.Endpoint), e: net.Netwo
 		s._err = .Unknown
 		return
 	}
-
-	defer scanner_scan(s, s.user_data, s.callback)
 
 	// When n == 0, connection is closed or buffer is of length 0.
 	if n == 0 {
