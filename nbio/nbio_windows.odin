@@ -212,12 +212,16 @@ _open :: proc(io: ^IO, path: string, mode, perm: int) -> (os.Handle, os.Errno) {
 	handle_iocp := win.CreateIoCompletionPort(win.HANDLE(handle), winio.iocp, nil, 0)
 	assert(handle_iocp == winio.iocp)
 
-	mode: byte
-	mode |= FILE_SKIP_COMPLETION_PORT_ON_SUCCESS
-	mode |= FILE_SKIP_SET_EVENT_ON_HANDLE
-	if !win.SetFileCompletionNotificationModes(win.HANDLE(handle), mode) {
+	cmode: byte
+	cmode |= FILE_SKIP_COMPLETION_PORT_ON_SUCCESS
+	cmode |= FILE_SKIP_SET_EVENT_ON_HANDLE
+	if !win.SetFileCompletionNotificationModes(win.HANDLE(handle), cmode) {
 		win.CloseHandle(win.HANDLE(handle))
 		return os.INVALID_HANDLE, os.Errno(win.GetLastError())
+	}
+
+	if mode&os.O_APPEND != 0 {
+		_seek(io, handle, 0, .End)
 	}
 
 	return handle, os.ERROR_NONE
