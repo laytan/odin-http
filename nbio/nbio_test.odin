@@ -148,7 +148,7 @@ test_write_read_close :: proc(t: ^testing.T) {
 			os.S_IRUSR | os.S_IWUSR | os.S_IRGRP | os.S_IROTH when ODIN_OS != .Windows else 0,
 		)
 		expect(t, errno == os.ERROR_NONE, fmt.tprintf("open file error: %i", errno))
-		defer os.close(handle)
+		defer close(&io, handle, nil, proc(_: rawptr, _: bool) {})
 		defer os.remove(path)
 
 		tctx.fd = handle
@@ -407,7 +407,7 @@ test_relies_on_offset :: proc(t: ^testing.T) {
 		os.S_IRUSR | os.S_IWUSR | os.S_IRGRP | os.S_IROTH when ODIN_OS != .Windows else 0,
 	)
 	expect(t, errno == os.ERROR_NONE, fmt.tprintf("open file error: %i", errno))
-	defer os.close(handle)
+	defer close(&io, handle, nil, proc(_: rawptr, _: bool) {})
 	defer os.remove(path)
 
 	// Write 10 bytes, expect the internal cursor to be 10.
@@ -426,7 +426,7 @@ test_relies_on_offset :: proc(t: ^testing.T) {
 	expect(t, read == 0, fmt.tprintf("we read %i bytes, should be 0 because we are at the end", read))
 
 	// Seek back to the start, internal cursor to 0.
-	offset, seek_errorno := os.seek(handle, 0, 0)
+	offset, seek_errorno := seek(&io, handle, 0)
 	expect(t, seek_errorno == os.ERROR_NONE, fmt.tprintf("seek file error: %i", seek_errorno))
 	expect(t, offset == 0, fmt.tprintf("expected new offset to be start, got: %i", offset))
 

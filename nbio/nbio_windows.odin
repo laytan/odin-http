@@ -8,69 +8,18 @@ import "core:net"
 import "core:os"
 import "core:runtime"
 import "core:time"
+import "core:fmt"
 
 import win "core:sys/windows"
 
-FILE_SKIP_COMPLETION_PORT_ON_SUCCESS :: 0x1
-FILE_SKIP_SET_EVENT_ON_HANDLE :: 0x2
-
-SO_UPDATE_ACCEPT_CONTEXT :: 28683
-
-WSA_IO_INCOMPLETE :: 996
-WSA_IO_PENDING :: 997
-
-WSAID_CONNECTEX :: win.GUID{0x25a207b9, 0xddf3, 0x4660, [8]win.BYTE{0x8e, 0xe9, 0x76, 0xe5, 0x8c, 0x74, 0x06, 0x3e}}
-LPFN_CONNECTEX :: #type proc "stdcall" (
-	socket: win.SOCKET,
-	addr: ^win.SOCKADDR_STORAGE_LH,
-	namelen: win.c_int,
-	send_buf: win.PVOID,
-	send_data_len: win.DWORD,
-	bytes_sent: win.LPDWORD,
-	overlapped: win.LPOVERLAPPED,
-) -> win.BOOL
-
-LPFN_ACCEPTEX :: #type proc "stdcall" (
-	listen_sock: win.SOCKET,
-	accept_sock: win.SOCKET,
-	addr_buf: win.PVOID,
-	addr_len: win.DWORD,
-	local_addr_len: win.DWORD,
-	remote_addr_len: win.DWORD,
-	bytes_received: win.LPDWORD,
-	overlapped: win.LPOVERLAPPED,
-) -> win.BOOL
-
-// TODO: convert windows error to os error.
-
-Windows :: struct {
-	iocp:            win.HANDLE,
-	allocator:       mem.Allocator,
-	timeouts:        [dynamic]^Completion,
-	completed:       queue.Queue(^Completion),
-	completion_pool: Pool(Completion),
-	io_pending:      int,
-}
-
-#assert(size_of(win.OVERLAPPED) == 32)
-Completion :: struct {
-	// NOTE: needs to be the first field.
-	over: win.OVERLAPPED,
-
-	callback: proc(io: ^IO, completion: ^Completion),
-	ctx: runtime.Context,
-	user_callback: rawptr,
-	user_data: rawptr,
-	op: Operation,
-}
-
-_init :: proc(io: ^IO, entries: u32 = DEFAULT_ENTRIES, _: u32 = 0, allocator := context.allocator) -> (err: os.Errno) {
+_init :: proc(io: ^IO, allocator := context.allocator) -> (err: os.Errno) {
 	winio := new(Windows, allocator)
 	winio.allocator = allocator
 
 	pool_init(&winio.completion_pool, allocator = allocator)
 	queue.init(&winio.completed, allocator = allocator)
 	winio.timeouts = make([dynamic]^Completion, allocator)
+	winio.offsets = make(map[os.Handle]u32, allocator = allocator)
 
 	win.ensure_winsock_initialized()
 	defer if err != win.NO_ERROR {
@@ -93,6 +42,7 @@ _destroy :: proc(io: ^IO) {
 	delete(winio.timeouts)
 	queue.destroy(&winio.completed)
 	pool_destroy(&winio.completion_pool)
+	delete(winio.offsets)
 
 	// TODO: error handling.
 	win.CloseHandle(winio.iocp)
@@ -116,12 +66,12 @@ _tick :: proc(io: ^IO) -> (err: os.Errno) {
 		if nt, ok := next_timeout.?; ok && nt <= time.Millisecond * 15 {
 			wait_ms = 0
 		}
-		// TODO: something goes wrong when you increase this, we get 1 good entry and garbage for the others.
+		// TODO/FIXME/PERF: something goes wrong when you increase this, we get 1 good entry and garbage for the others.
 		events: [1]win.OVERLAPPED_ENTRY
 		entries_removed: win.ULONG
 		if !win.GetQueuedCompletionStatusEx(
 			winio.iocp,
-			raw_data(events[:]),
+			&events[0],
 			len(events),
 			&entries_removed,
 			wait_ms,
@@ -156,6 +106,7 @@ _tick :: proc(io: ^IO) -> (err: os.Errno) {
 	return
 }
 
+@(private="file")
 flush_timeouts :: proc(winio: ^Windows) -> (expires: Maybe(time.Duration)) {
 	curr: time.Time
 	timeout_len := len(winio.timeouts)
@@ -272,6 +223,26 @@ _open :: proc(io: ^IO, path: string, mode, perm: int) -> (os.Handle, os.Errno) {
 	return handle, os.ERROR_NONE
 }
 
+_seek :: proc(io: ^IO, fd: os.Handle, offset: int, whence: Whence) -> (int, os.Errno) {
+	winio := cast(^Windows)io.impl_data
+	switch whence {
+	case .Set:
+		winio.offsets[fd] = u32(offset)
+	case .Curr:
+		winio.offsets[fd] += u32(offset)
+	case .End:
+		size: win.LARGE_INTEGER
+		ok := win.GetFileSizeEx(win.HANDLE(fd), &size)
+		if !ok {
+			return 0, os.Errno(win.GetLastError())
+		}
+
+		winio.offsets[fd] = u32(size) + u32(offset)
+	}
+
+	return int(winio.offsets[fd]), os.ERROR_NONE
+}
+
 _open_socket :: proc(io: ^IO, family: net.Address_Family, protocol: net.Socket_Protocol) -> (socket: net.Any_Socket, err: net.Network_Error) {
 	socket, err = net.create_socket(family, protocol)
 	if err != nil do return
@@ -279,118 +250,6 @@ _open_socket :: proc(io: ^IO, family: net.Address_Family, protocol: net.Socket_P
 	err = prepare_socket(io, socket)
 	if err != nil do net.close(socket)
 	return
-}
-
-prepare_socket :: proc(io: ^IO, socket: net.Any_Socket) -> net.Network_Error {
-	net.set_option(socket, .Reuse_Address, true) or_return
-	net.set_option(socket, .TCP_Nodelay, true)   or_return
-
-	winio := cast(^Windows)io.impl_data
-
-	handle := win.HANDLE(uintptr(net.any_socket_to_socket(socket)))
-
-	handle_iocp := win.CreateIoCompletionPort(handle, winio.iocp, nil, 0)
-	assert(handle_iocp == winio.iocp)
-
-	mode: byte
-	mode |= FILE_SKIP_COMPLETION_PORT_ON_SUCCESS
-	mode |= FILE_SKIP_SET_EVENT_ON_HANDLE
-	if !win.SetFileCompletionNotificationModes(handle, mode) {
-		return net.Socket_Option_Error(win.GetLastError())
-	}
-
-	return nil
-}
-
-submit :: proc(io: ^IO, user: rawptr, callback: rawptr, op: Operation) {
-	winio := cast(^Windows)io.impl_data
-
-	completion := pool_get(&winio.completion_pool)
-	completion.ctx = context
-	completion.user_data = user
-	completion.user_callback = callback
-	completion.op = op
-
-	completion.callback = proc(io: ^IO, completion: ^Completion) {
-		winio := cast(^Windows)io.impl_data
-
-		switch &op in completion.op {
-		case Op_Accept:
-			// TODO: we should directly call the accept callback here, no need for it to be on the Op_Acccept struct.
-			source, err := op.callback(io, completion, &op)
-			if wsa_err_incomplete(err) {
-				winio.io_pending += 1
-				return
-			}
-
-			rerr := net.Accept_Error(err)
-			if rerr != nil do win.closesocket(op.client)
-
-			cb := cast(On_Accept)completion.user_callback
-			cb(completion.user_data, net.TCP_Socket(op.client), source, rerr)
-
-		case Op_Connect:
-			err := op.callback(io, completion, &op)
-			if wsa_err_incomplete(err) {
-				winio.io_pending += 1
-				return
-			}
-
-			rerr := net.Dial_Error(err)
-			if rerr != nil do win.closesocket(op.socket)
-
-			cb := cast(On_Connect)completion.user_callback
-			cb(completion.user_data, net.TCP_Socket(op.socket), rerr)
-
-		case Op_Close:
-			cb := cast(On_Close)completion.user_callback
-			cb(completion.user_data, op.callback(winio, op))
-
-		case Op_Read:
-			read, err := op.callback(winio, completion, &op)
-			if err_incomplete(err) {
-				winio.io_pending += 1
-				return
-			}
-
-			cb := cast(On_Read)completion.user_callback
-			cb(completion.user_data, int(read), os.Errno(err))
-
-		case Op_Write:
-			written, err := op.callback(winio, completion, &op)
-			if err_incomplete(err) {
-				winio.io_pending += 1
-				return
-			}
-
-			cb := cast(On_Write)completion.user_callback
-			cb(completion.user_data, int(written), os.Errno(err))
-
-		case Op_Recv:
-			received, err := op.callback(winio, completion, &op)
-			if wsa_err_incomplete(err) {
-				winio.io_pending += 1
-				return
-			}
-
-			cb := cast(On_Recv)completion.user_callback
-			cb(completion.user_data, int(received), {}, net.TCP_Recv_Error(err))
-
-		case Op_Send:
-			sent, err := op.callback(winio, completion, &op)
-			if wsa_err_incomplete(err) {
-				winio.io_pending += 1
-				return
-			}
-
-			cb := cast(On_Sent)completion.user_callback
-			cb(completion.user_data, int(sent), net.TCP_Send_Error(err))
-
-		case Op_Timeout: unreachable()
-		}
-		pool_put(&winio.completion_pool, completion)
-	}
-	queue.push_back(&winio.completed, completion)
 }
 
 Op_Accept :: struct {
@@ -522,20 +381,22 @@ _connect :: proc(io: ^IO, ep: net.Endpoint, user: rawptr, callback: On_Connect) 
 
 Op_Close :: struct {
 	callback: proc(^Windows, Op_Close) -> bool,
-	fd: os.Handle,
+	fd: Closable,
 }
 
-_close :: proc(io: ^IO, fd: os.Handle, user: rawptr, callback: On_Close) {
+_close :: proc(io: ^IO, fd: Closable, user: rawptr, callback: On_Close) {
 	internal_callback :: proc(winio: ^Windows, op: Op_Close) -> bool {
 		// NOTE: This might cause problems if there is still IO queued/pending.
 		// Is that our responsibility to check/keep track of?
 		// Might want to call win.CancelloEx to cancel all pending operations first.
 
-		// Close is used for both file and socket handles, we call a close proc based on what it is.
-		if is_socket(op.fd) or_return {
-			return win.closesocket(win.SOCKET(op.fd)) == win.NO_ERROR
-		} else {
-			return win.CloseHandle(win.HANDLE(op.fd)) == true
+		switch h in op.fd {
+		case os.Handle:
+			delete_key(&winio.offsets, h)
+			return win.CloseHandle(win.HANDLE(h)) == true
+		case net.TCP_Socket: return win.closesocket(win.SOCKET(h)) == win.NO_ERROR
+		case net.UDP_Socket: return win.closesocket(win.SOCKET(h)) == win.NO_ERROR
+		case: unreachable()
 		}
 	}
 
@@ -548,19 +409,28 @@ _close :: proc(io: ^IO, fd: os.Handle, user: rawptr, callback: On_Close) {
 Op_Read :: struct {
 	callback: proc(^Windows, ^Completion, ^Op_Read) -> (read: win.DWORD, err: win.DWORD),
 	fd:       os.Handle,
+	offset:   Maybe(int),
 	buf:      []byte,
 	pending:  bool,
 }
 
-_read :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_Read) {
+_read :: proc(io: ^IO, fd: os.Handle, offset: Maybe(int), buf: []byte, user: rawptr, callback: On_Read) {
 	internal_callback :: proc(winio: ^Windows, comp: ^Completion, op: ^Op_Read) -> (read: win.DWORD, err: win.DWORD) {
 		ok: win.BOOL
 		if op.pending {
 			ok = win.GetOverlappedResult(win.HANDLE(op.fd), &comp.over, &read, win.FALSE)
+
+			// Increment offset if this was not a call with an offset set.
+			if _, ok := op.offset.?; !ok {
+				winio.offsets[op.fd] += read
+			}
 		} else {
-			// TODO: this requires the file to be opened with win.FILE_FLAG_OVERLAPPED.
+			comp.over.Offset     = u32(op.offset.? or_else int(winio.offsets[op.fd]))
+			comp.over.OffsetHigh = comp.over.Offset >> 32
+
 			ok = win.ReadFile(win.HANDLE(op.fd), raw_data(op.buf), win.DWORD(len(op.buf)), nil, &comp.over)
-			assert(!ok)
+			assert(!ok, "given handle for reading is not a non-blocking handle")
+
 			op.pending = true
 		}
 
@@ -571,6 +441,7 @@ _read :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_Re
 	submit(io, user, rawptr(callback), Op_Read{
 		callback = internal_callback,
 		fd       = fd,
+		offset   = offset,
 		buf      = buf,
 	})
 }
@@ -578,19 +449,27 @@ _read :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_Re
 Op_Write :: struct {
 	callback: proc(^Windows, ^Completion, ^Op_Write) -> (written: win.DWORD, err: win.DWORD),
 	fd:       os.Handle,
+	offset:   Maybe(int),
 	buf:      []byte,
 	pending:  bool,
 }
 
-_write :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_Write) {
+_write :: proc(io: ^IO, fd: os.Handle, offset: Maybe(int), buf: []byte, user: rawptr, callback: On_Write) {
 	internal_callback :: proc(winio: ^Windows, comp: ^Completion, op: ^Op_Write) -> (written: win.DWORD, err: win.DWORD) {
 		ok: win.BOOL
 		if op.pending {
 			ok = win.GetOverlappedResult(win.HANDLE(op.fd), &comp.over, &written, win.FALSE)
+
+			// Increment offset if this was not a call with an offset set.
+			if _, ok := op.offset.?; !ok {
+				winio.offsets[op.fd] += written
+			}
 		} else {
-			// TODO: this requires the file to be opened with win.FILE_FLAG_OVERLAPPED.
+			comp.over.Offset     = u32(op.offset.? or_else int(winio.offsets[op.fd]))
+			comp.over.OffsetHigh = comp.over.Offset >> 32
 			ok = win.WriteFile(win.HANDLE(op.fd), raw_data(op.buf), win.DWORD(len(op.buf)), nil, &comp.over)
-			assert(!ok)
+			assert(!ok, "given handle for writing is not a non-blocking handle")
+
 			op.pending = true
 		}
 
@@ -601,6 +480,7 @@ _write :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_W
 	submit(io, user, rawptr(callback), Op_Write{
 		callback = internal_callback,
 		fd       = fd,
+		offset   = offset,
 		buf      = buf,
 	})
 }
@@ -714,6 +594,192 @@ _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout
 	append(&winio.timeouts, completion)
 }
 
+@(private="file")
+FILE_SKIP_COMPLETION_PORT_ON_SUCCESS :: 0x1
+@(private="file")
+FILE_SKIP_SET_EVENT_ON_HANDLE :: 0x2
+
+@(private="file")
+SO_UPDATE_ACCEPT_CONTEXT :: 28683
+
+@(private="file")
+WSA_IO_INCOMPLETE :: 996
+@(private="file")
+WSA_IO_PENDING :: 997
+
+@(private="file")
+WSAID_CONNECTEX :: win.GUID{0x25a207b9, 0xddf3, 0x4660, [8]win.BYTE{0x8e, 0xe9, 0x76, 0xe5, 0x8c, 0x74, 0x06, 0x3e}}
+
+@(private="file")
+LPFN_CONNECTEX :: #type proc "stdcall" (
+	socket: win.SOCKET,
+	addr: ^win.SOCKADDR_STORAGE_LH,
+	namelen: win.c_int,
+	send_buf: win.PVOID,
+	send_data_len: win.DWORD,
+	bytes_sent: win.LPDWORD,
+	overlapped: win.LPOVERLAPPED,
+) -> win.BOOL
+
+@(private="file")
+LPFN_ACCEPTEX :: #type proc "stdcall" (
+	listen_sock: win.SOCKET,
+	accept_sock: win.SOCKET,
+	addr_buf: win.PVOID,
+	addr_len: win.DWORD,
+	local_addr_len: win.DWORD,
+	remote_addr_len: win.DWORD,
+	bytes_received: win.LPDWORD,
+	overlapped: win.LPOVERLAPPED,
+) -> win.BOOL
+
+@(private="file")
+Windows :: struct {
+	iocp:            win.HANDLE,
+	allocator:       mem.Allocator,
+	timeouts:        [dynamic]^Completion,
+	completed:       queue.Queue(^Completion),
+	completion_pool: Pool(Completion),
+	io_pending:      int,
+	// The asynchronous Windows API's don't support reading at the current offset of a file, so we keep track ourselves.
+	offsets:         map[os.Handle]u32,
+}
+
+#assert(size_of(win.OVERLAPPED) == 32)
+
+@(private="file")
+Completion :: struct {
+	// NOTE: needs to be the first field.
+	over: win.OVERLAPPED,
+
+	// TODO: make a proc outside of this, don't need it in here.
+	callback: proc(io: ^IO, completion: ^Completion),
+	ctx: runtime.Context,
+	user_callback: rawptr,
+	user_data: rawptr,
+	op: Operation,
+}
+
+@(private="file")
+prepare_socket :: proc(io: ^IO, socket: net.Any_Socket) -> net.Network_Error {
+	net.set_option(socket, .Reuse_Address, true) or_return
+	net.set_option(socket, .TCP_Nodelay, true)   or_return
+
+	winio := cast(^Windows)io.impl_data
+
+	handle := win.HANDLE(uintptr(net.any_socket_to_socket(socket)))
+
+	handle_iocp := win.CreateIoCompletionPort(handle, winio.iocp, nil, 0)
+	assert(handle_iocp == winio.iocp)
+
+	mode: byte
+	mode |= FILE_SKIP_COMPLETION_PORT_ON_SUCCESS
+	mode |= FILE_SKIP_SET_EVENT_ON_HANDLE
+	if !win.SetFileCompletionNotificationModes(handle, mode) {
+		return net.Socket_Option_Error(win.GetLastError())
+	}
+
+	return nil
+}
+
+@(private="file")
+submit :: proc(io: ^IO, user: rawptr, callback: rawptr, op: Operation) {
+	winio := cast(^Windows)io.impl_data
+
+	completion := pool_get(&winio.completion_pool)
+	completion.ctx = context
+	completion.user_data = user
+	completion.user_callback = callback
+	completion.op = op
+
+	completion.callback = proc(io: ^IO, completion: ^Completion) {
+		winio := cast(^Windows)io.impl_data
+
+		switch &op in completion.op {
+		case Op_Accept:
+			// TODO: we should directly call the accept callback here, no need for it to be on the Op_Acccept struct.
+			source, err := op.callback(io, completion, &op)
+			if wsa_err_incomplete(err) {
+				winio.io_pending += 1
+				return
+			}
+
+			rerr := net.Accept_Error(err)
+			if rerr != nil do win.closesocket(op.client)
+
+			cb := cast(On_Accept)completion.user_callback
+			cb(completion.user_data, net.TCP_Socket(op.client), source, rerr)
+
+		case Op_Connect:
+			err := op.callback(io, completion, &op)
+			if wsa_err_incomplete(err) {
+				winio.io_pending += 1
+				return
+			}
+
+			rerr := net.Dial_Error(err)
+			if rerr != nil do win.closesocket(op.socket)
+
+			cb := cast(On_Connect)completion.user_callback
+			cb(completion.user_data, net.TCP_Socket(op.socket), rerr)
+
+		case Op_Close:
+			cb := cast(On_Close)completion.user_callback
+			cb(completion.user_data, op.callback(winio, op))
+
+		case Op_Read:
+			read, err := op.callback(winio, completion, &op)
+			if err_incomplete(err) {
+				winio.io_pending += 1
+				return
+			}
+
+			if err == win.ERROR_HANDLE_EOF {
+				err = win.NO_ERROR
+			}
+
+			cb := cast(On_Read)completion.user_callback
+			cb(completion.user_data, int(read), os.Errno(err))
+
+		case Op_Write:
+			written, err := op.callback(winio, completion, &op)
+			if err_incomplete(err) {
+				winio.io_pending += 1
+				return
+			}
+
+			cb := cast(On_Write)completion.user_callback
+			cb(completion.user_data, int(written), os.Errno(err))
+
+		case Op_Recv:
+			received, err := op.callback(winio, completion, &op)
+			if wsa_err_incomplete(err) {
+				winio.io_pending += 1
+				return
+			}
+
+			cb := cast(On_Recv)completion.user_callback
+			cb(completion.user_data, int(received), {}, net.TCP_Recv_Error(err))
+
+		case Op_Send:
+			sent, err := op.callback(winio, completion, &op)
+			if wsa_err_incomplete(err) {
+				winio.io_pending += 1
+				return
+			}
+
+			cb := cast(On_Sent)completion.user_callback
+			cb(completion.user_data, int(sent), net.TCP_Send_Error(err))
+
+		case Op_Timeout: unreachable()
+		}
+		pool_put(&winio.completion_pool, completion)
+	}
+	queue.push_back(&winio.completed, completion)
+}
+
+
+@(private="file")
 wsa_err_incomplete :: proc(err: win.c_int) -> bool {
 	return err == win.WSAEWOULDBLOCK  ||
 	       err == WSA_IO_PENDING      ||
@@ -721,11 +787,13 @@ wsa_err_incomplete :: proc(err: win.c_int) -> bool {
 		   err == win.WSAEALREADY
 }
 
+@(private="file")
 err_incomplete :: proc(err: win.DWORD) -> bool {
 	return err == win.ERROR_IO_PENDING
 }
 
 // Verbatim copy of private proc in core:net.
+@(private="file")
 sockaddr_to_endpoint :: proc(native_addr: ^win.SOCKADDR_STORAGE_LH) -> (ep: net.Endpoint) {
 	switch native_addr.ss_family {
 	case u16(win.AF_INET):
@@ -749,6 +817,7 @@ sockaddr_to_endpoint :: proc(native_addr: ^win.SOCKADDR_STORAGE_LH) -> (ep: net.
 }
 
 // Verbatim copy of private proc in core:net.
+@(private="file")
 endpoint_to_sockaddr :: proc(ep: net.Endpoint) -> (sockaddr: win.SOCKADDR_STORAGE_LH) {
 	switch a in ep.address {
 	case net.IP4_Address:
@@ -769,24 +838,7 @@ endpoint_to_sockaddr :: proc(ep: net.Endpoint) -> (sockaddr: win.SOCKADDR_STORAG
 	unreachable()
 }
 
-is_socket :: proc(fd: os.Handle) -> (is_socket: bool, ok: bool) {
-	size: win.c_int = size_of(win.c_int)
-	err_code: [size_of(win.c_int)]byte
-	if err := win.getsockopt(win.SOCKET(fd), win.SOL_SOCKET, win.SO_ERROR, raw_data(err_code[:]), &size); err != win.NO_ERROR {
-		aerr := win.GetLastError()
-		if aerr == win.WSAENOTSOCK do return false, true
-		else                       do return false, false
-	}
-
-	err_code_ := transmute(win.c_int)err_code
-	if err_code_ != win.NO_ERROR {
-		if err_code_ == win.WSAENOTSOCK do return false, true
-		else                            do return false, false
-	}
-
-	return true, true
-}
-
+@(private="file")
 net_err_to_code :: proc(err: net.Network_Error) -> os.Errno {
 	switch e in err {
 	case net.Create_Socket_Error:
@@ -829,6 +881,7 @@ net_err_to_code :: proc(err: net.Network_Error) -> os.Errno {
 }
 
 // TODO: loading this takes a overlapped parameter, maybe we can do this async?
+@(private="file")
 load_socket_fn :: proc(subject: win.SOCKET, guid: win.GUID, fn: ^$T) {
 	guid := guid
 	bytes: u32

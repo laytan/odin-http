@@ -14,6 +14,11 @@ _open :: proc(_: ^IO, path: string, mode, perm: int) -> (handle: os.Handle, errn
 	return
 }
 
+_seek :: proc(_: ^IO, fd: os.Handle, offset: int, whence: Whence) -> (int, os.Errno) {
+	r, err := os.seek(fd, i64(offset), int(whence))
+	return int(r), err
+}
+
 _prepare_handle :: proc(fd: os.Handle) -> os.Errno {
 	// NOTE: TCP_Socket gets cast to int right away in net, so this is safe to do.
 	if err := net.set_blocking(net.TCP_Socket(fd), false); err != nil {

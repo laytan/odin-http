@@ -28,7 +28,7 @@ Completion :: struct {
 	user_data:     rawptr,
 }
 
-_init :: proc(io: ^IO, _: u32 = DEFAULT_ENTRIES, _: u32 = 0, allocator := context.allocator) -> (err: os.Errno) {
+_init :: proc(io: ^IO, allocator := context.allocator) -> (err: os.Errno) {
 	kq := new(KQueue, allocator)
 	defer if err != os.ERROR_NONE do free(kq, allocator)
 
