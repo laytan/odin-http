@@ -77,9 +77,8 @@ flush :: proc(io: ^IO) -> os.Errno {
 		new_events, err := kqueue.kevent(io.kq, events[:change_events], events[:], &ts)
 		if err != .None do return ev_err_to_os_err(err)
 
-		for _ in 0 ..< change_events {
-			unordered_remove(&io.io_pending, 0)
-		}
+		// PERF: this is ordered and O(N), can this be made unordered?
+		remove_range(&kq.io_pending, 0, change_events)
 
 		io.io_inflight += change_events
 		io.io_inflight -= new_events
