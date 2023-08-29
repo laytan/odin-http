@@ -66,8 +66,8 @@ _tick :: proc(io: ^IO) -> (err: os.Errno) {
 		if nt, ok := next_timeout.?; ok && nt <= time.Millisecond * 15 {
 			wait_ms = 0
 		}
-		// TODO/FIXME/PERF: something goes wrong when you increase this, we get 1 good entry and garbage for the others.
-		events: [1]win.OVERLAPPED_ENTRY
+
+		events: [256]win.OVERLAPPED_ENTRY
 		entries_removed: win.ULONG
 		if !win.GetQueuedCompletionStatusEx(
 			winio.iocp,
