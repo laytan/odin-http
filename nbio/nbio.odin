@@ -49,9 +49,12 @@ destroy :: proc(io: ^IO) { _destroy(io) }
 The callback for non blocking `timeout` calls
 
 Inputs:
-- user: A passed through pointer from initiation to its callback
+- user:           A passed through pointer from initiation to its callback
+- completed_time: The time at which the callback is called, this is not available on all platforms
+                  which is why it is a Maybe, you can do `now := completed_time.? or_else time.now()`
+                  if you need the time.
 */
-On_Timeout :: #type proc(user: rawptr)
+On_Timeout :: #type proc(user: rawptr, completed_time: Maybe(time.Time))
 
 /*
 Schedules a callback to be called after the given duration elapses.

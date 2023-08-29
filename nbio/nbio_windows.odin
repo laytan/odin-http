@@ -83,8 +83,8 @@ _tick :: proc(io: ^IO) -> (err: os.Errno) {
 		if nt, ok := next_timeout.?; ok && nt <= time.Millisecond * 15 {
 			wait_ms = 0
 		}
-		// TODO/FIXME/PERF: something goes wrong when you increase this, we get 1 good entry and garbage for the others.
-		events: [1]win.OVERLAPPED_ENTRY
+
+		events: [256]win.OVERLAPPED_ENTRY
 		entries_removed: win.ULONG
 		if !win.GetQueuedCompletionStatusEx(
 			io.iocp,
@@ -127,15 +127,19 @@ _tick :: proc(io: ^IO) -> (err: os.Errno) {
 flush_timeouts :: proc(io: ^IO) -> (expires: Maybe(time.Duration)) {
 	curr: time.Time
 	timeout_len := len(io.timeouts)
+
+	// PERF: could use a faster clock, is getting time since program start fast?
 	if timeout_len > 0 do curr = time.now()
 
 	for i := 0; i < timeout_len; {
 		completion := io.timeouts[i]
-		cexpires := time.diff(curr, completion.op.(Op_Timeout).expires)
+		op := &completion.op.(Op_Timeout)
+		cexpires := time.diff(curr, op.expires)
 
 		// Timeout done.
 		if (cexpires <= 0) {
 			ordered_remove(&io.timeouts, i)
+			op.completed_at = curr
 			queue.push_back(&io.completed, completion)
 			timeout_len -= 1
 			continue
@@ -592,13 +596,14 @@ _send :: proc(
 }
 
 Op_Timeout :: struct {
-	expires: time.Time,
+	expires:      time.Time,
+	completed_at: time.Time,
 }
 
 _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout) {
 	completion := pool_get(&io.completion_pool)
 
-	completion.op = Op_Timeout{time.time_add(time.now(), dur)}
+	completion.op = Op_Timeout{expires = time.time_add(time.now(), dur)}
 	completion.user_data = user
 	completion.user_callback = rawptr(callback)
 	completion.ctx = context
@@ -607,7 +612,7 @@ _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout
 		context = completion.ctx
 
 		cb := cast(On_Timeout)completion.user_callback
-		cb(completion.user_data)
+		cb(completion.user_data, completion.op.(Op_Timeout).completed_at)
 
 		pool_put(&io.completion_pool, completion)
 	}

@@ -4,7 +4,6 @@ import "core:bytes"
 import "core:log"
 import "core:strconv"
 import "core:strings"
-import "core:time"
 import "core:net"
 import "core:mem"
 
@@ -107,7 +106,7 @@ response_send_got_body :: proc(r: ^Response, will_close: bool) {
 	// Per RFC 9910 6.6.1 a Date header must be added in 2xx, 3xx, 4xx responses.
 	if r.status >= .Ok && r.status <= .Internal_Server_Error && "date" not_in r.headers {
 		bytes.buffer_write_string(&res, "date: ")
-		write_date_header(bytes.buffer_to_stream(&res), time.now())
+		bytes.buffer_write_string(&res, server_date(conn.server))
 		bytes.buffer_write_string(&res, "\r\n")
 	}
 
