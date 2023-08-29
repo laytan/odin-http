@@ -1,6 +1,7 @@
 package http
 
 Status :: enum {
+	NotFound                        = 404,
 	Continue                        = 100,
 	Switching_Protocols             = 101,
 	Processing                      = 102,
@@ -29,7 +30,8 @@ Status :: enum {
 	Unauthorized                    = 401,
 	Payment_Required                = 402,
 	Forbidden                       = 403,
-	NotFound                        = 404,
+	// NotFound is first in this enum (default).
+	// NotFound                     = 404,
 	Method_Not_Allowed              = 405,
 	Not_Acceptable                  = 406,
 	Proxy_Authentication_Required   = 407,

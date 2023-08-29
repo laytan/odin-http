@@ -169,7 +169,7 @@ scanner_scan :: proc(
 	s.could_be_too_short = could_be_too_short
 
 	nbio.recv(
-		&s.connection.server.io,
+		&td.io,
 		s.connection.socket,
 		s.buf[s.end:len(s.buf)],
 		s,

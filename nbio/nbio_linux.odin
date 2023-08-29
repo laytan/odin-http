@@ -35,7 +35,7 @@ Completion :: struct {
 
 _init :: proc(io: ^IO, alloc := context.allocator) -> (err: os.Errno) {
 	flags:   u32 = 0
-	entries: u32 = 32
+	entries: u32 = 256
 
 	io.allocator = alloc
 

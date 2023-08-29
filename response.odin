@@ -20,11 +20,9 @@ Response :: struct {
 }
 
 response_init :: proc(r: ^Response, allocator := context.allocator) {
-	r.allocator = allocator
-	r.status = .NotFound
-	r.headers = make(Headers, 3, allocator)
-	r.headers["server"] = "Odin"
-	bytes.buffer_init_allocator(&r.body, 0, 0, allocator)
+	r.allocator          = allocator
+	r.headers.allocator  = allocator
+	r.body.buf.allocator = allocator
 }
 
 // Sends the response over the connection.
@@ -103,6 +101,10 @@ response_send_got_body :: proc(r: ^Response, will_close: bool) {
 		}
 	}
 
+	if "server" not_in r.headers {
+		bytes.buffer_write_string(&res, "server: Odin-HTTP\r\n")
+	}
+
 	// Per RFC 9910 6.6.1 a Date header must be added in 2xx, 3xx, 4xx responses.
 	if r.status >= .Ok && r.status <= .Internal_Server_Error && "date" not_in r.headers {
 		bytes.buffer_write_string(&res, "date: ")
@@ -138,7 +140,7 @@ response_send_got_body :: proc(r: ^Response, will_close: bool) {
 		buf        = buf,
 		will_close = will_close,
 	}
-	nbio.send(&conn.server.io, conn.socket, buf, conn, on_response_sent)
+	nbio.send(&td.io, conn.socket, buf, conn, on_response_sent)
 }
 
 
@@ -149,7 +151,7 @@ on_response_sent :: proc(conn_: rawptr, sent: int, err: net.Network_Error) {
 
 	res.sent += sent
 	if err == nil && len(res.buf) != res.sent {
-		nbio.send(&conn.server.io, conn.socket, res.buf[res.sent:], conn, on_response_sent)
+		nbio.send(&td.io, conn.socket, res.buf[res.sent:], conn, on_response_sent)
 		return
 	}
 
@@ -165,7 +167,12 @@ on_response_sent :: proc(conn_: rawptr, sent: int, err: net.Network_Error) {
 @(private)
 clean_request_loop :: proc(conn: ^Connection, close: bool = false) {
 	allocator := conn.loop.req.allocator
-	free_all(conn.loop.req.allocator)
+
+	conn.uncleaned += 1
+	if conn.uncleaned % 1000 == 0 {
+		free_all(conn.loop.req.allocator)
+	}
+
 	conn.loop.inflight = nil
 	conn.loop.req = {}
 	conn.loop.res = {}

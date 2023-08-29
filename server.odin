@@ -12,6 +12,8 @@ import "core:os"
 import "core:fmt"
 import "core:slice"
 import "core:bytes"
+import "core:thread"
+import "core:sync"
 
 import "nbio"
 
@@ -62,15 +64,22 @@ Server :: struct {
 	opts:           Server_Opts,
 	tcp_sock:       net.TCP_Socket,
 	conn_allocator: mem.Allocator,
-	conns:          map[net.TCP_Socket]^Connection,
-	state:          Server_State,
 	handler:        Handler,
-	io:             nbio.IO,
+	main_thread:    int,
 
 	// Updated every second with an updated date, this speeds up the server considerably
 	// because it would otherwise need to call time.now() and format the date on each response.
 	date:           Server_Date,
 }
+
+Server_Thread :: struct {
+	conns: map[net.TCP_Socket]^Connection,
+	state: Server_State,
+	io:    nbio.IO,
+}
+
+@(thread_local)
+td: Server_Thread
 
 Default_Endpoint := net.Endpoint {
 	address = net.IP4_Loopback,
@@ -87,36 +96,51 @@ listen_and_serve :: proc(
 ) {
 	s.handler = h
 	s.opts = opts
-
-	// Save allocator so we can free connections later.
-	s.conns = make(map[net.TCP_Socket]^Connection)
 	s.conn_allocator = context.allocator
+	s.main_thread = sync.current_thread_id()
 
-	errno := nbio.init(&s.io)
+	errno := nbio.init(&td.io)
 	// TODO: error handling.
 	assert(errno == os.ERROR_NONE)
 
-	s.tcp_sock, err = nbio.open_and_listen_tcp(&s.io, endpoint)
+	s.tcp_sock, err = nbio.open_and_listen_tcp(&td.io, endpoint)
 	if err != nil {
 		server_shutdown(s)
 		return
 	}
 
+	for _ in 0 ..< 7 {
+		thread.create_and_start_with_poly_data(s, server_thread_init, context)
+	}
+
 	// Start keeping track of and caching the date for the required date header.
 	server_date_start(s)
 
+	server_thread_init(s)
+
+	return nil
+}
+
+server_thread_init :: proc(s: ^Server) {
+	td.conns = make(map[net.TCP_Socket]^Connection)
+
+	if sync.current_thread_id() != s.main_thread {
+		errno := nbio.init(&td.io)
+		// TODO: error handling.
+		assert(errno == os.ERROR_NONE)
+	}
+
 	log.debug("accepting connections")
 
-	// PERF:we should probably queue multiple accepts, so one tick can accept more connections.
-	nbio.accept(&s.io, s.tcp_sock, s, on_accept)
+	nbio.accept(&td.io, s.tcp_sock, s, on_accept)
 
 	log.debug("starting event loop")
-	s.state = .Serving
+	td.state = .Serving
 	for {
-		if s.state == .Closed do break
-		if s.state == .Cleaning do continue
+		if td.state == .Closed do break
+		if td.state == .Cleaning do continue
 
-		errno = nbio.tick(&s.io)
+		errno := nbio.tick(&td.io)
 		if errno != os.ERROR_NONE {
 			log.errorf("non-blocking io tick error: %v", errno)
 			break
@@ -124,8 +148,8 @@ listen_and_serve :: proc(
 	}
 
 	log.debug("event loop end")
-	return nil
 }
+
 
 // The time between checks and closes of connections in a graceful shutdown.
 @(private)
@@ -142,11 +166,11 @@ SHUTDOWN_INTERVAL :: time.Millisecond * 100
 // 4. Close the main socket.
 // 5. Signal 'server_start' it can return.
 server_shutdown :: proc(s: ^Server) {
-	s.state = .Closing
-	defer delete(s.conns)
+	td.state = .Closing
+	defer delete(td.conns)
 
 	for {
-		for sock, conn in s.conns {
+		for sock, conn in td.conns {
 			#partial switch conn.state {
 			case .Active:
 				log.infof("shutdown: connection %i still active", sock)
@@ -160,18 +184,19 @@ server_shutdown :: proc(s: ^Server) {
 			}
 		}
 
-		if len(s.conns) == 0 {
+		if len(td.conns) == 0 {
 			break
 		}
 
-		err := nbio.tick(&s.io)
-		fmt.assertf(err == os.ERROR_NONE, "IO tick error during shutdown: %v")
+		// TODO: multithread
+		// err := nbio.tick(&s.io)
+		// fmt.assertf(err == os.ERROR_NONE, "IO tick error during shutdown: %v")
 	}
 
-	s.state = .Cleaning
+	td.state = .Cleaning
 	net.close(s.tcp_sock)
-	nbio.destroy(&s.io)
-	s.state = .Closed
+	nbio.destroy(&td.io)
+	td.state = .Closed
 
 	log.info("shutdown: done")
 }
@@ -180,7 +205,7 @@ server_shutdown :: proc(s: ^Server) {
 server_shutdown_force :: proc(s: ^Server) {
 	log.info("forcing shutdown")
 
-	for _, conn in s.conns {
+	for _, conn in td.conns {
 		net.close(conn.socket)
 	}
 
@@ -203,7 +228,7 @@ server_shutdown_on_interrupt :: proc(s: ^Server) {
 	libc.signal(libc.SIGINT, proc "cdecl" (_: i32) {
 		context = on_interrupt_context
 
-		if on_interrupt_server.state == .Closing {
+		if td.state == .Closing {
 			server_shutdown_force(on_interrupt_server)
 			return
 		}
@@ -214,7 +239,7 @@ server_shutdown_on_interrupt :: proc(s: ^Server) {
 
 @(private)
 server_on_connection_close :: proc(s: ^Server, c: ^Connection) {
-	delete_key(&s.conns, c.socket)
+	delete_key(&td.conns, c.socket)
 	free(c, s.conn_allocator)
 }
 
@@ -240,13 +265,14 @@ Connection_State :: enum {
 }
 
 Connection :: struct {
-	server:   ^Server,
-	socket:   net.TCP_Socket,
-	client:   net.Endpoint,
-	state:    Connection_State,
-	scanner:  Scanner,
-	arena:    virtual.Arena,
-	loop:     Loop,
+	server:    ^Server,
+	socket:    net.TCP_Socket,
+	client:    net.Endpoint,
+	state:     Connection_State,
+	scanner:   Scanner,
+	arena:     virtual.Arena,
+	loop:      Loop,
+	uncleaned: int,
 }
 
 // Loop/request cycle state.
@@ -283,9 +309,9 @@ connection_close :: proc(c: ^Connection) {
 	scanner_destroy(&c.scanner)
 	virtual.arena_destroy(&c.arena)
 
-	nbio.timeout(&c.server.io, Conn_Close_Delay, c, proc(c: rawptr, _: Maybe(time.Time)) {
+	nbio.timeout(&td.io, Conn_Close_Delay, c, proc(c: rawptr, _: Maybe(time.Time)) {
 		c := cast(^Connection)c
-		nbio.close(&c.server.io, c.socket, c, proc(c: rawptr, ok: bool) {
+		nbio.close(&td.io, c.socket, c, proc(c: rawptr, ok: bool) {
 			c := cast(^Connection)c
 
 			log.debugf("closed connection: %i", c.socket)
@@ -306,9 +332,9 @@ on_accept :: proc(server: rawptr, sock: net.TCP_Socket, source: net.Endpoint, er
 			#partial switch e {
 			case .No_Socket_Descriptors_Available_For_Client_Socket:
 				log.error("Connection limit reached, trying again in a bit")
-				nbio.timeout(&server.io, time.Second, server, proc(server: rawptr, _: Maybe(time.Time)) {
+				nbio.timeout(&td.io, time.Second, server, proc(server: rawptr, _: Maybe(time.Time)) {
 					server := cast(^Server)server
-					nbio.accept(&server.io, server.tcp_sock, server, on_accept)
+					nbio.accept(&td.io, server.tcp_sock, server, on_accept)
 				})
 				return
 			}
@@ -318,8 +344,7 @@ on_accept :: proc(server: rawptr, sock: net.TCP_Socket, source: net.Endpoint, er
 	}
 
 	// Accept next connection.
-	// TODO: is this how it should be done (performance wise)?
-	nbio.accept(&server.io, server.tcp_sock, server, on_accept)
+	nbio.accept(&td.io, server.tcp_sock, server, on_accept)
 
 	c := new(Connection, server.conn_allocator)
 	c.state = .New
@@ -327,9 +352,9 @@ on_accept :: proc(server: rawptr, sock: net.TCP_Socket, source: net.Endpoint, er
 	c.client = source
 	c.socket = sock
 
-	server.conns[c.socket] = c
+	td.conns[c.socket] = c
 
-	log.infof("new connection with %v, got %d conns", source, len(server.conns))
+	log.infof("new connection with %v, got %d conns", source, len(td.conns))
 	conn_handle_reqs(c)
 }
 
@@ -519,7 +544,7 @@ server_date_start :: proc(s: ^Server) {
 // Updates the time and schedules itself for after a second.
 server_date_update :: proc(s: rawptr, now: Maybe(time.Time)) {
 	s := cast(^Server)s
-	nbio.timeout(&s.io, time.Second, s, server_date_update)
+	nbio.timeout(&td.io, time.Second, s, server_date_update)
 
 	bytes.buffer_reset(&s.date.buf)
 	write_date_header(bytes.buffer_to_stream(&s.date.buf), now.? or_else time.now())
