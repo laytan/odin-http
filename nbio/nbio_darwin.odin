@@ -10,8 +10,8 @@ import "core:time"
 
 import "../kqueue"
 
-KQueue :: struct {
-	fd:              os.Handle,
+_IO :: struct {
+	kq:              os.Handle,
 	io_inflight:     int,
 	completion_pool: Pool(Completion),
 	timeouts:        [dynamic]^Completion,
@@ -22,45 +22,37 @@ KQueue :: struct {
 
 Completion :: struct {
 	operation:     Operation,
-	callback:      proc(kq: ^KQueue, c: ^Completion),
+	callback:      proc(kq: ^IO, c: ^Completion),
 	ctx:           runtime.Context,
 	user_callback: rawptr,
 	user_data:     rawptr,
 }
 
 _init :: proc(io: ^IO, allocator := context.allocator) -> (err: os.Errno) {
-	kq := new(KQueue, allocator)
-	defer if err != os.ERROR_NONE do free(kq, allocator)
-
 	qerr: kqueue.Queue_Error
-	kq.fd, qerr = kqueue.kqueue()
+	io.kq, qerr = kqueue.kqueue()
 	if qerr != .None do return kq_err_to_os_err(qerr)
 
-	pool_init(&kq.completion_pool, allocator = allocator)
+	pool_init(&io.completion_pool, allocator = allocator)
 
-	kq.timeouts = make([dynamic]^Completion, allocator)
-	kq.io_pending = make([dynamic]^Completion, allocator)
+	io.timeouts = make([dynamic]^Completion, allocator)
+	io.io_pending = make([dynamic]^Completion, allocator)
 
-	queue.init(&kq.completed, allocator = allocator)
+	queue.init(&io.completed, allocator = allocator)
 
-	kq.allocator = allocator
-	io.impl_data = kq
+	io.allocator = allocator
 	return
 }
 
 _destroy :: proc(io: ^IO) {
-	kq := cast(^KQueue)io.impl_data
+	delete(io.timeouts)
+	delete(io.io_pending)
 
-	delete(kq.timeouts)
-	delete(kq.io_pending)
+	queue.destroy(&io.completed)
 
-	queue.destroy(&kq.completed)
+	os.close(io.kq)
 
-	os.close(kq.fd)
-
-	pool_destroy(&kq.completion_pool)
-
-	free(kq, kq.allocator)
+	pool_destroy(&io.completion_pool)
 }
 
 // TODO: should this be the entries parameter?
@@ -71,54 +63,52 @@ _tick :: proc(io: ^IO) -> os.Errno {
 }
 
 flush :: proc(io: ^IO) -> os.Errno {
-	kq := cast(^KQueue)io.impl_data
-
 	events: [MAX_EVENTS]kqueue.KEvent
 
-	_ = flush_timeouts(kq)
-	change_events := flush_io(kq, events[:])
+	_ = flush_timeouts(io)
+	change_events := flush_io(io, events[:])
 
-	if (change_events > 0 || queue.len(kq.completed) == 0) {
-		if (change_events == 0 && queue.len(kq.completed) == 0 && kq.io_inflight == 0) {
+	if (change_events > 0 || queue.len(io.completed) == 0) {
+		if (change_events == 0 && queue.len(io.completed) == 0 && io.io_inflight == 0) {
 			return os.ERROR_NONE
 		}
 
 		ts: kqueue.Time_Spec
-		new_events, err := kqueue.kevent(kq.fd, events[:change_events], events[:], &ts)
+		new_events, err := kqueue.kevent(io.kq, events[:change_events], events[:], &ts)
 		if err != .None do return ev_err_to_os_err(err)
 
 		for _ in 0 ..< change_events {
-			unordered_remove(&kq.io_pending, 0)
+			unordered_remove(&io.io_pending, 0)
 		}
 
-		kq.io_inflight += change_events
-		kq.io_inflight -= new_events
+		io.io_inflight += change_events
+		io.io_inflight -= new_events
 
 		if new_events > 0 {
-			queue.reserve(&kq.completed, new_events)
+			queue.reserve(&io.completed, new_events)
 			for event in events[:new_events] {
 				completion := cast(^Completion)event.udata
-				queue.push_back(&kq.completed, completion)
+				queue.push_back(&io.completed, completion)
 			}
 		}
 	}
 
 	// Save length so we avoid an infinite loop when there is added to the queue in a callback.
-	n := queue.len(kq.completed)
+	n := queue.len(io.completed)
 	for _ in 0..<n {
-		completed := queue.pop_front(&kq.completed)
+		completed := queue.pop_front(&io.completed)
 		context = completed.ctx
-		completed.callback(kq, completed)
+		completed.callback(io, completed)
 	}
 
 	return os.ERROR_NONE
 }
 
-flush_io :: proc(kq: ^KQueue, events: []kqueue.KEvent) -> int {
+flush_io :: proc(io: ^IO, events: []kqueue.KEvent) -> int {
 	events := events
 	for event, i in &events {
-		if len(kq.io_pending) <= i do return i
-		completion := kq.io_pending[i]
+		if len(io.io_pending) <= i do return i
+		completion := io.io_pending[i]
 
 		switch op in completion.operation {
 		case Op_Accept:
@@ -150,19 +140,19 @@ flush_io :: proc(kq: ^KQueue, events: []kqueue.KEvent) -> int {
 	return len(events)
 }
 
-flush_timeouts :: proc(kq: ^KQueue) -> (min_timeout: Maybe(i64)) {
+flush_timeouts :: proc(io: ^IO) -> (min_timeout: Maybe(i64)) {
 	now := time.to_unix_nanoseconds(time.now())
 
-	for i := len(kq.timeouts) - 1; i >= 0; i -= 1 {
-		completion := kq.timeouts[i]
+	for i := len(io.timeouts) - 1; i >= 0; i -= 1 {
+		completion := io.timeouts[i]
 
 		timeout, ok := completion.operation.(Op_Timeout)
 		if !ok do panic("non-timeout operation found in the timeouts queue")
 
 		expires := time.to_unix_nanoseconds(timeout.expires)
 		if now >= expires {
-			ordered_remove(&kq.timeouts, i)
-			queue.push_back(&kq.completed, completion)
+			ordered_remove(&io.timeouts, i)
+			queue.push_back(&io.completed, completion)
 			continue
 		}
 
@@ -187,21 +177,19 @@ _listen :: proc(socket: net.TCP_Socket, backlog := 1000) -> net.Network_Error {
 Op_Accept :: distinct net.TCP_Socket
 
 _accept :: proc(io: ^IO, socket: net.TCP_Socket, user: rawptr, callback: On_Accept) {
-	kq := cast(^KQueue)io.impl_data
-
-	completion := pool_get(&kq.completion_pool)
+	completion := pool_get(&io.completion_pool)
 	completion.ctx = context
 	completion.user_data = user
 	completion.user_callback = rawptr(callback)
 	completion.operation = Op_Accept(socket)
 
-	completion.callback = proc(kq: ^KQueue, completion: ^Completion) {
+	completion.callback = proc(io: ^IO, completion: ^Completion) {
 		op := completion.operation.(Op_Accept)
 		callback := cast(On_Accept)completion.user_callback
 
 		client, source, err := net.accept_tcp(net.TCP_Socket(op))
 		if err == net.Accept_Error.Would_Block {
-			append(&kq.io_pending, completion)
+			append(&io.io_pending, completion)
 			return
 		}
 
@@ -216,19 +204,17 @@ _accept :: proc(io: ^IO, socket: net.TCP_Socket, user: rawptr, callback: On_Acce
 			callback(completion.user_data, client, source, nil)
 		}
 
-		pool_put(&kq.completion_pool, completion)
+		pool_put(&io.completion_pool, completion)
 	}
 
-	queue.push_back(&kq.completed, completion)
+	queue.push_back(&io.completed, completion)
 }
 
 Op_Close :: distinct os.Handle
 
 // Wraps os.close using the kqueue.
 _close :: proc(io: ^IO, fd: Closable, user: rawptr, callback: On_Close) {
-	kq := cast(^KQueue)io.impl_data
-
-	completion := pool_get(&kq.completion_pool)
+	completion := pool_get(&io.completion_pool)
 	completion.ctx = context
 	completion.user_data = user
 	completion.user_callback = rawptr(callback)
@@ -239,17 +225,17 @@ _close :: proc(io: ^IO, fd: Closable, user: rawptr, callback: On_Close) {
 	case os.Handle:      completion.operation = Op_Close(h)
 	}
 
-	completion.callback = proc(kq: ^KQueue, completion: ^Completion) {
+	completion.callback = proc(io: ^IO, completion: ^Completion) {
 		op := completion.operation.(Op_Close)
 		ok := os.close(os.Handle(op))
 
 		callback := cast(On_Close)completion.user_callback
 		callback(completion.user_data, ok)
 
-		pool_put(&kq.completion_pool, completion)
+		pool_put(&io.completion_pool, completion)
 	}
 
-	queue.push_back(&kq.completed, completion)
+	queue.push_back(&io.completed, completion)
 }
 
 Op_Connect :: struct {
@@ -260,8 +246,6 @@ Op_Connect :: struct {
 
 // TODO: maybe call this dial?
 _connect :: proc(io: ^IO, endpoint: net.Endpoint, user: rawptr, callback: On_Connect) {
-	kq := cast(^KQueue)io.impl_data
-
 	if endpoint.port == 0 {
 		callback(user, {}, net.Dial_Error.Port_Required)
 		return
@@ -280,7 +264,7 @@ _connect :: proc(io: ^IO, endpoint: net.Endpoint, user: rawptr, callback: On_Con
 		return
 	}
 
-	completion := pool_get(&kq.completion_pool)
+	completion := pool_get(&io.completion_pool)
 	completion.ctx = context
 	completion.user_data = user
 	completion.user_callback = rawptr(callback)
@@ -289,7 +273,7 @@ _connect :: proc(io: ^IO, endpoint: net.Endpoint, user: rawptr, callback: On_Con
 		sockaddr = _endpoint_to_sockaddr(endpoint),
 	}
 
-	completion.callback = proc(kq: ^KQueue, completion: ^Completion) {
+	completion.callback = proc(io: ^IO, completion: ^Completion) {
 		op := &completion.operation.(Op_Connect)
 		callback := cast(On_Connect)completion.user_callback
 		defer op.initiated = true
@@ -301,7 +285,7 @@ _connect :: proc(io: ^IO, endpoint: net.Endpoint, user: rawptr, callback: On_Con
 		} else {
 			err = os.connect(os.Socket(op.socket), (^os.SOCKADDR)(&op.sockaddr), i32(op.sockaddr.len))
 			if err == os.EINPROGRESS {
-				append(&kq.io_pending, completion)
+				append(&io.io_pending, completion)
 				return
 			}
 		}
@@ -313,10 +297,10 @@ _connect :: proc(io: ^IO, endpoint: net.Endpoint, user: rawptr, callback: On_Con
 			callback(completion.user_data, op.socket, nil)
 		}
 
-		pool_put(&kq.completion_pool, completion)
+		pool_put(&io.completion_pool, completion)
 	}
 
-	queue.push_back(&kq.completed, completion)
+	queue.push_back(&io.completed, completion)
 }
 
 Op_Read :: struct {
@@ -326,9 +310,7 @@ Op_Read :: struct {
 }
 
 _read :: proc(io: ^IO, fd: os.Handle, offset: Maybe(int), buf: []byte, user: rawptr, callback: On_Read) {
-	kq := cast(^KQueue)io.impl_data
-
-	completion := pool_get(&kq.completion_pool)
+	completion := pool_get(&io.completion_pool)
 	completion.ctx = context
 	completion.user_data = user
 	completion.user_callback = rawptr(callback)
@@ -338,7 +320,7 @@ _read :: proc(io: ^IO, fd: os.Handle, offset: Maybe(int), buf: []byte, user: raw
 		offset = offset,
 	}
 
-	completion.callback = proc(kq: ^KQueue, completion: ^Completion) {
+	completion.callback = proc(io: ^IO, completion: ^Completion) {
 		op := completion.operation.(Op_Read)
 
 		read: int
@@ -349,7 +331,7 @@ _read :: proc(io: ^IO, fd: os.Handle, offset: Maybe(int), buf: []byte, user: raw
 		}
 
 		if err == os.EWOULDBLOCK {
-			append(&kq.io_pending, completion)
+			append(&io.io_pending, completion)
 			return
 		}
 
@@ -357,10 +339,10 @@ _read :: proc(io: ^IO, fd: os.Handle, offset: Maybe(int), buf: []byte, user: raw
 		callback := cast(On_Read)completion.user_callback
 		callback(completion.user_data, read, err)
 
-		pool_put(&kq.completion_pool, completion)
+		pool_put(&io.completion_pool, completion)
 	}
 
-	queue.push_back(&kq.completed, completion)
+	queue.push_back(&io.completed, completion)
 }
 
 Op_Recv :: struct {
@@ -369,9 +351,7 @@ Op_Recv :: struct {
 }
 
 _recv :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, callback: On_Recv) {
-	kq := cast(^KQueue)io.impl_data
-
-	completion := pool_get(&kq.completion_pool)
+	completion := pool_get(&io.completion_pool)
 	completion.ctx = context
 	completion.user_data = user
 	completion.user_callback = rawptr(callback)
@@ -380,7 +360,7 @@ _recv :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, callba
 		buf    = buf,
 	}
 
-	completion.callback = proc(kq: ^KQueue, completion: ^Completion) {
+	completion.callback = proc(io: ^IO, completion: ^Completion) {
 		op := completion.operation.(Op_Recv)
 
 		received: int
@@ -392,7 +372,7 @@ _recv :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, callba
 
 			// NOTE: Timeout is the name for EWOULDBLOCK in net package.
 			if err == net.TCP_Recv_Error.Timeout {
-				append(&kq.io_pending, completion)
+				append(&io.io_pending, completion)
 				return
 			}
 		case net.UDP_Socket:
@@ -400,7 +380,7 @@ _recv :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, callba
 
 			// NOTE: Timeout is the name for EWOULDBLOCK in net package.
 			if err == net.UDP_Recv_Error.Timeout {
-				append(&kq.io_pending, completion)
+				append(&io.io_pending, completion)
 				return
 			}
 		}
@@ -408,10 +388,10 @@ _recv :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, callba
 		callback := cast(On_Recv)completion.user_callback
 		callback(completion.user_data, received, remote_endpoint, err)
 
-		pool_put(&kq.completion_pool, completion)
+		pool_put(&io.completion_pool, completion)
 	}
 
-	queue.push_back(&kq.completed, completion)
+	queue.push_back(&io.completed, completion)
 }
 
 Op_Send :: struct {
@@ -428,13 +408,11 @@ _send :: proc(
 	callback: On_Sent,
 	endpoint: Maybe(net.Endpoint) = nil,
 ) {
-	kq := cast(^KQueue)io.impl_data
-
 	if _, ok := socket.(net.UDP_Socket); ok {
 		assert(endpoint != nil)
 	}
 
-	completion := pool_get(&kq.completion_pool)
+	completion := pool_get(&io.completion_pool)
 	completion.ctx = context
 	completion.user_data = user
 	completion.user_callback = rawptr(callback)
@@ -444,7 +422,7 @@ _send :: proc(
 		endpoint = endpoint,
 	}
 
-	completion.callback = proc(kq: ^KQueue, completion: ^Completion) {
+	completion.callback = proc(io: ^IO, completion: ^Completion) {
 		op := completion.operation.(Op_Send)
 
 		sent: u32
@@ -463,17 +441,17 @@ _send :: proc(
 		}
 
 		if errno == os.EWOULDBLOCK {
-			append(&kq.io_pending, completion)
+			append(&io.io_pending, completion)
 			return
 		}
 
 		callback := cast(On_Sent)completion.user_callback
 		callback(completion.user_data, int(sent), err)
 
-		pool_put(&kq.completion_pool, completion)
+		pool_put(&io.completion_pool, completion)
 	}
 
-	queue.push_back(&kq.completed, completion)
+	queue.push_back(&io.completed, completion)
 }
 
 Op_Write :: struct {
@@ -483,9 +461,7 @@ Op_Write :: struct {
 }
 
 _write :: proc(io: ^IO, fd: os.Handle, offset: Maybe(int), buf: []byte, user: rawptr, callback: On_Write) {
-	kq := cast(^KQueue)io.impl_data
-
-	completion := pool_get(&kq.completion_pool)
+	completion := pool_get(&io.completion_pool)
 	completion.ctx = context
 	completion.user_data = user
 	completion.user_callback = rawptr(callback)
@@ -495,7 +471,7 @@ _write :: proc(io: ^IO, fd: os.Handle, offset: Maybe(int), buf: []byte, user: ra
 		offset = offset,
 	}
 
-	completion.callback = proc(kq: ^KQueue, completion: ^Completion) {
+	completion.callback = proc(io: ^IO, completion: ^Completion) {
 		op := completion.operation.(Op_Write)
 
 		written: int
@@ -506,17 +482,17 @@ _write :: proc(io: ^IO, fd: os.Handle, offset: Maybe(int), buf: []byte, user: ra
 		}
 
 		if err == os.EWOULDBLOCK {
-			append(&kq.io_pending, completion)
+			append(&io.io_pending, completion)
 			return
 		}
 
 		callback := cast(On_Write)completion.user_callback
 		callback(completion.user_data, written, err)
 
-		pool_put(&kq.completion_pool, completion)
+		pool_put(&io.completion_pool, completion)
 	}
 
-	queue.push_back(&kq.completed, completion)
+	queue.push_back(&io.completed, completion)
 }
 
 Op_Timeout :: struct {
@@ -525,9 +501,7 @@ Op_Timeout :: struct {
 
 // Runs the callback after the timeout, using the kqueue.
 _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout) {
-	kq := cast(^KQueue)io.impl_data
-
-	completion := pool_get(&kq.completion_pool)
+	completion := pool_get(&io.completion_pool)
 	completion.ctx = context
 	completion.user_data = user
 	completion.user_callback = rawptr(callback)
@@ -535,13 +509,13 @@ _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout
 		expires = time.time_add(time.now(), dur),
 	}
 
-	completion.callback = proc(kq: ^KQueue, completion: ^Completion) {
+	completion.callback = proc(io: ^IO, completion: ^Completion) {
 		callback := cast(On_Timeout)completion.user_callback
 		callback(completion.user_data)
-		pool_put(&kq.completion_pool, completion)
+		pool_put(&io.completion_pool, completion)
 	}
 
-	append(&kq.timeouts, completion)
+	append(&io.timeouts, completion)
 }
 
 @(private = "file")
