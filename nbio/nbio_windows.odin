@@ -110,6 +110,8 @@ _tick :: proc(io: ^IO) -> (err: os.Errno) {
 flush_timeouts :: proc(winio: ^Windows) -> (expires: Maybe(time.Duration)) {
 	curr: time.Time
 	timeout_len := len(winio.timeouts)
+
+	// PERF: could use a faster clock, is getting time since program start fast?
 	if timeout_len > 0 do curr = time.now()
 
 	for i := 0; i < timeout_len; {

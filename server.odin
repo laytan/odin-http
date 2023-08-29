@@ -10,6 +10,9 @@ import "core:runtime"
 import "core:c/libc"
 import "core:os"
 import "core:fmt"
+import "core:io"
+import "core:slice"
+import "core:bytes"
 
 import "nbio"
 
@@ -64,6 +67,10 @@ Server :: struct {
 	state:          Server_State,
 	handler:        Handler,
 	io:             nbio.IO,
+
+	// Updated every second with an updated date, this speeds up the server considerably
+	// because it would otherwise need to call time.now() and format the date on each response.
+	date:           Server_Date,
 }
 
 Default_Endpoint := net.Endpoint {
@@ -96,7 +103,12 @@ listen_and_serve :: proc(
 		return
 	}
 
+	// Start keeping track of and caching the date for the required date header.
+	server_date_start(s)
+
 	log.debug("accepting connections")
+
+	// PERF:we should probably queue multiple accepts, so one tick can accept more connections.
 	nbio.accept(&s.io, s.tcp_sock, s, on_accept)
 
 	log.debug("starting event loop")
@@ -272,7 +284,7 @@ connection_close :: proc(c: ^Connection) {
 	scanner_destroy(&c.scanner)
 	virtual.arena_destroy(&c.arena)
 
-	nbio.timeout(&c.server.io, Conn_Close_Delay, c, proc(c: rawptr) {
+	nbio.timeout(&c.server.io, Conn_Close_Delay, c, proc(c: rawptr, _: Maybe(time.Time)) {
 		c := cast(^Connection)c
 		nbio.close(&c.server.io, c.socket, c, proc(c: rawptr, ok: bool) {
 			c := cast(^Connection)c
@@ -295,7 +307,7 @@ on_accept :: proc(server: rawptr, sock: net.TCP_Socket, source: net.Endpoint, er
 			#partial switch e {
 			case .No_Socket_Descriptors_Available_For_Client_Socket:
 				log.error("Connection limit reached, trying again in a bit")
-				nbio.timeout(&server.io, time.Second, server, proc(server: rawptr) {
+				nbio.timeout(&server.io, time.Second, server, proc(server: rawptr, _: Maybe(time.Time)) {
 					server := cast(^Server)server
 					nbio.accept(&server.io, server.tcp_sock, server, on_accept)
 				})
@@ -492,4 +504,28 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.allocator) {
 
 	c.scanner.max_token_size = c.server.opts.limit_request_line
 	scanner_scan(&c.scanner, &c.loop, on_rline1)
+}
+
+// A buffer that will contain the date header for the current second.
+Server_Date :: struct {
+	buf_backing: [DATE_LENGTH]byte,
+	buf:         bytes.Buffer,
+}
+
+server_date_start :: proc(s: ^Server) {
+	s.date.buf.buf = slice.into_dynamic(s.date.buf_backing[:])
+	server_date_update(s, time.now())
+}
+
+// Updates the time and schedules itself for after a second.
+server_date_update :: proc(s: rawptr, now: Maybe(time.Time)) {
+	s := cast(^Server)s
+	nbio.timeout(&s.io, time.Second, s, server_date_update)
+
+	bytes.buffer_reset(&s.date.buf)
+	write_date_header(bytes.buffer_to_stream(&s.date.buf), now.? or_else time.now())
+}
+
+server_date :: proc(s: ^Server) -> string {
+	return string(s.date.buf_backing[:])
 }
