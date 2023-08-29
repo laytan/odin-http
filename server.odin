@@ -10,7 +10,6 @@ import "core:runtime"
 import "core:c/libc"
 import "core:os"
 import "core:fmt"
-import "core:io"
 import "core:slice"
 import "core:bytes"
 
