@@ -142,7 +142,7 @@ flush_io :: proc(io: ^IO, events: []kqueue.KEvent) -> int {
 flush_timeouts :: proc(io: ^IO) -> (min_timeout: Maybe(i64)) {
 	now: time.Time
 	// PERF: is there a faster way to compare time? Or time since program start and compare that?
-	if len(kq.timeouts) > 0 do now = time.now()
+	if len(io.timeouts) > 0 do now = time.now()
 
 	for i := len(io.timeouts) - 1; i >= 0; i -= 1 {
 		completion := io.timeouts[i]
