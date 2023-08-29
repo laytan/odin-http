@@ -651,7 +651,7 @@ _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout
 		// TODO: we are swallowing the returned error here.
 		fmt.assertf(errno == os.ERROR_NONE || errno == os.ETIME, "timeout error: %v", errno)
 
-		callback(completion.user_data)
+		callback(completion.user_data, nil)
 		pool_put(&lx.completion_pool, completion)
 	}
 
