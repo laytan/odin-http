@@ -22,7 +22,7 @@ _IO :: struct {
 
 Completion :: struct {
 	operation:     Operation,
-	callback:      proc(kq: ^IO, c: ^Completion),
+	callback:      proc(io: ^IO, c: ^Completion),
 	ctx:           runtime.Context,
 	user_callback: rawptr,
 	user_data:     rawptr,
@@ -78,7 +78,7 @@ flush :: proc(io: ^IO) -> os.Errno {
 		if err != .None do return ev_err_to_os_err(err)
 
 		// PERF: this is ordered and O(N), can this be made unordered?
-		remove_range(&kq.io_pending, 0, change_events)
+		remove_range(&io.io_pending, 0, change_events)
 
 		io.io_inflight += change_events
 		io.io_inflight -= new_events
