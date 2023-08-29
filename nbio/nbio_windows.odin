@@ -12,54 +12,71 @@ import "core:log"
 
 import win "core:sys/windows"
 
-_init :: proc(io: ^IO, allocator := context.allocator) -> (err: os.Errno) {
-	winio := new(Windows, allocator)
-	winio.allocator = allocator
+_IO :: struct {
+	iocp:            win.HANDLE,
+	allocator:       mem.Allocator,
+	timeouts:        [dynamic]^Completion,
+	completed:       queue.Queue(^Completion),
+	completion_pool: Pool(Completion),
+	io_pending:      int,
+	// The asynchronous Windows API's don't support reading at the current offset of a file, so we keep track ourselves.
+	offsets:         map[os.Handle]u32,
+}
 
-	pool_init(&winio.completion_pool, allocator = allocator)
-	queue.init(&winio.completed, allocator = allocator)
-	winio.timeouts = make([dynamic]^Completion, allocator)
-	winio.offsets = make(map[os.Handle]u32, allocator = allocator)
+@(private="file")
+Completion :: struct {
+	// NOTE: needs to be the first field.
+	over: win.OVERLAPPED,
+
+	// TODO: make a proc outside of this, don't need it in here.
+	callback: proc(io: ^IO, completion: ^Completion),
+	ctx: runtime.Context,
+	user_callback: rawptr,
+	user_data: rawptr,
+	op: Operation,
+}
+
+
+_init :: proc(io: ^IO, allocator := context.allocator) -> (err: os.Errno) {
+	io.allocator = allocator
+
+	pool_init(&io.completion_pool, allocator = allocator)
+	queue.init(&io.completed, allocator = allocator)
+	io.timeouts = make([dynamic]^Completion, allocator)
+	io.offsets = make(map[os.Handle]u32, allocator = allocator)
 
 	win.ensure_winsock_initialized()
 	defer if err != win.NO_ERROR {
 		assert(win.WSACleanup() == win.NO_ERROR)
 	}
 
-	winio.iocp = win.CreateIoCompletionPort(win.INVALID_HANDLE_VALUE, nil, nil, 0)
-	if winio.iocp == nil {
+	io.iocp = win.CreateIoCompletionPort(win.INVALID_HANDLE_VALUE, nil, nil, 0)
+	if io.iocp == nil {
 		err = os.Errno(win.GetLastError())
 		return
 	}
 
-	io.impl_data = winio
 	return
 }
 
 _destroy :: proc(io: ^IO) {
-	winio := cast(^Windows)io.impl_data
-
-	delete(winio.timeouts)
-	queue.destroy(&winio.completed)
-	pool_destroy(&winio.completion_pool)
-	delete(winio.offsets)
+	delete(io.timeouts)
+	queue.destroy(&io.completed)
+	pool_destroy(&io.completion_pool)
+	delete(io.offsets)
 
 	// TODO: error handling.
-	win.CloseHandle(winio.iocp)
+	win.CloseHandle(io.iocp)
 	// win.WSACleanup()
-
-	free(io.impl_data)
 }
 
 _tick :: proc(io: ^IO) -> (err: os.Errno) {
-	winio := cast(^Windows)io.impl_data
-
-	if queue.len(winio.completed) == 0 {
-		next_timeout := flush_timeouts(winio)
+	if queue.len(io.completed) == 0 {
+		next_timeout := flush_timeouts(io)
 
 		// Wait a maximum of a ms if there is nothing to do.
 		// TODO: this is pretty naive, a typical server always has accept completions pending and will be at 100% cpu.
-		wait_ms: win.DWORD = 1 if winio.io_pending == 0 else 0
+		wait_ms: win.DWORD = 1 if io.io_pending == 0 else 0
 
 		// But, to counter inaccuracies in low timeouts,
 		// lets make the call exit immediately if the next timeout is close.
@@ -70,7 +87,7 @@ _tick :: proc(io: ^IO) -> (err: os.Errno) {
 		events: [256]win.OVERLAPPED_ENTRY
 		entries_removed: win.ULONG
 		if !win.GetQueuedCompletionStatusEx(
-			winio.iocp,
+			io.iocp,
 			&events[0],
 			len(events),
 			&entries_removed,
@@ -83,8 +100,8 @@ _tick :: proc(io: ^IO) -> (err: os.Errno) {
 			}
 		}
 
-		assert(winio.io_pending >= int(entries_removed))
-		winio.io_pending -= int(entries_removed)
+		assert(io.io_pending >= int(entries_removed))
+		io.io_pending -= int(entries_removed)
 
 		for event in events[:entries_removed] {
 			assert(event.lpOverlapped != nil)
@@ -92,14 +109,14 @@ _tick :: proc(io: ^IO) -> (err: os.Errno) {
 			// This is actually pointing at the Completion.over field, but because it is the first field
 			// It is also a valid pointer to the Completion struct.
 			completion := transmute(^Completion)event.lpOverlapped
-			queue.push_back(&winio.completed, completion)
+			queue.push_back(&io.completed, completion)
 		}
 	}
 
 	// Prevent infinte loop when callback adds to completed by storing length.
-	n := queue.len(winio.completed)
+	n := queue.len(io.completed)
 	for _ in 0..<n {
-		completion := queue.pop_front(&winio.completed)
+		completion := queue.pop_front(&io.completed)
 		context = completion.ctx
 		completion.callback(io, completion)
 	}
@@ -107,23 +124,23 @@ _tick :: proc(io: ^IO) -> (err: os.Errno) {
 }
 
 @(private="file")
-flush_timeouts :: proc(winio: ^Windows) -> (expires: Maybe(time.Duration)) {
+flush_timeouts :: proc(io: ^IO) -> (expires: Maybe(time.Duration)) {
 	curr: time.Time
-	timeout_len := len(winio.timeouts)
+	timeout_len := len(io.timeouts)
 
 	// PERF: could use a faster clock, is getting time since program start fast?
 	if timeout_len > 0 do curr = time.now()
 
 	for i := 0; i < timeout_len; {
-		completion := winio.timeouts[i]
+		completion := io.timeouts[i]
 		op := &completion.op.(Op_Timeout)
 		cexpires := time.diff(curr, op.expires)
 
 		// Timeout done.
 		if (cexpires <= 0) {
-			ordered_remove(&winio.timeouts, i)
+			ordered_remove(&io.timeouts, i)
 			op.completed_at = curr
-			queue.push_back(&winio.completed, completion)
+			queue.push_back(&io.completed, completion)
 			timeout_len -= 1
 			continue
 		}
@@ -211,10 +228,8 @@ _open :: proc(io: ^IO, path: string, mode, perm: int) -> (os.Handle, os.Errno) {
 
 	// Everything past here is custom/not from `os.open`.
 
-	winio := cast(^Windows)io.impl_data
-
-	handle_iocp := win.CreateIoCompletionPort(win.HANDLE(handle), winio.iocp, nil, 0)
-	assert(handle_iocp == winio.iocp)
+	handle_iocp := win.CreateIoCompletionPort(win.HANDLE(handle), io.iocp, nil, 0)
+	assert(handle_iocp == io.iocp)
 
 	cmode: byte
 	cmode |= FILE_SKIP_COMPLETION_PORT_ON_SUCCESS
@@ -232,12 +247,11 @@ _open :: proc(io: ^IO, path: string, mode, perm: int) -> (os.Handle, os.Errno) {
 }
 
 _seek :: proc(io: ^IO, fd: os.Handle, offset: int, whence: Whence) -> (int, os.Errno) {
-	winio := cast(^Windows)io.impl_data
 	switch whence {
 	case .Set:
-		winio.offsets[fd] = u32(offset)
+		io.offsets[fd] = u32(offset)
 	case .Curr:
-		winio.offsets[fd] += u32(offset)
+		io.offsets[fd] += u32(offset)
 	case .End:
 		size: win.LARGE_INTEGER
 		ok := win.GetFileSizeEx(win.HANDLE(fd), &size)
@@ -245,10 +259,10 @@ _seek :: proc(io: ^IO, fd: os.Handle, offset: int, whence: Whence) -> (int, os.E
 			return 0, os.Errno(win.GetLastError())
 		}
 
-		winio.offsets[fd] = u32(size) + u32(offset)
+		io.offsets[fd] = u32(size) + u32(offset)
 	}
 
-	return int(winio.offsets[fd]), os.ERROR_NONE
+	return int(io.offsets[fd]), os.ERROR_NONE
 }
 
 _open_socket :: proc(io: ^IO, family: net.Address_Family, protocol: net.Socket_Protocol) -> (socket: net.Any_Socket, err: net.Network_Error) {
@@ -388,19 +402,19 @@ _connect :: proc(io: ^IO, ep: net.Endpoint, user: rawptr, callback: On_Connect) 
 }
 
 Op_Close :: struct {
-	callback: proc(^Windows, Op_Close) -> bool,
+	callback: proc(^IO, Op_Close) -> bool,
 	fd: Closable,
 }
 
 _close :: proc(io: ^IO, fd: Closable, user: rawptr, callback: On_Close) {
-	internal_callback :: proc(winio: ^Windows, op: Op_Close) -> bool {
+	internal_callback :: proc(io: ^IO, op: Op_Close) -> bool {
 		// NOTE: This might cause problems if there is still IO queued/pending.
 		// Is that our responsibility to check/keep track of?
 		// Might want to call win.CancelloEx to cancel all pending operations first.
 
 		switch h in op.fd {
 		case os.Handle:
-			delete_key(&winio.offsets, h)
+			delete_key(&io.offsets, h)
 			return win.CloseHandle(win.HANDLE(h)) == true
 		case net.TCP_Socket: return win.closesocket(win.SOCKET(h)) == win.NO_ERROR
 		case net.UDP_Socket: return win.closesocket(win.SOCKET(h)) == win.NO_ERROR
@@ -415,7 +429,7 @@ _close :: proc(io: ^IO, fd: Closable, user: rawptr, callback: On_Close) {
 }
 
 Op_Read :: struct {
-	callback: proc(^Windows, ^Completion, ^Op_Read) -> (read: win.DWORD, err: win.DWORD),
+	callback: proc(^IO, ^Completion, ^Op_Read) -> (read: win.DWORD, err: win.DWORD),
 	fd:       os.Handle,
 	offset:   Maybe(int),
 	buf:      []byte,
@@ -423,12 +437,12 @@ Op_Read :: struct {
 }
 
 _read :: proc(io: ^IO, fd: os.Handle, offset: Maybe(int), buf: []byte, user: rawptr, callback: On_Read) {
-	internal_callback :: proc(winio: ^Windows, comp: ^Completion, op: ^Op_Read) -> (read: win.DWORD, err: win.DWORD) {
+	internal_callback :: proc(io: ^IO, comp: ^Completion, op: ^Op_Read) -> (read: win.DWORD, err: win.DWORD) {
 		ok: win.BOOL
 		if op.pending {
 			ok = win.GetOverlappedResult(win.HANDLE(op.fd), &comp.over, &read, win.FALSE)
 		} else {
-			comp.over.Offset     = u32(op.offset.? or_else int(winio.offsets[op.fd]))
+			comp.over.Offset     = u32(op.offset.? or_else int(io.offsets[op.fd]))
 			comp.over.OffsetHigh = comp.over.Offset >> 32
 
 			ok = win.ReadFile(win.HANDLE(op.fd), raw_data(op.buf), win.DWORD(len(op.buf)), &read, &comp.over)
@@ -443,7 +457,7 @@ _read :: proc(io: ^IO, fd: os.Handle, offset: Maybe(int), buf: []byte, user: raw
 
 		// Increment offset if this was not a call with an offset set.
 		if _, ok := op.offset.?; !ok {
-			winio.offsets[op.fd] += read
+			io.offsets[op.fd] += read
 		}
 
 		return
@@ -458,7 +472,7 @@ _read :: proc(io: ^IO, fd: os.Handle, offset: Maybe(int), buf: []byte, user: raw
 }
 
 Op_Write :: struct {
-	callback: proc(^Windows, ^Completion, ^Op_Write) -> (written: win.DWORD, err: win.DWORD),
+	callback: proc(^IO, ^Completion, ^Op_Write) -> (written: win.DWORD, err: win.DWORD),
 	fd:       os.Handle,
 	offset:   Maybe(int),
 	buf:      []byte,
@@ -466,12 +480,12 @@ Op_Write :: struct {
 }
 
 _write :: proc(io: ^IO, fd: os.Handle, offset: Maybe(int), buf: []byte, user: rawptr, callback: On_Write) {
-	internal_callback :: proc(winio: ^Windows, comp: ^Completion, op: ^Op_Write) -> (written: win.DWORD, err: win.DWORD) {
+	internal_callback :: proc(io: ^IO, comp: ^Completion, op: ^Op_Write) -> (written: win.DWORD, err: win.DWORD) {
 		ok: win.BOOL
 		if op.pending {
 			ok = win.GetOverlappedResult(win.HANDLE(op.fd), &comp.over, &written, win.FALSE)
 		} else {
-			comp.over.Offset     = u32(op.offset.? or_else int(winio.offsets[op.fd]))
+			comp.over.Offset     = u32(op.offset.? or_else int(io.offsets[op.fd]))
 			comp.over.OffsetHigh = comp.over.Offset >> 32
 			ok = win.WriteFile(win.HANDLE(op.fd), raw_data(op.buf), win.DWORD(len(op.buf)), &written, &comp.over)
 
@@ -485,7 +499,7 @@ _write :: proc(io: ^IO, fd: os.Handle, offset: Maybe(int), buf: []byte, user: ra
 
 		// Increment offset if this was not a call with an offset set.
 		if _, ok := op.offset.?; !ok {
-			winio.offsets[op.fd] += written
+			io.offsets[op.fd] += written
 		}
 
 		return
@@ -500,7 +514,7 @@ _write :: proc(io: ^IO, fd: os.Handle, offset: Maybe(int), buf: []byte, user: ra
 }
 
 Op_Recv :: struct {
-	callback: proc(^Windows, ^Completion, ^Op_Recv) -> (received: win.DWORD, err: win.c_int),
+	callback: proc(^IO, ^Completion, ^Op_Recv) -> (received: win.DWORD, err: win.c_int),
 	socket:   net.Any_Socket,
 	buf:      win.WSABUF,
 	pending:  bool,
@@ -510,7 +524,7 @@ _recv :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, callba
 	// TODO: implement UDP.
 	if _, ok := socket.(net.UDP_Socket); ok do unimplemented("nbio.recv with UDP sockets is not yet implemented")
 
-	internal_callback :: proc(winio: ^Windows, comp: ^Completion, op: ^Op_Recv) -> (received: win.DWORD, err: win.c_int) {
+	internal_callback :: proc(io: ^IO, comp: ^Completion, op: ^Op_Recv) -> (received: win.DWORD, err: win.c_int) {
 		sock := win.SOCKET(net.any_socket_to_socket(op.socket))
 		ok: win.BOOL
 		if op.pending {
@@ -538,7 +552,7 @@ _recv :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, callba
 }
 
 Op_Send :: struct {
-	callback: proc(^Windows, ^Completion, ^Op_Send) -> (sent: win.DWORD, err: win.c_int),
+	callback: proc(^IO, ^Completion, ^Op_Send) -> (sent: win.DWORD, err: win.c_int),
 	socket:   net.Any_Socket,
 	buf:      win.WSABUF,
 	pending:  bool,
@@ -555,7 +569,7 @@ _send :: proc(
 	// TODO: implement UDP.
 	if _, ok := socket.(net.UDP_Socket); ok do unimplemented("nbio.send with UDP sockets is not yet implemented")
 
-	internal_callback :: proc(winio: ^Windows, comp: ^Completion, op: ^Op_Send) -> (sent: win.DWORD, err: win.c_int) {
+	internal_callback :: proc(io: ^IO, comp: ^Completion, op: ^Op_Send) -> (sent: win.DWORD, err: win.c_int) {
 		sock := win.SOCKET(net.any_socket_to_socket(op.socket))
 		ok: win.BOOL
 		if op.pending {
@@ -587,9 +601,7 @@ Op_Timeout :: struct {
 }
 
 _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout) {
-	winio := cast(^Windows)io.impl_data
-
-	completion := pool_get(&winio.completion_pool)
+	completion := pool_get(&io.completion_pool)
 
 	completion.op = Op_Timeout{expires = time.time_add(time.now(), dur)}
 	completion.user_data = user
@@ -597,16 +609,15 @@ _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout
 	completion.ctx = context
 
 	completion.callback = proc(io: ^IO, completion: ^Completion) {
-		winio := cast(^Windows)io.impl_data
 		context = completion.ctx
 
 		cb := cast(On_Timeout)completion.user_callback
 		cb(completion.user_data, completion.op.(Op_Timeout).completed_at)
 
-		pool_put(&winio.completion_pool, completion)
+		pool_put(&io.completion_pool, completion)
 	}
 
-	append(&winio.timeouts, completion)
+	append(&io.timeouts, completion)
 }
 
 @(private="file")
@@ -649,43 +660,14 @@ LPFN_ACCEPTEX :: #type proc "stdcall" (
 ) -> win.BOOL
 
 @(private="file")
-Windows :: struct {
-	iocp:            win.HANDLE,
-	allocator:       mem.Allocator,
-	timeouts:        [dynamic]^Completion,
-	completed:       queue.Queue(^Completion),
-	completion_pool: Pool(Completion),
-	io_pending:      int,
-	// The asynchronous Windows API's don't support reading at the current offset of a file, so we keep track ourselves.
-	offsets:         map[os.Handle]u32,
-}
-
-#assert(size_of(win.OVERLAPPED) == 32)
-
-@(private="file")
-Completion :: struct {
-	// NOTE: needs to be the first field.
-	over: win.OVERLAPPED,
-
-	// TODO: make a proc outside of this, don't need it in here.
-	callback: proc(io: ^IO, completion: ^Completion),
-	ctx: runtime.Context,
-	user_callback: rawptr,
-	user_data: rawptr,
-	op: Operation,
-}
-
-@(private="file")
 prepare_socket :: proc(io: ^IO, socket: net.Any_Socket) -> net.Network_Error {
 	net.set_option(socket, .Reuse_Address, true) or_return
 	net.set_option(socket, .TCP_Nodelay, true)   or_return
 
-	winio := cast(^Windows)io.impl_data
-
 	handle := win.HANDLE(uintptr(net.any_socket_to_socket(socket)))
 
-	handle_iocp := win.CreateIoCompletionPort(handle, winio.iocp, nil, 0)
-	assert(handle_iocp == winio.iocp)
+	handle_iocp := win.CreateIoCompletionPort(handle, io.iocp, nil, 0)
+	assert(handle_iocp == io.iocp)
 
 	mode: byte
 	mode |= FILE_SKIP_COMPLETION_PORT_ON_SUCCESS
@@ -699,23 +681,19 @@ prepare_socket :: proc(io: ^IO, socket: net.Any_Socket) -> net.Network_Error {
 
 @(private="file")
 submit :: proc(io: ^IO, user: rawptr, callback: rawptr, op: Operation) {
-	winio := cast(^Windows)io.impl_data
-
-	completion := pool_get(&winio.completion_pool)
+	completion := pool_get(&io.completion_pool)
 	completion.ctx = context
 	completion.user_data = user
 	completion.user_callback = callback
 	completion.op = op
 
 	completion.callback = proc(io: ^IO, completion: ^Completion) {
-		winio := cast(^Windows)io.impl_data
-
 		switch &op in completion.op {
 		case Op_Accept:
 			// TODO: we should directly call the accept callback here, no need for it to be on the Op_Acccept struct.
 			source, err := op.callback(io, completion, &op)
 			if wsa_err_incomplete(err) {
-				winio.io_pending += 1
+				io.io_pending += 1
 				return
 			}
 
@@ -728,7 +706,7 @@ submit :: proc(io: ^IO, user: rawptr, callback: rawptr, op: Operation) {
 		case Op_Connect:
 			err := op.callback(io, completion, &op)
 			if wsa_err_incomplete(err) {
-				winio.io_pending += 1
+				io.io_pending += 1
 				return
 			}
 
@@ -740,12 +718,12 @@ submit :: proc(io: ^IO, user: rawptr, callback: rawptr, op: Operation) {
 
 		case Op_Close:
 			cb := cast(On_Close)completion.user_callback
-			cb(completion.user_data, op.callback(winio, op))
+			cb(completion.user_data, op.callback(io, op))
 
 		case Op_Read:
-			read, err := op.callback(winio, completion, &op)
+			read, err := op.callback(io, completion, &op)
 			if err_incomplete(err) {
-				winio.io_pending += 1
+				io.io_pending += 1
 				return
 			}
 
@@ -757,9 +735,9 @@ submit :: proc(io: ^IO, user: rawptr, callback: rawptr, op: Operation) {
 			cb(completion.user_data, int(read), os.Errno(err))
 
 		case Op_Write:
-			written, err := op.callback(winio, completion, &op)
+			written, err := op.callback(io, completion, &op)
 			if err_incomplete(err) {
-				winio.io_pending += 1
+				io.io_pending += 1
 				return
 			}
 
@@ -767,9 +745,9 @@ submit :: proc(io: ^IO, user: rawptr, callback: rawptr, op: Operation) {
 			cb(completion.user_data, int(written), os.Errno(err))
 
 		case Op_Recv:
-			received, err := op.callback(winio, completion, &op)
+			received, err := op.callback(io, completion, &op)
 			if wsa_err_incomplete(err) {
-				winio.io_pending += 1
+				io.io_pending += 1
 				return
 			}
 
@@ -777,9 +755,9 @@ submit :: proc(io: ^IO, user: rawptr, callback: rawptr, op: Operation) {
 			cb(completion.user_data, int(received), {}, net.TCP_Recv_Error(err))
 
 		case Op_Send:
-			sent, err := op.callback(winio, completion, &op)
+			sent, err := op.callback(io, completion, &op)
 			if wsa_err_incomplete(err) {
-				winio.io_pending += 1
+				io.io_pending += 1
 				return
 			}
 
@@ -788,9 +766,9 @@ submit :: proc(io: ^IO, user: rawptr, callback: rawptr, op: Operation) {
 
 		case Op_Timeout: unreachable()
 		}
-		pool_put(&winio.completion_pool, completion)
+		pool_put(&io.completion_pool, completion)
 	}
-	queue.push_back(&winio.completed, completion)
+	queue.push_back(&io.completed, completion)
 }
 
 

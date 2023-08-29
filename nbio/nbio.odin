@@ -7,7 +7,7 @@ import "core:time"
 /*
 The main IO type that holds the platform dependant implementation state passed around most procedures in this package
 */
-IO :: struct { impl_data: rawptr }
+IO :: _IO
 
 /*
 Initializes the IO type, allocates different things per platform needs
