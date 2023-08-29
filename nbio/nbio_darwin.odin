@@ -150,22 +150,27 @@ flush_io :: proc(kq: ^KQueue, events: []kqueue.KEvent) -> int {
 }
 
 flush_timeouts :: proc(kq: ^KQueue) -> (min_timeout: Maybe(i64)) {
-	now := time.to_unix_nanoseconds(time.now())
+	now: time.Time
+	// PERF: is there a faster way to compare time? Or time since program start and compare that?
+	if len(kq.timeouts) > 0 do now = time.now()
 
 	for i := len(kq.timeouts) - 1; i >= 0; i -= 1 {
 		completion := kq.timeouts[i]
 
-		timeout, ok := completion.operation.(Op_Timeout)
+		timeout, ok := &completion.operation.(Op_Timeout)
 		if !ok do panic("non-timeout operation found in the timeouts queue")
 
+		unow := time.to_unix_nanoseconds(now)
 		expires := time.to_unix_nanoseconds(timeout.expires)
-		if now >= expires {
+		if unow >= expires {
+			timeout.completed_time = now
+
 			ordered_remove(&kq.timeouts, i)
 			queue.push_back(&kq.completed, completion)
 			continue
 		}
 
-		timeout_ns := expires - now
+		timeout_ns := expires - unow
 		if min, has_min_timeout := min_timeout.(i64); has_min_timeout {
 			if timeout_ns < min {
 				min_timeout = timeout_ns
@@ -519,7 +524,8 @@ _write :: proc(io: ^IO, fd: os.Handle, offset: Maybe(int), buf: []byte, user: ra
 }
 
 Op_Timeout :: struct {
-	expires: time.Time,
+	expires:        time.Time,
+	completed_time: time.Time,
 }
 
 // Runs the callback after the timeout, using the kqueue.
@@ -536,7 +542,7 @@ _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout
 
 	completion.callback = proc(kq: ^KQueue, completion: ^Completion) {
 		callback := cast(On_Timeout)completion.user_callback
-		callback(completion.user_data)
+		callback(completion.user_data, completion.operation.(Op_Timeout).completed_time)
 		pool_put(&kq.completion_pool, completion)
 	}
 

@@ -22,7 +22,7 @@ test_timeout :: proc(t: ^testing.T) {
 
 	timeout_fired: bool
 
-	timeout(&io, time.Millisecond * 20, &timeout_fired, proc(t_: rawptr) {
+	timeout(&io, time.Millisecond * 20, &timeout_fired, proc(t_: rawptr, _: Maybe(time.Time)) {
 		timeout_fired := cast(^bool)t_
 		timeout_fired^ = true
 	})

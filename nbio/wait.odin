@@ -359,15 +359,23 @@ write_at_all_and_wait :: proc(io: ^IO, fd: os.Handle, offset: int, buf: []byte) 
 
 //
 
-timeout_and_wait :: proc(io: ^IO, dur: time.Duration) {
-	done: bool
+timeout_and_wait :: proc(io: ^IO, dur: time.Duration) -> Maybe(time.Time) {
+	Timeout_Result :: struct {
+		done: bool,
+		completed_time: Maybe(time.Time),
+	}
 
-	_timeout(io, dur, &done, proc(user: rawptr) {
-		done := cast(^bool)user
-		done^ = true
+	result: Timeout_Result
+
+	_timeout(io, dur, &result, proc(user: rawptr, completed_time: Maybe(time.Time)) {
+		result := cast(^Timeout_Result)user
+		result.done = true
+		result.completed_time = completed_time
 	})
 
-	for !done {
+	for !result.done {
 		assert(tick(io) == os.ERROR_NONE)
 	}
+
+	return result.completed_time
 }

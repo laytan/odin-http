@@ -247,7 +247,7 @@ header_allowed_trailer :: proc(key: string) -> bool {
 }
 
 @(private)
-DATE_LENGTH := len("Fri, 05 Feb 2023 09:01:10 GMT")
+DATE_LENGTH :: len("Fri, 05 Feb 2023 09:01:10 GMT")
 
 // Formats a time in the HTTP header format (no timezone conversion is done, GMT expected):
 // <day-name>, <day> <month> <year> <hour>:<minute>:<second> GMT
