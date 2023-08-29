@@ -116,11 +116,13 @@ flush_timeouts :: proc(winio: ^Windows) -> (expires: Maybe(time.Duration)) {
 
 	for i := 0; i < timeout_len; {
 		completion := winio.timeouts[i]
-		cexpires := time.diff(curr, completion.op.(Op_Timeout).expires)
+		op := &completion.op.(Op_Timeout)
+		cexpires := time.diff(curr, op.expires)
 
 		// Timeout done.
 		if (cexpires <= 0) {
 			ordered_remove(&winio.timeouts, i)
+			op.completed_at = curr
 			queue.push_back(&winio.completed, completion)
 			timeout_len -= 1
 			continue
@@ -580,7 +582,8 @@ _send :: proc(
 }
 
 Op_Timeout :: struct {
-	expires: time.Time,
+	expires:      time.Time,
+	completed_at: time.Time,
 }
 
 _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout) {
@@ -588,7 +591,7 @@ _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout
 
 	completion := pool_get(&winio.completion_pool)
 
-	completion.op = Op_Timeout{time.time_add(time.now(), dur)}
+	completion.op = Op_Timeout{expires = time.time_add(time.now(), dur)}
 	completion.user_data = user
 	completion.user_callback = rawptr(callback)
 	completion.ctx = context
@@ -598,7 +601,7 @@ _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout
 		context = completion.ctx
 
 		cb := cast(On_Timeout)completion.user_callback
-		cb(completion.user_data)
+		cb(completion.user_data, completion.op.(Op_Timeout).completed_at)
 
 		pool_put(&winio.completion_pool, completion)
 	}
