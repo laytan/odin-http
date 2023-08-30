@@ -107,9 +107,9 @@ body_error_status :: proc(e: Body_Error) -> Status {
 	case .No_Length:
 		return .Length_Required
 	case .None:
-		return .Ok
+		return .OK
 	case:
-		return .Ok
+		return .OK
 	}
 }
 
