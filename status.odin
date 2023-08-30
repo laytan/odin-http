@@ -103,7 +103,7 @@ status_string :: #force_inline proc(s: Status) -> string {
 }
 
 status_valid :: #force_inline proc(s: Status) -> bool {
-    return status_strings[s] != ""
+    return s >= Status(0) && s <= .Network_Authentication_Required && status_strings[s] != ""
 }
 
 status_from_string :: proc(s: string) -> (Status, bool) {
