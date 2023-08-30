@@ -117,10 +117,10 @@ status_from_string :: proc(s: string) -> (Status, bool) {
 
 	code := s[:3]
 	code_int: int
-	multiplier: u8 = 1
+	multiplier := 1
 	for i in 0 ..< len(code) {
 		b := code[2 - i]
-		code_int += int((b - '0') * multiplier)
+		code_int += int(b - '0') * multiplier
 		multiplier *= 10
 	}
 
