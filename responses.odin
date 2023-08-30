@@ -11,7 +11,7 @@ import "core:strings"
 respond_html :: proc(r: ^Response, html: string, send := true) {
 	defer if send do respond(r)
 
-	r.status = .Ok
+	r.status = .OK
 	bytes.buffer_write_string(&r.body, html)
 	r.headers["content-type"] = mime_to_content_type(Mime_Type.Html)
 }
@@ -20,7 +20,7 @@ respond_html :: proc(r: ^Response, html: string, send := true) {
 respond_plain :: proc(r: ^Response, text: string, send := true) {
 	defer if send do respond(r)
 
-	r.status = .Ok
+	r.status = .OK
 	bytes.buffer_write_string(&r.body, text)
 	r.headers["content-type"] = mime_to_content_type(Mime_Type.Plain)
 }
@@ -30,7 +30,7 @@ respond_plain :: proc(r: ^Response, text: string, send := true) {
 respond_file :: proc(r: ^Response, path: string, send := true) {
 	bs, ok := os.read_entire_file(path, r.allocator)
 	if !ok {
-		r.status = .NotFound
+		r.status = .Not_Found
 		respond(r)
 		return
 	}
@@ -44,7 +44,7 @@ respond_file_content :: proc(r: ^Response, path: string, content: []byte, send :
 	mime := mime_from_extension(path)
 	content_type := mime_to_content_type(mime)
 
-	r.status = .Ok
+	r.status = .OK
 	r.headers["content-type"] = content_type
 	bytes.buffer_write(&r.body, content)
 }
@@ -58,7 +58,7 @@ respond_file_content :: proc(r: ^Response, path: string, content: []byte, send :
 // The Content-Type is set based on the file extension, see the MimeType enum for known file extensions.
 respond_dir :: proc(r: ^Response, base, target, request: string, send := true) {
 	if !strings.has_prefix(request, base) {
-		r.status = .NotFound
+		r.status = .Not_Found
 		respond(r)
 		return
 	}
@@ -67,7 +67,7 @@ respond_dir :: proc(r: ^Response, base, target, request: string, send := true) {
 	req_clean := filepath.clean(request, r.allocator)
 	base_clean := filepath.clean(base, r.allocator)
 	if !strings.has_prefix(req_clean, base_clean) {
-		r.status = .NotFound
+		r.status = .Not_Found
 		respond(r)
 		return
 	}
@@ -87,7 +87,7 @@ respond_json :: proc(r: ^Response, v: any, opt: json.Marshal_Options = {}, send 
 		return err
 	}
 
-	r.status = .Ok
+	r.status = .OK
 	r.headers["content-type"] = mime_to_content_type(Mime_Type.Json)
 
 	return nil

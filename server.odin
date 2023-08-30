@@ -502,7 +502,7 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.allocator) {
 		// An options request with the "*" is a no-op/ping request to
 		// check for server capabilities and should not be sent to handlers.
 		if rline.method == .Options && rline.target.(string) == "*" {
-			l.res.status = .Ok
+			l.res.status = .OK
 			respond(&l.res)
 		} else {
 			// Give the handler this request as a GET, since the HTTP spec

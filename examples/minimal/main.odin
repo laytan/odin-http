@@ -12,7 +12,7 @@ main :: proc() {
 	s: http.Server
 
 	handler := http.handler(proc(_: ^http.Request, res: ^http.Response) {
-		res.status = .Ok
+		res.status = .OK
 		http.respond(res)
 	})
 

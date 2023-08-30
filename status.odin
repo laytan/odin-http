@@ -1,13 +1,17 @@
 package http
 
+import "core:reflect"
+import "core:fmt"
+import "core:strings"
+import "core:strconv"
+
 Status :: enum {
-	NotFound                        = 404,
+	Not_Found                       = 404,
 	Continue                        = 100,
 	Switching_Protocols             = 101,
 	Processing                      = 102,
 	Early_Hints                     = 103,
-
-	Ok                              = 200,
+	OK                              = 200,
 	Created                         = 201,
 	Accepted                        = 202,
 	Non_Authoritative_Information   = 203,
@@ -16,8 +20,7 @@ Status :: enum {
 	Partial_Content                 = 206,
 	Multi_Status                    = 207,
 	Already_Reported                = 208,
-	Im_Used                         = 226,
-
+	IM_Used                         = 226,
 	Multiple_Choices                = 300,
 	Moved_Permanently               = 301,
 	Found                           = 302,
@@ -25,7 +28,6 @@ Status :: enum {
 	Not_Modified                    = 304,
 	Temporary_Redirect              = 307,
 	Permanent_Redirect              = 308,
-
 	Bad_Request                     = 400,
 	Unauthorized                    = 401,
 	Payment_Required                = 402,
@@ -50,13 +52,12 @@ Status :: enum {
 	Unprocessable_Content           = 422,
 	Locked                          = 423,
 	Failed_Dependency               = 424,
-	TooEarly                        = 425,
+	Too_Early                       = 425,
 	Upgrade_Required                = 426,
 	Precondition_Required           = 428,
 	Too_Many_Requests               = 429,
 	Request_Header_Fields_Too_Large = 431,
 	Unavailable_For_Legal_Reasons   = 451,
-
 	Internal_Server_Error           = 500,
 	Not_Implemented                 = 501,
 	Bad_Gateway                     = 502,
@@ -70,90 +71,75 @@ Status :: enum {
 	Network_Authentication_Required = 511,
 }
 
-status_string :: proc(s: Status) -> string {
-	switch s {
-	case .Continue:                        return "100 Continue"
-	case .Switching_Protocols:             return "101 Switching Protocols"
-	case .Processing:                      return "102 Processing"
-	case .Early_Hints:                     return "103 Early Hints"
-	case .Ok:                              return "200 OK"
-	case .Created:                         return "201 Created"
-	case .Accepted:                        return "202 Accepted"
-	case .Non_Authoritative_Information:   return "203 Non-Authoritative Information"
-	case .No_Content:                      return "204 No Content"
-	case .Reset_Content:                   return "205 Reset Content"
-	case .Partial_Content:                 return "206 Partial Content"
-	case .Multi_Status:                    return "207 Multi-Status"
-	case .Already_Reported:                return "208 Already Reported"
-	case .Im_Used:                         return "226 IM Used"
-	case .Multiple_Choices:                return "300 Multiple Choices"
-	case .Moved_Permanently:               return "301 Moved Permanently"
-	case .Found:                           return "302 Found"
-	case .See_Other:                       return "303 See Other"
-	case .Not_Modified:                    return "304 Not Modified"
-	case .Temporary_Redirect:              return "307 Temporary Redirect"
-	case .Permanent_Redirect:              return "308 Permanent Redirect"
-	case .Bad_Request:                     return "400 Bad Request"
-	case .Unauthorized:                    return "401 Unauthorized"
-	case .Payment_Required:                return "402 Payment Required"
-	case .Forbidden:                       return "403 Forbidden"
-	case .NotFound:                        return "404 Not Found"
-	case .Method_Not_Allowed:              return "405 Method Not Allowed"
-	case .Not_Acceptable:                  return "406 Not Acceptable"
-	case .Proxy_Authentication_Required:   return "407 Proxy Authentication Required"
-	case .Request_Timeout:                 return "408 Request Timeout"
-	case .Conflict:                        return "409 Conflict"
-	case .Gone:                            return "410 Gone"
-	case .Length_Required:                 return "411 Length Required"
-	case .Precondition_Failed:             return "412 Precondition Required"
-	case .Payload_Too_Large:               return "413 Payload Too Large"
-	case .URI_Too_Long:                    return "414 URI Too Long"
-	case .Unsupported_Media_Type:          return "415 Unsupported Media Type"
-	case .Range_Not_Satisfiable:           return "416 Range Not Satisfiable"
-	case .Expectation_Failed:              return "417 Expectation Failed"
-	case .Im_A_Teapot:                     return "418 I'm a teapot"
-	case .Misdirected_Request:             return "421 Misdirected Request"
-	case .Unprocessable_Content:           return "422 Unprocessable Content"
-	case .Locked:                          return "423 Locked"
-	case .Failed_Dependency:               return "424 Failed Dependency"
-	case .TooEarly:                        return "425 Too Early"
-	case .Upgrade_Required:                return "426 Upgrade Required"
-	case .Precondition_Required:           return "428 Precondition Required"
-	case .Too_Many_Requests:               return "429 Too Many Requests"
-	case .Request_Header_Fields_Too_Large: return "431 Request Header Fields Too Large"
-	case .Unavailable_For_Legal_Reasons:   return "451 Unavailable For Legal Reasons"
-	case .Internal_Server_Error:           return "500 Internal Server Error"
-	case .Not_Implemented:                 return "501 Not Implemented"
-	case .Bad_Gateway:                     return "502 Bad Gateway"
-	case .Service_Unavailable:             return "503 Service Unavailable"
-	case .Gateway_Timeout:                 return "504 Gateway Timeout"
-	case .HTTP_Version_Not_Supported:      return "505 HTTP Version Not Supported"
-	case .Variant_Also_Negotiates:         return "506 Variant Also Negotiates"
-	case .Insufficient_Storage:            return "507 Insufficient Storage"
-	case .Loop_Detected:                   return "508 Loop Detected"
-	case .Not_Extended:                    return "510 Not Extended"
-	case .Network_Authentication_Required: return "511 Network Authentication Required"
-	case:                                  return ""
+status_strings: [max(Status) + Status(1)]string
+
+// Populates the status_strings like a map from status to their string representation.
+// Where an empty string means an invalid code.
+@(init)
+status_strings_init :: proc() {
+    // Some edge cases aside, replaces underscores in the enum name with spaces.
+    status_name_fmt :: proc(val: Status, orig: string) -> (new: string, allocated: bool) {
+        #partial switch val {
+        case .Non_Authoritative_Information:
+            return "Non-Authoritative Information", false
+        case .Multi_Status:
+            return "Multi-Status", false
+        case .Im_A_Teapot:
+            return "I'm a teapot", false
+        case:
+            return strings.replace_all(orig, "_", " ")
+        }
+    }
+
+	fields := reflect.enum_fields_zipped(Status)
+	for field in fields {
+		fmted, allocated := status_name_fmt(Status(field.value), field.name)
+		defer if allocated do delete(fmted)
+
+		status_strings[field.value] = fmt.aprintf("%i %s", field.value, fmted)
 	}
+}
+
+status_string :: #force_inline proc(s: Status) -> string {
+    return status_strings[s]
+}
+
+status_valid :: #force_inline proc(s: Status) -> bool {
+    return status_strings[s] != ""
 }
 
 status_from_string :: proc(s: string) -> (Status, bool) {
-	for status in Status {
-		ss := status_string(status)
-		if s[:3] == ss[:3] {
-			return status, true
-		}
+	if len(s) < 3 do return .Method_Not_Allowed, false
+
+    // Turns the string of length 3 into an int.
+    // It goes from right to left, increasing a multiplier (for base 10).
+    // Say we got status "123"
+    // i == 0, b == "3", (b - '0') == 3, code_int += 3 * 1
+    // i == 1, b == "2", (b - '0') == 2, code_int += 2 * 10
+    // i == 2, b == "1", (b - '0') == 1, code_int += 1 * 100
+
+	code := s[:3]
+	code_int: int
+	multiplier: u8 = 1
+	for i in 0 ..< len(code) {
+		b := code[2 - i]
+		code_int += int((b - '0') * multiplier)
+		multiplier *= 10
 	}
 
-	return .Method_Not_Allowed, false
+	if !status_valid(Status(code_int)) {
+		return .Method_Not_Allowed, false
+	}
+
+	return Status(code_int), true
 }
 
 status_informational :: proc(s: Status) -> bool {
-	return s < .Ok
+	return s < .OK
 }
 
 status_success :: proc(s: Status) -> bool {
-	return s >= .Ok && s < .Multiple_Choices
+	return s >= .OK && s < .Multiple_Choices
 }
 
 status_redirect :: proc(s: Status) -> bool {

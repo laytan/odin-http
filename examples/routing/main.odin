@@ -73,7 +73,7 @@ main :: proc() {
 				res,
 				fmt.tprintf("Welcome, could not find the path %q", req.url_params[0]),
 			)
-			res.status = .NotFound
+			res.status = .Not_Found
 		}))
 
 	handler := http.router_handler(&router)
