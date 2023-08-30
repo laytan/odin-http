@@ -23,8 +23,11 @@ For Linux, most distros come with OpenSSL, if not you can install it by using so
 
 ## IO implementations
 
-MacOS uses kqueue, Linux uses io_uring and Windows currently uses threading (which when compared to others is slow),
-non-blocking IO for Windows using IOCP is planned in the future.
+Although these implementation details are not exposed when using the package, these are the underlying kernel API's that are used.
+
+- Windows: [IOCP (IO Completion Ports)](https://en.wikipedia.org/wiki/Input/output_completion_port)
+- Linux:   [io_uring](https://en.wikipedia.org/wiki/Io_uring)
+- Darwin:  [KQueue](https://en.wikipedia.org/wiki/Kqueue)
 
 ## Server example
 
