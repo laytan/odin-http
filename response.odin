@@ -21,7 +21,7 @@ Response :: struct {
 
 response_init :: proc(r: ^Response, allocator := context.allocator) {
 	r.allocator = allocator
-	r.status = .NotFound
+	r.status = .Not_Found
 	r.headers = make(Headers, 3, allocator)
 	r.headers["server"] = "Odin"
 	bytes.buffer_init_allocator(&r.body, 0, 0, allocator)
