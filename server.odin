@@ -55,7 +55,11 @@ Default_Server_Opts := Server_Opts {
 @(init)
 @(private)
 server_opts_init :: proc() {
-	Default_Server_Opts.thread_count = os.processor_core_count() - 1
+	when ODIN_OS == .Linux {
+		Default_Server_Opts.thread_count = os.processor_core_count() - 1
+	} else {
+		Default_Server_Opts.thread_count = 1
+	}
 }
 
 Server_State :: enum {

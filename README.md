@@ -21,6 +21,14 @@ For Linux, most distros come with OpenSSL, if not you can install it by using so
 - `sudo apt-get install openssl libssl-dev`
 - `apk add openssl openssl-libs-static`
 
+## Performance
+
+Some small benchmarks have been done in the comparisons directory.
+
+Best performance is currently on Linux because it is the only multithreaded platform, still, the other platforms
+are faster than a lot of other single-threaded implementations.
+Once I know the API is good on Linux and how I want the multithreading to work I will add it to the other platforms.
+
 ## IO implementations
 
 MacOS uses kqueue, Linux uses io_uring and Windows currently uses threading (which when compared to others is slow),
