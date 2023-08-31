@@ -524,7 +524,7 @@ close :: proc(ring: ^IO_Uring, user_data: u64, fd: os.Handle) -> (sqe: ^io_uring
 timeout :: proc(
 	ring: ^IO_Uring,
 	user_data: u64,
-	ts: ^os.Unix_File_Time,
+	ts: ^unix.timespec,
 	count: u32,
 	flags: u32,
 ) -> (

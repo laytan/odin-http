@@ -9,6 +9,7 @@ import "core:net"
 import "core:os"
 import "core:runtime"
 import "core:time"
+import "core:sys/unix"
 
 import "../io_uring"
 
@@ -70,16 +71,32 @@ _tick :: proc(io: ^IO) -> os.Errno {
 	timeouts: uint = 0
 	etime := false
 
-	err := flush(io, 0, &timeouts, &etime)
-	if err != os.ERROR_NONE do return err
+	t: unix.timespec
+	unix.clock_gettime(unix.CLOCK_MONOTONIC, &t)
+	t.tv_nsec += i64(time.Millisecond * 10)
 
-	assert(etime == false)
+	for !etime {
+		// Queue the timeout, if there is an error, flush (cause its probably full) and try again.
+		sqe, err := io_uring.timeout(&io.ring, 0, &t, 1, io_uring.IORING_TIMEOUT_ABS)
+		if err != nil {
+			if errno := flush_submissions(io, 0, &timeouts, &etime); errno != os.ERROR_NONE {
+				return errno
+			}
 
-	queued := io.ring.sq.sqe_tail - io.ring.sq.sqe_head
-	if queued > 0 {
-		err = flush_submissions(io, 0, &timeouts, &etime)
-		if err != os.ERROR_NONE do return err
-		assert(etime == false)
+			sqe, err = io_uring.timeout(&io.ring, 0, &t, 1, io_uring.IORING_TIMEOUT_ABS)
+		}
+		if err != nil do return ring_err_to_os_err(err)
+
+		timeouts += 1
+		io.ios_queued += 1
+
+		ferr := flush(io, 1, &timeouts, &etime)
+		if ferr != os.ERROR_NONE do return ferr
+	}
+
+	for timeouts > 0 {
+		fcerr := flush_completions(io, 0, &timeouts, &etime)
+		if fcerr != os.ERROR_NONE do return fcerr
 	}
 
 	return os.ERROR_NONE
@@ -597,7 +614,7 @@ write_enqueue :: proc(io: ^IO, completion: ^Completion) {
 }
 
 Op_Timeout :: struct {
-	expires: os.Unix_File_Time,
+	expires: unix.timespec,
 }
 
 @(private="file")
@@ -611,9 +628,9 @@ _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout
 
 	nsec := time.duration_nanoseconds(dur)
 	completion.operation = Op_Timeout {
-		expires = os.Unix_File_Time{
-			seconds = nsec / NANOSECONDS_PER_SECOND,
-			nanoseconds = nsec % NANOSECONDS_PER_SECOND,
+		expires = unix.timespec{
+			tv_sec  = nsec / NANOSECONDS_PER_SECOND,
+			tv_nsec = nsec % NANOSECONDS_PER_SECOND,
 		},
 	}
 
@@ -639,7 +656,7 @@ _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout
 timeout_enqueue :: proc(io: ^IO, completion: ^Completion) {
 	op := &completion.operation.(Op_Timeout)
 
-	_, err := io_uring.timeout(&io.ring, u64(uintptr(completion)), &op.expires, 0, io_uring.IORING_TIMEOUT_ABS)
+	_, err := io_uring.timeout(&io.ring, u64(uintptr(completion)), &op.expires, 0, 0)
 	if err == .Submission_Queue_Full {
 		queue.push_back(&io.unqueued, completion)
 		return
