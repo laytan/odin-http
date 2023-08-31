@@ -445,7 +445,7 @@ sys_io_uring_setup :: proc "contextless" (entries: u32, params: ^io_uring_params
 }
 
 sys_io_uring_enter :: proc "contextless" (
-	fd: i32,
+	fd: u32,
 	to_submit: u32,
 	min_complete: u32,
 	flags: u32,
@@ -459,11 +459,11 @@ sys_io_uring_enter :: proc "contextless" (
 			uintptr(min_complete),
 			uintptr(flags),
 			uintptr(sig),
-			NSIG / 8,
+			NSIG / 8 if sig != nil else 0,
 		),
 	)
 }
 
-sys_io_uring_register :: proc "contextless" (fd: i32, opcode: IORING_REGISTER, arg: uintptr, nr_args: u32) -> int {
+sys_io_uring_register :: proc "contextless" (fd: u32, opcode: IORING_REGISTER, arg: rawptr, nr_args: u32) -> int {
 	return int(intrinsics.syscall(SYS_io_uring_register, uintptr(fd), uintptr(opcode), uintptr(arg), uintptr(nr_args)))
 }

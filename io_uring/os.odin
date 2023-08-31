@@ -174,7 +174,7 @@ enter :: proc(
 	err: IO_Uring_Error,
 ) {
 	assert(ring.fd >= 0)
-	ns := sys_io_uring_enter(i32(ring.fd), n_to_submit, min_complete, flags, nil)
+	ns := sys_io_uring_enter(u32(ring.fd), n_to_submit, min_complete, flags, nil)
 	if ns < 0 {
 		switch os.Errno(-ns) {
 		case os.ERROR_NONE:
