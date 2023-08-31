@@ -40,14 +40,22 @@ Server_Opts :: struct {
 	// The size of the growing arena's blocks, each connection has its own arena.
 	// defaults to 256KB (quarter of a megabyte).
 	connection_arena_size: uint,
+	// The thread count to use, defaults to your core count - 1.
+	thread_count:          int,
 }
 
-Default_Server_Opts :: Server_Opts {
+Default_Server_Opts := Server_Opts {
 	auto_expect_continue  = true,
 	redirect_head_to_get  = true,
 	limit_request_line    = 8000,
 	limit_headers         = 8000,
 	connection_arena_size = mem.Kilobyte,
+}
+
+@(init)
+@(private)
+server_opts_init :: proc() {
+	Default_Server_Opts.thread_count = os.processor_core_count() - 1
 }
 
 Server_State :: enum {
@@ -110,7 +118,7 @@ listen_and_serve :: proc(
 		return
 	}
 
-	for _ in 0 ..< 7 {
+	for _ in 0 ..< max(0, s.opts.thread_count - 1) {
 		thread.create_and_start_with_poly_data(s, server_thread_init, context)
 	}
 
