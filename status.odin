@@ -5,11 +5,11 @@ import "core:fmt"
 import "core:strings"
 
 Status :: enum {
-	Not_Found                       = 404,
 	Continue                        = 100,
 	Switching_Protocols             = 101,
 	Processing                      = 102,
 	Early_Hints                     = 103,
+
 	OK                              = 200,
 	Created                         = 201,
 	Accepted                        = 202,
@@ -20,6 +20,7 @@ Status :: enum {
 	Multi_Status                    = 207,
 	Already_Reported                = 208,
 	IM_Used                         = 226,
+
 	Multiple_Choices                = 300,
 	Moved_Permanently               = 301,
 	Found                           = 302,
@@ -27,12 +28,12 @@ Status :: enum {
 	Not_Modified                    = 304,
 	Temporary_Redirect              = 307,
 	Permanent_Redirect              = 308,
+
 	Bad_Request                     = 400,
 	Unauthorized                    = 401,
 	Payment_Required                = 402,
 	Forbidden                       = 403,
-	// NotFound is first in this enum (default).
-	// NotFound                     = 404,
+	Not_Found                       = 404,
 	Method_Not_Allowed              = 405,
 	Not_Acceptable                  = 406,
 	Proxy_Authentication_Required   = 407,
@@ -57,6 +58,7 @@ Status :: enum {
 	Too_Many_Requests               = 429,
 	Request_Header_Fields_Too_Large = 431,
 	Unavailable_For_Legal_Reasons   = 451,
+
 	Internal_Server_Error           = 500,
 	Not_Implemented                 = 501,
 	Bad_Gateway                     = 502,
@@ -100,7 +102,7 @@ status_strings_init :: proc() {
 }
 
 status_string :: #force_inline proc(s: Status) -> string {
-    return status_strings[s]
+    return status_strings[s] if s <= .Network_Authentication_Required else ""
 }
 
 status_valid :: #force_inline proc(s: Status) -> bool {
@@ -108,7 +110,7 @@ status_valid :: #force_inline proc(s: Status) -> bool {
 }
 
 status_from_string :: proc(s: string) -> (Status, bool) {
-	if len(s) < 3 do return .Method_Not_Allowed, false
+	if len(s) < 3 do return {}, false
 
     // Turns the string of length 3 into an int.
     // It goes from right to left, increasing a multiplier (for base 10).
@@ -127,7 +129,7 @@ status_from_string :: proc(s: string) -> (Status, bool) {
 	}
 
 	if !status_valid(Status(code_int)) {
-		return .Method_Not_Allowed, false
+		return {}, false
 	}
 
 	return Status(code_int), true
