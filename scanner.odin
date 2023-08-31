@@ -167,6 +167,7 @@ scanner_scan :: proc(
 	s.callback = callback
 	s.could_be_too_short = could_be_too_short
 
+	assert_has_td()
 	nbio.recv(&td.io, s.connection.socket, s.buf[s.end:len(s.buf)], s, scanner_on_read)
 }
 

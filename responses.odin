@@ -94,7 +94,9 @@ respond_json :: proc(r: ^Response, v: any, opt: json.Marshal_Options = {}, send 
 }
 
 // Sends the response back to the client, handlers should call this.
-respond :: proc(r: ^Response) {
+respond :: proc(r: ^Response, loc := #caller_location) {
+	assert_has_td(loc)
+
 	conn := r._conn
 	req := conn.loop.req
 

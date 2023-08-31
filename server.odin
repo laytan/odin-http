@@ -82,9 +82,16 @@ Server :: struct {
 }
 
 Server_Thread :: struct {
-	conns: map[net.TCP_Socket]^Connection,
-	state: Server_State,
-	io:    nbio.IO,
+	conns:       map[net.TCP_Socket]^Connection,
+	state:       Server_State,
+	io:          nbio.IO,
+	initialized: bool,
+}
+
+@(private)
+@(disabled=ODIN_DISABLE_ASSERT)
+assert_has_td :: #force_inline proc(loc := #caller_location) {
+	assert(td.initialized, "The thread you are calling from is not a server/handler thread", loc)
 }
 
 @(thread_local)
@@ -179,7 +186,9 @@ server_shutdown :: proc(s: ^Server) {
 	s.closing = true
 }
 
-server_thread_shutdown :: proc(s: ^Server) {
+server_thread_shutdown :: proc(s: ^Server, loc := #caller_location) {
+	assert_has_td(loc)
+
 	td.state = .Closing
 	defer delete(td.conns)
 
@@ -214,19 +223,6 @@ server_thread_shutdown :: proc(s: ^Server) {
 	log.info("shutdown: done")
 }
 
-// If called after server_shutdown, will force the shutdown to go through open connections.
-server_shutdown_force :: proc(s: ^Server) {
-	log.info("forcing shutdown")
-
-	for _, conn in td.conns {
-		net.close(conn.socket)
-	}
-
-	time.sleep(SHUTDOWN_INTERVAL)
-
-	os.exit(1)
-}
-
 @(private)
 on_interrupt_server: ^Server
 @(private)
@@ -241,9 +237,9 @@ server_shutdown_on_interrupt :: proc(s: ^Server) {
 	libc.signal(libc.SIGINT, proc "cdecl" (_: i32) {
 		context = on_interrupt_context
 
+		// Force close on second signal.
 		if td.state == .Closing {
-			server_shutdown_force(on_interrupt_server)
-			return
+			os.exit(1)
 		}
 
 		server_shutdown(on_interrupt_server)
@@ -305,7 +301,9 @@ Response_Inflight :: struct {
 }
 
 // RFC 7230 6.6.
-connection_close :: proc(c: ^Connection) {
+connection_close :: proc(c: ^Connection, loc := #caller_location) {
+	assert_has_td(loc)
+
 	if c.state == .Closed {
 		log.infof("connection %i already closed", c.socket)
 		return
@@ -545,17 +543,20 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.allocator) {
 }
 
 // A buffer that will contain the date header for the current second.
+@(private)
 Server_Date :: struct {
 	buf_backing: [DATE_LENGTH]byte,
 	buf:         bytes.Buffer,
 }
 
+@(private)
 server_date_start :: proc(s: ^Server) {
 	s.date.buf.buf = slice.into_dynamic(s.date.buf_backing[:])
 	server_date_update(s, time.now())
 }
 
 // Updates the time and schedules itself for after a second.
+@(private)
 server_date_update :: proc(s: rawptr, now: Maybe(time.Time)) {
 	s := cast(^Server)s
 	nbio.timeout(&td.io, time.Second, s, server_date_update)
@@ -564,6 +565,7 @@ server_date_update :: proc(s: rawptr, now: Maybe(time.Time)) {
 	write_date_header(bytes.buffer_to_stream(&s.date.buf), now.? or_else time.now())
 }
 
+@(private)
 server_date :: proc(s: ^Server) -> string {
 	return string(s.date.buf_backing[:])
 }

@@ -112,7 +112,7 @@ flush :: proc(io: ^IO, wait_nr: u32, timeouts: ^uint, etime: ^bool) -> os.Errno 
 	// Store length at this time, so we don't infinite loop if any of the enqueue
 	// procs below then add to the queue again.
 	n := queue.len(io.unqueued)
-	
+
 	// odinfmt: disable
 	for _ in 0..<n {
 		unqueued := queue.pop_front(&io.unqueued)
@@ -128,7 +128,6 @@ flush :: proc(io: ^IO, wait_nr: u32, timeouts: ^uint, etime: ^bool) -> os.Errno 
 		}
 	}
 	// odinfmt: enable
-
 
 	n = queue.len(io.completed)
 	for _ in 0 ..< n {
@@ -275,7 +274,7 @@ _close :: proc(io: ^IO, fd: Closable, user: rawptr, callback: On_Close) {
 	completion.user_callback = rawptr(callback)
 
 
-	
+
 
 
 	//odinfmt:disable
