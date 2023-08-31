@@ -721,16 +721,16 @@ endpoint_to_sockaddr :: proc(ep: net.Endpoint) -> (sockaddr: os.SOCKADDR_STORAGE
 	switch a in ep.address {
 	case net.IP4_Address:
 		(^os.sockaddr_in)(&sockaddr)^ = os.sockaddr_in {
+			sin_family = u16(os.AF_INET),
 			sin_port   = u16be(ep.port),
 			sin_addr   = transmute(os.in_addr)a,
-			sin_family = u16(os.AF_INET),
 		}
 		return
 	case net.IP6_Address:
 		(^os.sockaddr_in6)(&sockaddr)^ = os.sockaddr_in6 {
+			sin6_family = u16(os.AF_INET6),
 			sin6_port   = u16be(ep.port),
 			sin6_addr   = transmute(os.in6_addr)a,
-			sin6_family = u16(os.AF_INET6),
 		}
 		return
 	}
