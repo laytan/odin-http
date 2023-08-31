@@ -70,6 +70,8 @@ Server :: struct {
 	// Updated every second with an updated date, this speeds up the server considerably
 	// because it would otherwise need to call time.now() and format the date on each response.
 	date:           Server_Date,
+
+    closing: bool,
 }
 
 Server_Thread :: struct {
@@ -137,6 +139,7 @@ server_thread_init :: proc(s: ^Server) {
 	log.debug("starting event loop")
 	td.state = .Serving
 	for {
+        if s.closing do server_thread_shutdown(s)
 		if td.state == .Closed do break
 		if td.state == .Cleaning do continue
 
@@ -166,6 +169,10 @@ SHUTDOWN_INTERVAL :: time.Millisecond * 100
 // 4. Close the main socket.
 // 5. Signal 'server_start' it can return.
 server_shutdown :: proc(s: ^Server) {
+    s.closing = true
+}
+
+server_thread_shutdown :: proc(s: ^Server) {
 	td.state = .Closing
 	defer delete(td.conns)
 
@@ -188,9 +195,8 @@ server_shutdown :: proc(s: ^Server) {
 			break
 		}
 
-		// TODO: multithread
-		// err := nbio.tick(&s.io)
-		// fmt.assertf(err == os.ERROR_NONE, "IO tick error during shutdown: %v")
+		err := nbio.tick(&td.io)
+		fmt.assertf(err == os.ERROR_NONE, "IO tick error during shutdown: %v")
 	}
 
 	td.state = .Cleaning
@@ -524,7 +530,8 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.allocator) {
 	request_init(&c.loop.req, allocator)
 	response_init(&c.loop.res, allocator)
 
-	log.debugf("waiting for next request on %s", net.endpoint_to_string(c.client, allocator))
+    // Expensive call:
+	// log.debugf("waiting for next request on %s", net.endpoint_to_string(c.client, allocator))
 
 	c.scanner.max_token_size = c.server.opts.limit_request_line
 	scanner_scan(&c.scanner, &c.loop, on_rline1)
