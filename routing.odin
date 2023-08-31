@@ -2,8 +2,8 @@ package http
 
 import "core:log"
 import "core:net"
-import "core:strings"
 import "core:runtime"
+import "core:strings"
 import "core:text/match"
 
 URL :: struct {
@@ -86,10 +86,7 @@ route_get :: proc(router: ^Router, pattern: string, handler: Handler) {
 	route_add(
 		router,
 		.Get,
-		Route{
-			handler = handler,
-			pattern = strings.concatenate([]string{"^", pattern, "$"}, router.allocator),
-		},
+		Route{handler = handler, pattern = strings.concatenate([]string{"^", pattern, "$"}, router.allocator)},
 	)
 }
 
@@ -97,10 +94,7 @@ route_post :: proc(router: ^Router, pattern: string, handler: Handler) {
 	route_add(
 		router,
 		.Post,
-		Route{
-			handler = handler,
-			pattern = strings.concatenate([]string{"^", pattern, "$"}, router.allocator),
-		},
+		Route{handler = handler, pattern = strings.concatenate([]string{"^", pattern, "$"}, router.allocator)},
 	)
 }
 
@@ -109,10 +103,7 @@ route_head :: proc(router: ^Router, pattern: string, handler: Handler) {
 	route_add(
 		router,
 		.Head,
-		Route{
-			handler = handler,
-			pattern = strings.concatenate([]string{"^", pattern, "$"}, router.allocator),
-		},
+		Route{handler = handler, pattern = strings.concatenate([]string{"^", pattern, "$"}, router.allocator)},
 	)
 }
 
@@ -120,10 +111,7 @@ route_put :: proc(router: ^Router, pattern: string, handler: Handler) {
 	route_add(
 		router,
 		.Put,
-		Route{
-			handler = handler,
-			pattern = strings.concatenate([]string{"^", pattern, "$"}, router.allocator),
-		},
+		Route{handler = handler, pattern = strings.concatenate([]string{"^", pattern, "$"}, router.allocator)},
 	)
 }
 
@@ -131,10 +119,7 @@ route_patch :: proc(router: ^Router, pattern: string, handler: Handler) {
 	route_add(
 		router,
 		.Patch,
-		Route{
-			handler = handler,
-			pattern = strings.concatenate([]string{"^", pattern, "$"}, router.allocator),
-		},
+		Route{handler = handler, pattern = strings.concatenate([]string{"^", pattern, "$"}, router.allocator)},
 	)
 }
 
@@ -142,10 +127,7 @@ route_trace :: proc(router: ^Router, pattern: string, handler: Handler) {
 	route_add(
 		router,
 		.Trace,
-		Route{
-			handler = handler,
-			pattern = strings.concatenate([]string{"^", pattern, "$"}, router.allocator),
-		},
+		Route{handler = handler, pattern = strings.concatenate([]string{"^", pattern, "$"}, router.allocator)},
 	)
 }
 
@@ -153,10 +135,7 @@ route_delete :: proc(router: ^Router, pattern: string, handler: Handler) {
 	route_add(
 		router,
 		.Delete,
-		Route{
-			handler = handler,
-			pattern = strings.concatenate([]string{"^", pattern, "$"}, router.allocator),
-		},
+		Route{handler = handler, pattern = strings.concatenate([]string{"^", pattern, "$"}, router.allocator)},
 	)
 }
 
@@ -164,10 +143,7 @@ route_connect :: proc(router: ^Router, pattern: string, handler: Handler) {
 	route_add(
 		router,
 		.Connect,
-		Route{
-			handler = handler,
-			pattern = strings.concatenate([]string{"^", pattern, "$"}, router.allocator),
-		},
+		Route{handler = handler, pattern = strings.concatenate([]string{"^", pattern, "$"}, router.allocator)},
 	)
 }
 
@@ -175,10 +151,7 @@ route_options :: proc(router: ^Router, pattern: string, handler: Handler) {
 	route_add(
 		router,
 		.Options,
-		Route{
-			handler = handler,
-			pattern = strings.concatenate([]string{"^", pattern, "$"}, router.allocator),
-		},
+		Route{handler = handler, pattern = strings.concatenate([]string{"^", pattern, "$"}, router.allocator)},
 	)
 }
 
@@ -190,10 +163,7 @@ route_all :: proc(router: ^Router, pattern: string, handler: Handler) {
 
 	append(
 		&router.all,
-		Route{
-			handler = handler,
-			pattern = strings.concatenate([]string{"^", pattern, "$"}, router.allocator),
-		},
+		Route{handler = handler, pattern = strings.concatenate([]string{"^", pattern, "$"}, router.allocator)},
 	)
 }
 
@@ -220,7 +190,7 @@ routes_try :: proc(routes: [dynamic]Route, req: ^Request, res: ^Response) -> boo
 		}
 
 		if n > 0 {
-			captures := make([]string, n-1)
+			captures := make([]string, n - 1)
 			for cap, i in routes_try_captures[1:n] {
 				captures[i] = req.url.path[cap.byte_start:cap.byte_end]
 			}

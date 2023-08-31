@@ -24,7 +24,6 @@ Scanner :: struct {
 	successive_empty_token_count: int,
 	done:                         bool,
 	could_be_too_short:           bool,
-
 	user_data:                    rawptr,
 	callback:                     Scan_Callback,
 }
@@ -168,13 +167,7 @@ scanner_scan :: proc(
 	s.callback = callback
 	s.could_be_too_short = could_be_too_short
 
-	nbio.recv(
-		&td.io,
-		s.connection.socket,
-		s.buf[s.end:len(s.buf)],
-		s,
-		scanner_on_read,
-	)
+	nbio.recv(&td.io, s.connection.socket, s.buf[s.end:len(s.buf)], s, scanner_on_read)
 }
 
 scanner_on_read :: proc(s_: rawptr, n: int, _: Maybe(net.Endpoint), e: net.Network_Error) {
@@ -186,8 +179,8 @@ scanner_on_read :: proc(s_: rawptr, n: int, _: Maybe(net.Endpoint), e: net.Netwo
 		#partial switch ee in e {
 		case net.TCP_Recv_Error:
 			#partial switch ee {
-			case .Connection_Closed,
-				net.TCP_Recv_Error(9): // 9 for EBADF (bad file descriptor) happens when OS closes socket.
+			case .Connection_Closed, net.TCP_Recv_Error(9):
+				// 9 for EBADF (bad file descriptor) happens when OS closes socket.
 				s._err = .EOF
 				return
 			}

@@ -361,7 +361,7 @@ write_at_all_and_wait :: proc(io: ^IO, fd: os.Handle, offset: int, buf: []byte) 
 
 timeout_and_wait :: proc(io: ^IO, dur: time.Duration) -> Maybe(time.Time) {
 	Timeout_Result :: struct {
-		done: bool,
+		done:           bool,
 		completed_time: Maybe(time.Time),
 	}
 

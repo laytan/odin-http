@@ -2,27 +2,27 @@ package http
 
 import "core:bytes"
 import "core:log"
+import "core:mem"
+import "core:net"
 import "core:strconv"
 import "core:strings"
-import "core:net"
-import "core:mem"
 
 import "nbio"
 
 Response :: struct {
 	// A growing arena where allocations are freed after the response is sent.
 	allocator: mem.Allocator,
-	status:  Status,
-	headers: Headers,
-	cookies: [dynamic]Cookie,
-	body:    bytes.Buffer,
-	_conn:   ^Connection,
+	status:    Status,
+	headers:   Headers,
+	cookies:   [dynamic]Cookie,
+	body:      bytes.Buffer,
+	_conn:     ^Connection,
 }
 
 response_init :: proc(r: ^Response, allocator := context.allocator) {
-    r.status             = .Not_Found
-	r.allocator          = allocator
-	r.headers.allocator  = allocator
+	r.status = .Not_Found
+	r.allocator = allocator
+	r.headers.allocator = allocator
 	r.body.buf.allocator = allocator
 }
 
@@ -92,10 +92,10 @@ response_send_got_body :: proc(r: ^Response, will_close: bool) {
 			bytes.buffer_grow(&res, buf_len + 20)
 
 			// Write the length into unwritten portion.
-            unwritten := dynamic_unwritten(res.buf)
-            l := len(strconv.itoa(unwritten, bytes.buffer_length(&r.body)))
-            assert(l <= 20)
-            dynamic_add_len(&res.buf, l)
+			unwritten := dynamic_unwritten(res.buf)
+			l := len(strconv.itoa(unwritten, bytes.buffer_length(&r.body)))
+			assert(l <= 20)
+			dynamic_add_len(&res.buf, l)
 
 			bytes.buffer_write_string(&res, "\r\n")
 		}

@@ -8,8 +8,8 @@ import "core:mem"
 import "core:net"
 import "core:os"
 import "core:runtime"
-import "core:time"
 import "core:sys/unix"
+import "core:time"
 
 import "../io_uring"
 
@@ -35,7 +35,7 @@ Completion :: struct {
 }
 
 _init :: proc(io: ^IO, alloc := context.allocator) -> (err: os.Errno) {
-	flags:   u32 = 0
+	flags: u32 = 0
 	entries: u32 = 256
 
 	io.allocator = alloc
@@ -112,7 +112,7 @@ flush :: proc(io: ^IO, wait_nr: u32, timeouts: ^uint, etime: ^bool) -> os.Errno 
 	// Store length at this time, so we don't infinite loop if any of the enqueue
 	// procs below then add to the queue again.
 	n := queue.len(io.unqueued)
-
+	
 	// odinfmt: disable
 	for _ in 0..<n {
 		unqueued := queue.pop_front(&io.unqueued)
@@ -274,6 +274,8 @@ _close :: proc(io: ^IO, fd: Closable, user: rawptr, callback: On_Close) {
 	completion.user_data = user
 	completion.user_callback = rawptr(callback)
 
+
+	
 
 
 	//odinfmt:disable
@@ -617,7 +619,7 @@ Op_Timeout :: struct {
 	expires: unix.timespec,
 }
 
-@(private="file")
+@(private = "file")
 NANOSECONDS_PER_SECOND :: 1e+9
 
 _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout) {
@@ -628,10 +630,7 @@ _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout
 
 	nsec := time.duration_nanoseconds(dur)
 	completion.operation = Op_Timeout {
-		expires = unix.timespec{
-			tv_sec  = nsec / NANOSECONDS_PER_SECOND,
-			tv_nsec = nsec % NANOSECONDS_PER_SECOND,
-		},
+		expires = unix.timespec{tv_sec = nsec / NANOSECONDS_PER_SECOND, tv_nsec = nsec % NANOSECONDS_PER_SECOND},
 	}
 
 	completion.callback = proc(io: ^IO, completion: ^Completion) {

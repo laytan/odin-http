@@ -9,11 +9,8 @@ main :: proc() {
 
 	fmt.println("Listening on http://localost:8080...")
 
-	http.listen_and_serve(
-		&s,
-		http.handler(proc(_: ^http.Request, res: ^http.Response) {
+	http.listen_and_serve(&s, http.handler(proc(_: ^http.Request, res: ^http.Response) {
 			res.status = .OK
 			http.respond(res)
-		}),
-	)
+		}))
 }

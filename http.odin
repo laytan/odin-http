@@ -1,11 +1,11 @@
 package http
 
+import "core:io"
+import "core:runtime"
+import "core:slice"
 import "core:strconv"
 import "core:strings"
 import "core:time"
-import "core:io"
-import "core:slice"
-import "core:runtime"
 
 Requestline_Error :: enum {
 	None,
@@ -54,7 +54,7 @@ requestline_parse :: proc(s: string, allocator := context.allocator) -> (line: R
 }
 
 requestline_write :: proc(w: io.Writer, rline: Requestline) -> io.Error {
-
+	
 	// odinfmt:disable
 	io.write_string(w, method_string(rline.method)) or_return // <METHOD>
 	io.write_byte(w, ' ')                           or_return // <METHOD> <SP>
@@ -255,7 +255,7 @@ write_date_header :: proc(w: io.Writer, t: time.Time) -> io.Error {
 	year, month, day := time.date(t)
 	hour, minute, second := time.clock_from_time(t)
 	wday := time.weekday(t)
-
+	
 	// odinfmt:disable
 	io.write_string(w, DAYS[wday])    or_return // 'Fri, '
 	write_padded_int(w, day)          or_return // 'Fri, 05'
@@ -367,14 +367,11 @@ request_path :: proc(target: URL, allocator := context.allocator) -> (rq_path: s
 }
 
 dynamic_unwritten :: proc(d: [dynamic]$E) -> []E {
-	return slice.from_ptr(
-		slice.ptr_add(&d[0], len(d) * size_of(E)),
-		cap(d),
-	)
+	return slice.from_ptr(slice.ptr_add(&d[0], len(d) * size_of(E)), cap(d))
 }
 
 dynamic_add_len :: proc(d: ^[dynamic]$E, len: int) {
-    (transmute(^runtime.Raw_Dynamic_Array)d).len += len
+	(transmute(^runtime.Raw_Dynamic_Array)d).len += len
 }
 
 @(private)

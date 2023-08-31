@@ -1,19 +1,19 @@
 package http
 
-import "core:net"
 import "core:bufio"
+import "core:bytes"
+import "core:c/libc"
+import "core:fmt"
 import "core:log"
-import "core:time"
 import "core:mem"
 import "core:mem/virtual"
-import "core:runtime"
-import "core:c/libc"
+import "core:net"
 import "core:os"
-import "core:fmt"
+import "core:runtime"
 import "core:slice"
-import "core:bytes"
-import "core:thread"
 import "core:sync"
+import "core:thread"
+import "core:time"
 
 import "nbio"
 
@@ -70,8 +70,7 @@ Server :: struct {
 	// Updated every second with an updated date, this speeds up the server considerably
 	// because it would otherwise need to call time.now() and format the date on each response.
 	date:           Server_Date,
-
-    closing: bool,
+	closing:        bool,
 }
 
 Server_Thread :: struct {
@@ -139,7 +138,7 @@ server_thread_init :: proc(s: ^Server) {
 	log.debug("starting event loop")
 	td.state = .Serving
 	for {
-        if s.closing do server_thread_shutdown(s)
+		if s.closing do server_thread_shutdown(s)
 		if td.state == .Closed do break
 		if td.state == .Cleaning do continue
 
@@ -169,7 +168,7 @@ SHUTDOWN_INTERVAL :: time.Millisecond * 100
 // 4. Close the main socket.
 // 5. Signal 'server_start' it can return.
 server_shutdown :: proc(s: ^Server) {
-    s.closing = true
+	s.closing = true
 }
 
 server_thread_shutdown :: proc(s: ^Server) {
@@ -530,7 +529,7 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.allocator) {
 	request_init(&c.loop.req, allocator)
 	response_init(&c.loop.res, allocator)
 
-    // Expensive call:
+	// Expensive call:
 	// log.debugf("waiting for next request on %s", net.endpoint_to_string(c.client, allocator))
 
 	c.scanner.max_token_size = c.server.opts.limit_request_line

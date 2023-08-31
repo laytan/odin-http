@@ -32,7 +32,7 @@ get :: proc() {
 }
 
 Post_Body :: struct {
-	name: string,
+	name:    string,
 	message: string,
 }
 

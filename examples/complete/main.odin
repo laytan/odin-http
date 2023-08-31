@@ -1,10 +1,10 @@
 package main
 
-import "core:net"
-import "core:log"
-import "core:time"
 import "core:fmt"
+import "core:log"
 import "core:mem"
+import "core:net"
+import "core:time"
 
 import http "../.."
 
@@ -51,18 +51,17 @@ serve :: proc() {
 	// Matches /users followed by any word (alphanumeric) followed by /comments and then / with any number.
 	// The word is available as params[0], and the number as params[1].
 	http.route_get(&router, "/users/(%w+)/comments/(%d+)", http.handler(proc(req: ^http.Request, res: ^http.Response) {
-		http.respond_plain(res, fmt.tprintf("user %s, comment: %s", req.url_params[0], req.url_params[1]))
-	}))
+			http.respond_plain(res, fmt.tprintf("user %s, comment: %s", req.url_params[0], req.url_params[1]))
+		}))
 
 	// You can apply a rate limit just like any other middleware,
 	// this one only applies to the /cookies route, but moving it higher up would match others too:
 	cookies := http.handler(cookies)
 	limit_msg := "Only one cookie is allowed per second, slow down!"
-	limited_cookies := http.middleware_rate_limit(&cookies, &http.Rate_Limit_Opts{
-		window = time.Second,
-		max = 1,
-		on_limit = http.on_limit_message(&limit_msg),
-	})
+	limited_cookies := http.middleware_rate_limit(
+		&cookies,
+		&http.Rate_Limit_Opts{window = time.Second, max = 1, on_limit = http.on_limit_message(&limit_msg)},
+	)
 	http.route_get(&router, "/cookies", limited_cookies)
 
 	http.route_get(&router, "/api", http.handler(api))
@@ -70,7 +69,9 @@ serve :: proc() {
 
 	// Can also have specific middleware for each route:
 	index_handler := http.handler(index)
-	index_with_middleware := http.middleware_proc(&index_handler, proc(handler: ^http.Handler, req: ^http.Request, res: ^http.Response) {
+	index_with_middleware := http.middleware_proc(
+	&index_handler,
+	proc(handler: ^http.Handler, req: ^http.Request, res: ^http.Response) {
 		// Before calling the actual handler, can check the request and decide to pass to handler or not, or set a header for example.
 		log.info("about to call the index handler")
 
@@ -82,7 +83,8 @@ serve :: proc() {
 		// TODO: this is not true when the handler uses callbacks for nonblocking.
 		// Middleware in general doesn't work as expected.
 		log.infof("index handler returned status code: %s", res.status)
-	})
+	},
+	)
 	http.route_get(&router, "/", index_with_middleware)
 
 	// Matches every get request that did not match another route.
@@ -96,11 +98,7 @@ serve :: proc() {
 	with_logger := http.middleware_logger(&route_handler, &http.Logger_Opts{log_time = true})
 
 	// Start the server on 127.0.0.1:6969.
-	err := http.listen_and_serve(
-		&s,
-		with_logger,
-		net.Endpoint{address = net.IP4_Loopback, port = 6969},
-	)
+	err := http.listen_and_serve(&s, with_logger, net.Endpoint{address = net.IP4_Loopback, port = 6969})
 	log.warnf("server stopped: %s", err)
 }
 
@@ -140,20 +138,20 @@ static :: proc(req: ^http.Request, res: ^http.Response) {
 // TODO: this needs abstractions.
 post_ping :: proc(req: ^http.Request, res: ^http.Response) {
 	http.request_body(req, proc(body: http.Body_Type, was_alloc: bool, res: rawptr) {
-		res := cast(^http.Response)res
+			res := cast(^http.Response)res
 
-		if err, is_err := body.(http.Body_Error); is_err {
-			res.status = http.body_error_status(err)
-			http.respond(res)
-			return
-		}
+			if err, is_err := body.(http.Body_Error); is_err {
+				res.status = http.body_error_status(err)
+				http.respond(res)
+				return
+			}
 
-		if (body.(http.Body_Plain) or_else "") != "ping" {
-			res.status = .Unprocessable_Content
-			http.respond(res)
-			return
-		}
+			if (body.(http.Body_Plain) or_else "") != "ping" {
+				res.status = .Unprocessable_Content
+				http.respond(res)
+				return
+			}
 
-		http.respond_plain(res, "pong")
-	}, len("ping"), res)
+			http.respond_plain(res, "pong")
+		}, len("ping"), res)
 }

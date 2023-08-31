@@ -144,9 +144,9 @@ request_body :: proc(
 	}
 
 	Request_Body_State :: struct {
-		cb: proc(body: Body_Type, was_allocation: bool, user_data: rawptr),
+		cb:        proc(body: Body_Type, was_allocation: bool, user_data: rawptr),
 		user_data: rawptr,
-		req: ^Request,
+		req:       ^Request,
 	}
 
 	on_body :: proc(state: rawptr, body: Body_Type, was_allocation: bool) {
@@ -175,12 +175,7 @@ Parsing_Body :: struct {
 	headers:          ^Headers,
 	user_data:        rawptr,
 	user_callback:    proc(user_data: rawptr, body: Body_Type, was_allocation: bool),
-	parsing_callback: proc(
-		parsing_body: ^Parsing_Body,
-		body: string,
-		was_allocation: bool,
-		err: Body_Error,
-	),
+	parsing_callback: proc(parsing_body: ^Parsing_Body, body: string, was_allocation: bool, err: Body_Error),
 	scanner:          ^Scanner,
 	buf:              bytes.Buffer,
 	max_length:       int,
@@ -195,12 +190,7 @@ parse_body :: proc(
 	callback: proc(user_data: rawptr, body: Body_Type, was_allocation: bool),
 	allocator := context.allocator,
 ) {
-	on_body :: proc(
-		pb: ^Parsing_Body,
-		body: string,
-		was_allocation: bool,
-		err: Body_Error,
-	) {
+	on_body :: proc(pb: ^Parsing_Body, body: string, was_allocation: bool, err: Body_Error) {
 		defer free(pb, pb.allocator)
 
 		if err != nil {
@@ -259,8 +249,7 @@ parse_body :: proc(
 	pb.scanner = _body
 	pb.max_length = max_length
 
-	if enc_header, ok := headers["transfer-encoding"];
-	   ok && strings.has_suffix(enc_header, "chunked") {
+	if enc_header, ok := headers["transfer-encoding"]; ok && strings.has_suffix(enc_header, "chunked") {
 		request_body_chunked(pb, allocator)
 	} else {
 		request_body_length(pb)
@@ -458,10 +447,7 @@ request_body_chunked :: proc(pb: ^Parsing_Body, allocator := context.allocator) 
 			delete_key(pb.headers, "trailer")
 		}
 
-		pb.headers["transfer-encoding"] = strings.trim_suffix(
-			pb.headers["transfer-encoding"],
-			"chunked",
-		)
+		pb.headers["transfer-encoding"] = strings.trim_suffix(pb.headers["transfer-encoding"], "chunked")
 
 		pb.parsing_callback(pb, bytes.buffer_to_string(&pb.buf), true, .None)
 	}

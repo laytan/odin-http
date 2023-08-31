@@ -1,9 +1,9 @@
 package http
 
+import "core:io"
 import "core:strconv"
 import "core:strings"
 import "core:time"
-import "core:io"
 
 Same_Site :: enum {
 	Unspecified,

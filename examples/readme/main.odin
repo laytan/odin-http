@@ -27,8 +27,8 @@ main :: proc() {
 	// Matches /users followed by any word (alphanumeric) followed by /comments and then / with any number.
 	// The word is available as req.url_params[0], and the number as req.url_params[1].
 	http.route_get(&router, "/users/(%w+)/comments/(%d+)", http.handler(proc(req: ^http.Request, res: ^http.Response) {
-		http.respond_plain( res, fmt.tprintf("user %s, comment: %s", req.url_params[0], req.url_params[1]))
-	}))
+			http.respond_plain(res, fmt.tprintf("user %s, comment: %s", req.url_params[0], req.url_params[1]))
+		}))
 	http.route_get(&router, "/cookies", http.handler(cookies))
 	http.route_get(&router, "/api", http.handler(api))
 	http.route_get(&router, "/ping", http.handler(ping))
@@ -46,11 +46,7 @@ main :: proc() {
 	with_logger := http.middleware_logger(&route_handler, &http.Logger_Opts{log_time = true})
 
 	// Start the server on 127.0.0.1:6969.
-	err := http.listen_and_serve(
-		&s,
-		with_logger,
-		net.Endpoint{address = net.IP4_Loopback, port = 6969},
-	)
+	err := http.listen_and_serve(&s, with_logger, net.Endpoint{address = net.IP4_Loopback, port = 6969})
 	log.warnf("server stopped: %s", err)
 }
 
@@ -90,20 +86,20 @@ static :: proc(req: ^http.Request, res: ^http.Response) {
 // TODO: this needs abstractions.
 post_ping :: proc(req: ^http.Request, res: ^http.Response) {
 	http.request_body(req, proc(body: http.Body_Type, was_alloc: bool, res: rawptr) {
-		res := cast(^http.Response)res
+			res := cast(^http.Response)res
 
-		if err, is_err := body.(http.Body_Error); is_err {
-			res.status = http.body_error_status(err)
-			http.respond(res)
-			return
-		}
+			if err, is_err := body.(http.Body_Error); is_err {
+				res.status = http.body_error_status(err)
+				http.respond(res)
+				return
+			}
 
-		if (body.(http.Body_Plain) or_else "") != "ping" {
-			res.status = .Unprocessable_Content
-			http.respond(res)
-			return
-		}
+			if (body.(http.Body_Plain) or_else "") != "ping" {
+				res.status = .Unprocessable_Content
+				http.respond(res)
+				return
+			}
 
-		http.respond_plain(res, "pong")
-	}, len("ping"), res)
+			http.respond_plain(res, "pong")
+		}, len("ping"), res)
 }

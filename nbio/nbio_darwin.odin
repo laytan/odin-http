@@ -94,7 +94,7 @@ flush :: proc(io: ^IO) -> os.Errno {
 
 	// Save length so we avoid an infinite loop when there is added to the queue in a callback.
 	n := queue.len(io.completed)
-	for _ in 0..<n {
+	for _ in 0 ..< n {
 		completed := queue.pop_front(&io.completed)
 		context = completed.ctx
 		completed.callback(io, completed)
@@ -224,9 +224,12 @@ _close :: proc(io: ^IO, fd: Closable, user: rawptr, callback: On_Close) {
 	completion.user_callback = rawptr(callback)
 
 	switch h in fd {
-	case net.TCP_Socket: completion.operation = Op_Close(os.Handle(h))
-	case net.UDP_Socket: completion.operation = Op_Close(os.Handle(h))
-	case os.Handle:      completion.operation = Op_Close(h)
+	case net.TCP_Socket:
+		completion.operation = Op_Close(os.Handle(h))
+	case net.UDP_Socket:
+		completion.operation = Op_Close(os.Handle(h))
+	case os.Handle:
+		completion.operation = Op_Close(h)
 	}
 
 	completion.callback = proc(io: ^IO, completion: ^Completion) {
@@ -330,8 +333,10 @@ _read :: proc(io: ^IO, fd: os.Handle, offset: Maybe(int), buf: []byte, user: raw
 		read: int
 		err: os.Errno
 		switch off in op.offset {
-		case int: read, err = os.read_at(op.fd, op.buf, i64(off))
-		case:     read, err = os.read(op.fd, op.buf)
+		case int:
+			read, err = os.read_at(op.fd, op.buf, i64(off))
+		case:
+			read, err = os.read(op.fd, op.buf)
 		}
 
 		if err == os.EWOULDBLOCK {
@@ -459,8 +464,8 @@ _send :: proc(
 }
 
 Op_Write :: struct {
-	fd:  os.Handle,
-	buf: []byte,
+	fd:     os.Handle,
+	buf:    []byte,
 	offset: Maybe(int),
 }
 
@@ -481,8 +486,10 @@ _write :: proc(io: ^IO, fd: os.Handle, offset: Maybe(int), buf: []byte, user: ra
 		written: int
 		err: os.Errno
 		switch off in op.offset {
-		case int: written, err = os.write_at(op.fd, op.buf, i64(off))
-		case:     written, err = os.write(op.fd, op.buf)
+		case int:
+			written, err = os.write_at(op.fd, op.buf, i64(off))
+		case:
+			written, err = os.write(op.fd, op.buf)
 		}
 
 		if err == os.EWOULDBLOCK {

@@ -3,12 +3,12 @@
 package nbio
 
 import "core:container/queue"
+import "core:log"
 import "core:mem"
 import "core:net"
 import "core:os"
 import "core:runtime"
 import "core:time"
-import "core:log"
 
 import win "core:sys/windows"
 
@@ -23,17 +23,17 @@ _IO :: struct {
 	offsets:         map[os.Handle]u32,
 }
 
-@(private="file")
+@(private = "file")
 Completion :: struct {
 	// NOTE: needs to be the first field.
-	over: win.OVERLAPPED,
+	over:          win.OVERLAPPED,
 
 	// TODO: make a proc outside of this, don't need it in here.
-	callback: proc(io: ^IO, completion: ^Completion),
-	ctx: runtime.Context,
+	callback:      proc(io: ^IO, completion: ^Completion),
+	ctx:           runtime.Context,
 	user_callback: rawptr,
-	user_data: rawptr,
-	op: Operation,
+	user_data:     rawptr,
+	op:            Operation,
 }
 
 
@@ -86,14 +86,7 @@ _tick :: proc(io: ^IO) -> (err: os.Errno) {
 
 		events: [256]win.OVERLAPPED_ENTRY
 		entries_removed: win.ULONG
-		if !win.GetQueuedCompletionStatusEx(
-			io.iocp,
-			&events[0],
-			len(events),
-			&entries_removed,
-			wait_ms,
-			false,
-		) {
+		if !win.GetQueuedCompletionStatusEx(io.iocp, &events[0], len(events), &entries_removed, wait_ms, false) {
 			if terr := win.GetLastError(); terr != win.WAIT_TIMEOUT {
 				err = os.Errno(terr)
 				return
@@ -115,7 +108,7 @@ _tick :: proc(io: ^IO) -> (err: os.Errno) {
 
 	// Prevent infinte loop when callback adds to completed by storing length.
 	n := queue.len(io.completed)
-	for _ in 0..<n {
+	for _ in 0 ..< n {
 		completion := queue.pop_front(&io.completed)
 		context = completion.ctx
 		completion.callback(io, completion)
@@ -123,7 +116,7 @@ _tick :: proc(io: ^IO) -> (err: os.Errno) {
 	return
 }
 
-@(private="file")
+@(private = "file")
 flush_timeouts :: proc(io: ^IO) -> (expires: Maybe(time.Duration)) {
 	curr: time.Time
 	timeout_len := len(io.timeouts)
@@ -169,57 +162,55 @@ _open :: proc(io: ^IO, path: string, mode, perm: int) -> (os.Handle, os.Errno) {
 	}
 
 	access: u32
-	switch mode & (os.O_RDONLY|os.O_WRONLY|os.O_RDWR) {
-	case os.O_RDONLY: access = win.FILE_GENERIC_READ
-	case os.O_WRONLY: access = win.FILE_GENERIC_WRITE
-	case os.O_RDWR:   access = win.FILE_GENERIC_READ | win.FILE_GENERIC_WRITE
+	switch mode & (os.O_RDONLY | os.O_WRONLY | os.O_RDWR) {
+	case os.O_RDONLY:
+		access = win.FILE_GENERIC_READ
+	case os.O_WRONLY:
+		access = win.FILE_GENERIC_WRITE
+	case os.O_RDWR:
+		access = win.FILE_GENERIC_READ | win.FILE_GENERIC_WRITE
 	}
 
-	if mode&os.O_CREATE != 0 {
+	if mode & os.O_CREATE != 0 {
 		access |= win.FILE_GENERIC_WRITE
 	}
-	if mode&os.O_APPEND != 0 {
+	if mode & os.O_APPEND != 0 {
 		access &~= win.FILE_GENERIC_WRITE
-		access |=  win.FILE_APPEND_DATA
+		access |= win.FILE_APPEND_DATA
 	}
 
-	share_mode := win.FILE_SHARE_READ|win.FILE_SHARE_WRITE
+	share_mode := win.FILE_SHARE_READ | win.FILE_SHARE_WRITE
 	sa: ^win.SECURITY_ATTRIBUTES = nil
-	sa_inherit := win.SECURITY_ATTRIBUTES{nLength = size_of(win.SECURITY_ATTRIBUTES), bInheritHandle = true}
-	if mode&os.O_CLOEXEC == 0 {
+	sa_inherit := win.SECURITY_ATTRIBUTES {
+		nLength        = size_of(win.SECURITY_ATTRIBUTES),
+		bInheritHandle = true,
+	}
+	if mode & os.O_CLOEXEC == 0 {
 		sa = &sa_inherit
 	}
 
 	create_mode: u32
 	switch {
-	case mode&(os.O_CREATE|os.O_EXCL) == (os.O_CREATE | os.O_EXCL):
+	case mode & (os.O_CREATE | os.O_EXCL) == (os.O_CREATE | os.O_EXCL):
 		create_mode = win.CREATE_NEW
-	case mode&(os.O_CREATE|os.O_TRUNC) == (os.O_CREATE | os.O_TRUNC):
+	case mode & (os.O_CREATE | os.O_TRUNC) == (os.O_CREATE | os.O_TRUNC):
 		create_mode = win.CREATE_ALWAYS
-	case mode&os.O_CREATE == os.O_CREATE:
+	case mode & os.O_CREATE == os.O_CREATE:
 		create_mode = win.OPEN_ALWAYS
-	case mode&os.O_TRUNC == os.O_TRUNC:
+	case mode & os.O_TRUNC == os.O_TRUNC:
 		create_mode = win.TRUNCATE_EXISTING
 	case:
 		create_mode = win.OPEN_EXISTING
 	}
 
-	flags := win.FILE_ATTRIBUTE_NORMAL|win.FILE_FLAG_BACKUP_SEMANTICS
+	flags := win.FILE_ATTRIBUTE_NORMAL | win.FILE_FLAG_BACKUP_SEMANTICS
 
 	// This line is the only thing different from the `os.open` procedure.
 	// This makes it an asynchronous file that can be used in nbio.
 	flags |= win.FILE_FLAG_OVERLAPPED
 
 	wide_path := win.utf8_to_wstring(path)
-	handle := os.Handle(win.CreateFileW(
-		wide_path,
-		access,
-		share_mode,
-		sa,
-		create_mode,
-		flags,
-		nil,
-	))
+	handle := os.Handle(win.CreateFileW(wide_path, access, share_mode, sa, create_mode, flags, nil))
 
 	if handle == os.INVALID_HANDLE {
 		err := os.Errno(win.GetLastError())
@@ -239,7 +230,7 @@ _open :: proc(io: ^IO, path: string, mode, perm: int) -> (os.Handle, os.Errno) {
 		return os.INVALID_HANDLE, os.Errno(win.GetLastError())
 	}
 
-	if mode&os.O_APPEND != 0 {
+	if mode & os.O_APPEND != 0 {
 		_seek(io, handle, 0, .End)
 	}
 
@@ -265,7 +256,14 @@ _seek :: proc(io: ^IO, fd: os.Handle, offset: int, whence: Whence) -> (int, os.E
 	return int(io.offsets[fd]), os.ERROR_NONE
 }
 
-_open_socket :: proc(io: ^IO, family: net.Address_Family, protocol: net.Socket_Protocol) -> (socket: net.Any_Socket, err: net.Network_Error) {
+_open_socket :: proc(
+	io: ^IO,
+	family: net.Address_Family,
+	protocol: net.Socket_Protocol,
+) -> (
+	socket: net.Any_Socket,
+	err: net.Network_Error,
+) {
 	socket, err = net.create_socket(family, protocol)
 	if err != nil do return
 
@@ -275,7 +273,7 @@ _open_socket :: proc(io: ^IO, family: net.Address_Family, protocol: net.Socket_P
 }
 
 Op_Accept :: struct {
-	callback: proc(^IO, ^Completion, ^Op_Accept) -> (source: net.Endpoint, err: win.c_int),
+	callback: proc(_: ^IO, _: ^Completion, _: ^Op_Accept) -> (source: net.Endpoint, err: win.c_int),
 	socket:   win.SOCKET,
 	client:   win.SOCKET,
 	addr:     win.SOCKADDR_STORAGE_LH,
@@ -289,13 +287,7 @@ _accept :: proc(io: ^IO, socket: net.TCP_Socket, user: rawptr, callback: On_Acce
 			// Get status update, we've already initiated the accept.
 			flags: win.DWORD
 			transferred: win.DWORD
-			ok = win.WSAGetOverlappedResult(
-				op.socket,
-				&comp.over,
-				&transferred,
-				win.FALSE,
-				&flags,
-			)
+			ok = win.WSAGetOverlappedResult(op.socket, &comp.over, &transferred, win.FALSE, &flags)
 		} else {
 			op.pending = true
 
@@ -335,15 +327,16 @@ _accept :: proc(io: ^IO, socket: net.TCP_Socket, user: rawptr, callback: On_Acce
 		return
 	}
 
-	submit(io, user, rawptr(callback), Op_Accept{
-		callback = internal_callback,
-		socket   = win.SOCKET(socket),
-		client   = win.INVALID_SOCKET,
-	})
+	submit(
+		io,
+		user,
+		rawptr(callback),
+		Op_Accept{callback = internal_callback, socket = win.SOCKET(socket), client = win.INVALID_SOCKET},
+	)
 }
 
 Op_Connect :: struct {
-	callback: proc(^IO, ^Completion, ^Op_Connect) -> (err: win.c_int),
+	callback: proc(_: ^IO, _: ^Completion, _: ^Op_Connect) -> (err: win.c_int),
 	socket:   win.SOCKET,
 	addr:     win.SOCKADDR_STORAGE_LH,
 	pending:  bool,
@@ -378,15 +371,7 @@ _connect :: proc(io: ^IO, ep: net.Endpoint, user: rawptr, callback: On_Connect) 
 			connect_ex: LPFN_CONNECTEX
 			load_socket_fn(op.socket, WSAID_CONNECTEX, &connect_ex)
 			// TODO: size_of(win.sockaddr_in6) when ip6.
-			ok = connect_ex(
-				op.socket,
-				&op.addr,
-				size_of(win.sockaddr_in) + 16,
-				nil,
-				0,
-				&transferred,
-				&comp.over,
-			)
+			ok = connect_ex(op.socket, &op.addr, size_of(win.sockaddr_in) + 16, nil, 0, &transferred, &comp.over)
 		}
 		if !ok do return win.WSAGetLastError()
 
@@ -395,15 +380,12 @@ _connect :: proc(io: ^IO, ep: net.Endpoint, user: rawptr, callback: On_Connect) 
 		return
 	}
 
-	submit(io, user, rawptr(callback), Op_Connect{
-		callback = internal_callback,
-		addr     = endpoint_to_sockaddr(ep),
-	})
+	submit(io, user, rawptr(callback), Op_Connect{callback = internal_callback, addr = endpoint_to_sockaddr(ep)})
 }
 
 Op_Close :: struct {
-	callback: proc(^IO, Op_Close) -> bool,
-	fd: Closable,
+	callback: proc(_: ^IO, _: Op_Close) -> bool,
+	fd:       Closable,
 }
 
 _close :: proc(io: ^IO, fd: Closable, user: rawptr, callback: On_Close) {
@@ -416,20 +398,20 @@ _close :: proc(io: ^IO, fd: Closable, user: rawptr, callback: On_Close) {
 		case os.Handle:
 			delete_key(&io.offsets, h)
 			return win.CloseHandle(win.HANDLE(h)) == true
-		case net.TCP_Socket: return win.closesocket(win.SOCKET(h)) == win.NO_ERROR
-		case net.UDP_Socket: return win.closesocket(win.SOCKET(h)) == win.NO_ERROR
-		case: unreachable()
+		case net.TCP_Socket:
+			return win.closesocket(win.SOCKET(h)) == win.NO_ERROR
+		case net.UDP_Socket:
+			return win.closesocket(win.SOCKET(h)) == win.NO_ERROR
+		case:
+			unreachable()
 		}
 	}
 
-	submit(io, user, rawptr(callback), Op_Close{
-		callback = internal_callback,
-		fd       = fd,
-	})
+	submit(io, user, rawptr(callback), Op_Close{callback = internal_callback, fd = fd})
 }
 
 Op_Read :: struct {
-	callback: proc(^IO, ^Completion, ^Op_Read) -> (read: win.DWORD, err: win.DWORD),
+	callback: proc(_: ^IO, _: ^Completion, _: ^Op_Read) -> (read: win.DWORD, err: win.DWORD),
 	fd:       os.Handle,
 	offset:   Maybe(int),
 	buf:      []byte,
@@ -442,7 +424,7 @@ _read :: proc(io: ^IO, fd: os.Handle, offset: Maybe(int), buf: []byte, user: raw
 		if op.pending {
 			ok = win.GetOverlappedResult(win.HANDLE(op.fd), &comp.over, &read, win.FALSE)
 		} else {
-			comp.over.Offset     = u32(op.offset.? or_else int(io.offsets[op.fd]))
+			comp.over.Offset = u32(op.offset.? or_else int(io.offsets[op.fd]))
 			comp.over.OffsetHigh = comp.over.Offset >> 32
 
 			ok = win.ReadFile(win.HANDLE(op.fd), raw_data(op.buf), win.DWORD(len(op.buf)), &read, &comp.over)
@@ -463,16 +445,11 @@ _read :: proc(io: ^IO, fd: os.Handle, offset: Maybe(int), buf: []byte, user: raw
 		return
 	}
 
-	submit(io, user, rawptr(callback), Op_Read{
-		callback = internal_callback,
-		fd       = fd,
-		offset   = offset,
-		buf      = buf,
-	})
+	submit(io, user, rawptr(callback), Op_Read{callback = internal_callback, fd = fd, offset = offset, buf = buf})
 }
 
 Op_Write :: struct {
-	callback: proc(^IO, ^Completion, ^Op_Write) -> (written: win.DWORD, err: win.DWORD),
+	callback: proc(_: ^IO, _: ^Completion, _: ^Op_Write) -> (written: win.DWORD, err: win.DWORD),
 	fd:       os.Handle,
 	offset:   Maybe(int),
 	buf:      []byte,
@@ -485,7 +462,7 @@ _write :: proc(io: ^IO, fd: os.Handle, offset: Maybe(int), buf: []byte, user: ra
 		if op.pending {
 			ok = win.GetOverlappedResult(win.HANDLE(op.fd), &comp.over, &written, win.FALSE)
 		} else {
-			comp.over.Offset     = u32(op.offset.? or_else int(io.offsets[op.fd]))
+			comp.over.Offset = u32(op.offset.? or_else int(io.offsets[op.fd]))
 			comp.over.OffsetHigh = comp.over.Offset >> 32
 			ok = win.WriteFile(win.HANDLE(op.fd), raw_data(op.buf), win.DWORD(len(op.buf)), &written, &comp.over)
 
@@ -505,16 +482,11 @@ _write :: proc(io: ^IO, fd: os.Handle, offset: Maybe(int), buf: []byte, user: ra
 		return
 	}
 
-	submit(io, user, rawptr(callback), Op_Write{
-		callback = internal_callback,
-		fd       = fd,
-		offset   = offset,
-		buf      = buf,
-	})
+	submit(io, user, rawptr(callback), Op_Write{callback = internal_callback, fd = fd, offset = offset, buf = buf})
 }
 
 Op_Recv :: struct {
-	callback: proc(^IO, ^Completion, ^Op_Recv) -> (received: win.DWORD, err: win.c_int),
+	callback: proc(_: ^IO, _: ^Completion, _: ^Op_Recv) -> (received: win.DWORD, err: win.c_int),
 	socket:   net.Any_Socket,
 	buf:      win.WSABUF,
 	pending:  bool,
@@ -541,18 +513,20 @@ _recv :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, callba
 		return
 	}
 
-	submit(io, user, rawptr(callback), Op_Recv{
-		callback = internal_callback,
-		socket   = socket,
-		buf      = win.WSABUF{
-			len = win.ULONG(len(buf)),
-			buf = raw_data(buf),
+	submit(
+		io,
+		user,
+		rawptr(callback),
+		Op_Recv{
+			callback = internal_callback,
+			socket = socket,
+			buf = win.WSABUF{len = win.ULONG(len(buf)), buf = raw_data(buf)},
 		},
-	})
+	)
 }
 
 Op_Send :: struct {
-	callback: proc(^IO, ^Completion, ^Op_Send) -> (sent: win.DWORD, err: win.c_int),
+	callback: proc(_: ^IO, _: ^Completion, _: ^Op_Send) -> (sent: win.DWORD, err: win.c_int),
 	socket:   net.Any_Socket,
 	buf:      win.WSABUF,
 	pending:  bool,
@@ -585,14 +559,16 @@ _send :: proc(
 		return
 	}
 
-	submit(io, user, rawptr(callback), Op_Send{
-		callback = internal_callback,
-		socket   = socket,
-		buf      = win.WSABUF{
-			len = win.ULONG(len(buf)),
-			buf = raw_data(buf),
+	submit(
+		io,
+		user,
+		rawptr(callback),
+		Op_Send{
+			callback = internal_callback,
+			socket = socket,
+			buf = win.WSABUF{len = win.ULONG(len(buf)), buf = raw_data(buf)},
 		},
-	})
+	)
 }
 
 Op_Timeout :: struct {
@@ -603,7 +579,9 @@ Op_Timeout :: struct {
 _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout) {
 	completion := pool_get(&io.completion_pool)
 
-	completion.op = Op_Timeout{expires = time.time_add(time.now(), dur)}
+	completion.op = Op_Timeout {
+		expires = time.time_add(time.now(), dur),
+	}
 	completion.user_data = user
 	completion.user_callback = rawptr(callback)
 	completion.ctx = context
@@ -620,23 +598,23 @@ _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout
 	append(&io.timeouts, completion)
 }
 
-@(private="file")
+@(private = "file")
 FILE_SKIP_COMPLETION_PORT_ON_SUCCESS :: 0x1
-@(private="file")
+@(private = "file")
 FILE_SKIP_SET_EVENT_ON_HANDLE :: 0x2
 
-@(private="file")
+@(private = "file")
 SO_UPDATE_ACCEPT_CONTEXT :: 28683
 
-@(private="file")
+@(private = "file")
 WSA_IO_INCOMPLETE :: 996
-@(private="file")
+@(private = "file")
 WSA_IO_PENDING :: 997
 
-@(private="file")
+@(private = "file")
 WSAID_CONNECTEX :: win.GUID{0x25a207b9, 0xddf3, 0x4660, [8]win.BYTE{0x8e, 0xe9, 0x76, 0xe5, 0x8c, 0x74, 0x06, 0x3e}}
 
-@(private="file")
+@(private = "file")
 LPFN_CONNECTEX :: #type proc "stdcall" (
 	socket: win.SOCKET,
 	addr: ^win.SOCKADDR_STORAGE_LH,
@@ -647,7 +625,7 @@ LPFN_CONNECTEX :: #type proc "stdcall" (
 	overlapped: win.LPOVERLAPPED,
 ) -> win.BOOL
 
-@(private="file")
+@(private = "file")
 LPFN_ACCEPTEX :: #type proc "stdcall" (
 	listen_sock: win.SOCKET,
 	accept_sock: win.SOCKET,
@@ -659,10 +637,10 @@ LPFN_ACCEPTEX :: #type proc "stdcall" (
 	overlapped: win.LPOVERLAPPED,
 ) -> win.BOOL
 
-@(private="file")
+@(private = "file")
 prepare_socket :: proc(io: ^IO, socket: net.Any_Socket) -> net.Network_Error {
 	net.set_option(socket, .Reuse_Address, true) or_return
-	net.set_option(socket, .TCP_Nodelay, true)   or_return
+	net.set_option(socket, .TCP_Nodelay, true) or_return
 
 	handle := win.HANDLE(uintptr(net.any_socket_to_socket(socket)))
 
@@ -679,7 +657,7 @@ prepare_socket :: proc(io: ^IO, socket: net.Any_Socket) -> net.Network_Error {
 	return nil
 }
 
-@(private="file")
+@(private = "file")
 submit :: proc(io: ^IO, user: rawptr, callback: rawptr, op: Operation) {
 	completion := pool_get(&io.completion_pool)
 	completion.ctx = context
@@ -764,7 +742,8 @@ submit :: proc(io: ^IO, user: rawptr, callback: rawptr, op: Operation) {
 			cb := cast(On_Sent)completion.user_callback
 			cb(completion.user_data, int(sent), net.TCP_Send_Error(err))
 
-		case Op_Timeout: unreachable()
+		case Op_Timeout:
+			unreachable()
 		}
 		pool_put(&io.completion_pool, completion)
 	}
@@ -772,36 +751,33 @@ submit :: proc(io: ^IO, user: rawptr, callback: rawptr, op: Operation) {
 }
 
 
-@(private="file")
+@(private = "file")
 wsa_err_incomplete :: proc(err: win.c_int) -> bool {
-	return err == win.WSAEWOULDBLOCK  ||
-	       err == WSA_IO_PENDING      ||
-		   err == WSA_IO_INCOMPLETE   ||
-		   err == win.WSAEALREADY
+	return err == win.WSAEWOULDBLOCK || err == WSA_IO_PENDING || err == WSA_IO_INCOMPLETE || err == win.WSAEALREADY
 }
 
-@(private="file")
+@(private = "file")
 err_incomplete :: proc(err: win.DWORD) -> bool {
 	return err == win.ERROR_IO_PENDING
 }
 
 // Verbatim copy of private proc in core:net.
-@(private="file")
+@(private = "file")
 sockaddr_to_endpoint :: proc(native_addr: ^win.SOCKADDR_STORAGE_LH) -> (ep: net.Endpoint) {
 	switch native_addr.ss_family {
 	case u16(win.AF_INET):
-		addr := cast(^win.sockaddr_in) native_addr
+		addr := cast(^win.sockaddr_in)native_addr
 		port := int(addr.sin_port)
 		ep = net.Endpoint {
-			address = net.IP4_Address(transmute([4]byte) addr.sin_addr),
-			port = port,
+			address = net.IP4_Address(transmute([4]byte)addr.sin_addr),
+			port    = port,
 		}
 	case u16(win.AF_INET6):
-		addr := cast(^win.sockaddr_in6) native_addr
+		addr := cast(^win.sockaddr_in6)native_addr
 		port := int(addr.sin6_port)
 		ep = net.Endpoint {
-			address = net.IP6_Address(transmute([8]u16be) addr.sin6_addr),
-			port = port,
+			address = net.IP6_Address(transmute([8]u16be)addr.sin6_addr),
+			port    = port,
 		}
 	case:
 		panic("native_addr is neither IP4 or IP6 address")
@@ -810,7 +786,7 @@ sockaddr_to_endpoint :: proc(native_addr: ^win.SOCKADDR_STORAGE_LH) -> (ep: net.
 }
 
 // Verbatim copy of private proc in core:net.
-@(private="file")
+@(private = "file")
 endpoint_to_sockaddr :: proc(ep: net.Endpoint) -> (sockaddr: win.SOCKADDR_STORAGE_LH) {
 	switch a in ep.address {
 	case net.IP4_Address:
@@ -831,7 +807,7 @@ endpoint_to_sockaddr :: proc(ep: net.Endpoint) -> (sockaddr: win.SOCKADDR_STORAG
 	unreachable()
 }
 
-@(private="file")
+@(private = "file")
 net_err_to_code :: proc(err: net.Network_Error) -> os.Errno {
 	switch e in err {
 	case net.Create_Socket_Error:
@@ -874,11 +850,21 @@ net_err_to_code :: proc(err: net.Network_Error) -> os.Errno {
 }
 
 // TODO: loading this takes a overlapped parameter, maybe we can do this async?
-@(private="file")
+@(private = "file")
 load_socket_fn :: proc(subject: win.SOCKET, guid: win.GUID, fn: ^$T) {
 	guid := guid
 	bytes: u32
-	rc := win.WSAIoctl(subject, win.SIO_GET_EXTENSION_FUNCTION_POINTER, &guid, size_of(guid), fn, size_of(fn), &bytes, nil, nil)
+	rc := win.WSAIoctl(
+		subject,
+		win.SIO_GET_EXTENSION_FUNCTION_POINTER,
+		&guid,
+		size_of(guid),
+		fn,
+		size_of(fn),
+		&bytes,
+		nil,
+		nil,
+	)
 	assert(rc != win.SOCKET_ERROR)
 	assert(bytes == size_of(fn^))
 }

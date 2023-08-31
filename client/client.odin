@@ -3,13 +3,13 @@ package client
 
 import "core:bufio"
 import "core:bytes"
+import "core:c"
 import "core:encoding/json"
 import "core:io"
-import "core:net"
-import "core:c"
-import "core:strings"
 import "core:log"
+import "core:net"
 import "core:strconv"
+import "core:strings"
 
 import http ".."
 import openssl "../openssl"
@@ -123,11 +123,7 @@ request :: proc(target: string, request: ^Request, allocator := context.allocato
 			to_write -= int(ret)
 		}
 
-		return parse_response(SSL_Communication{
-			ssl    = ssl,
-			ctx    = ctx,
-			socket = socket,
-		}, allocator)
+		return parse_response(SSL_Communication{ssl = ssl, ctx = ctx, socket = socket}, allocator)
 	}
 
 	// HTTP, just send the request.
@@ -180,10 +176,18 @@ body_destroy :: http.body_destroy
 
 // Retrieves the response's body, can only be called once.
 // Free the returned body using body_destroy().
-response_body :: proc(res: ^Response, max_length := -1, allocator := context.allocator) -> (body: http.Body_Type, was_allocation: bool, err: http.Body_Error) {
+response_body :: proc(
+	res: ^Response,
+	max_length := -1,
+	allocator := context.allocator,
+) -> (
+	body: http.Body_Type,
+	was_allocation: bool,
+	err: http.Body_Error,
+) {
 	defer res._body_err = err
 	assert(res._body_err == nil)
-    body, was_allocation, err = parse_body(&res.headers, &res._body, max_length, allocator)
+	body, was_allocation, err = parse_body(&res.headers, &res._body, max_length, allocator)
 	return
 }
 
@@ -191,9 +195,18 @@ response_body :: proc(res: ^Response, max_length := -1, allocator := context.all
 // This needs serious refactoring.
 
 // Meant for internal use, you should use `client.response_body`.
-parse_body :: proc(headers: ^http.Headers, _body: ^bufio.Scanner, max_length := -1, allocator := context.allocator) -> (body: http.Body_Type, was_allocation: bool, err: http.Body_Error) {
+parse_body :: proc(
+	headers: ^http.Headers,
+	_body: ^bufio.Scanner,
+	max_length := -1,
+	allocator := context.allocator,
+) -> (
+	body: http.Body_Type,
+	was_allocation: bool,
+	err: http.Body_Error,
+) {
 	if enc_header, ok := headers["transfer-encoding"]; ok && strings.has_suffix(enc_header, "chunked") {
-        was_allocation = true
+		was_allocation = true
 		body = response_body_chunked(headers, _body, max_length, allocator) or_return
 	} else {
 		body = response_body_length(headers, _body, max_length) or_return
@@ -202,10 +215,10 @@ parse_body :: proc(headers: ^http.Headers, _body: ^bufio.Scanner, max_length := 
 	// Automatically decode url encoded bodies.
 	if typ, ok := headers["content-type"]; ok && typ == "application/x-www-form-urlencoded" {
 		plain := body.(http.Body_Plain)
-        defer if was_allocation do delete(plain)
+		defer if was_allocation do delete(plain)
 
 		keyvalues := strings.split(plain, "&", allocator)
-        defer delete(keyvalues, allocator)
+		defer delete(keyvalues, allocator)
 
 		queries := make(http.Body_Url_Encoded, len(keyvalues), allocator)
 		for keyvalue in keyvalues {
@@ -215,17 +228,17 @@ parse_body :: proc(headers: ^http.Headers, _body: ^bufio.Scanner, max_length := 
 				continue
 			}
 
-            key, key_decoded_ok := net.percent_decode(keyvalue[:seperator], allocator)
-            if !key_decoded_ok {
-                log.warnf("url encoded body key %q could not be decoded", keyvalue[:seperator])
-                continue
-            }
+			key, key_decoded_ok := net.percent_decode(keyvalue[:seperator], allocator)
+			if !key_decoded_ok {
+				log.warnf("url encoded body key %q could not be decoded", keyvalue[:seperator])
+				continue
+			}
 
 			val, val_decoded_ok := net.percent_decode(keyvalue[seperator + 1:], allocator)
-            if !val_decoded_ok {
-                log.warnf("url encoded body value %q for key %q could not be decoded", keyvalue[seperator+1:], key)
-                continue
-            }
+			if !val_decoded_ok {
+				log.warnf("url encoded body value %q for key %q could not be decoded", keyvalue[seperator + 1:], key)
+				continue
+			}
 
 			queries[key] = val
 		}
@@ -238,7 +251,14 @@ parse_body :: proc(headers: ^http.Headers, _body: ^bufio.Scanner, max_length := 
 
 // "Decodes" a response body based on the content length header.
 // Meant for internal usage, you should use `client.response_body`.
-response_body_length :: proc(headers: ^http.Headers, _body: ^bufio.Scanner, max_length: int) -> (string, http.Body_Error) {
+response_body_length :: proc(
+	headers: ^http.Headers,
+	_body: ^bufio.Scanner,
+	max_length: int,
+) -> (
+	string,
+	http.Body_Error,
+) {
 	len, ok := headers["content-length"]
 	if !ok {
 		return "", .No_Length
@@ -298,11 +318,19 @@ response_body_length :: proc(headers: ^http.Headers, _body: ^bufio.Scanner, max_
 // Content-Length := length
 // Remove "chunked" from Transfer-Encoding
 // Remove Trailer from existing header fields
-response_body_chunked :: proc(headers: ^http.Headers, _body: ^bufio.Scanner, max_length: int, allocator := context.allocator) -> (body: string, err: http.Body_Error) {
+response_body_chunked :: proc(
+	headers: ^http.Headers,
+	_body: ^bufio.Scanner,
+	max_length: int,
+	allocator := context.allocator,
+) -> (
+	body: string,
+	err: http.Body_Error,
+) {
 	body_buff: bytes.Buffer
 
 	bytes.buffer_init_allocator(&body_buff, 0, 0, allocator)
-    defer if err != nil do bytes.buffer_destroy(&body_buff)
+	defer if err != nil do bytes.buffer_destroy(&body_buff)
 
 	for {
 		if !bufio.scanner_scan(_body) {
@@ -318,10 +346,10 @@ response_body_chunked :: proc(headers: ^http.Headers, _body: ^bufio.Scanner, max
 		}
 
 		size, ok := strconv.parse_int(string(size_line), 16)
-        if !ok {
-            err = .Invalid_Chunk_Size
-            return
-        }
+		if !ok {
+			err = .Invalid_Chunk_Size
+			return
+		}
 		if size == 0 do break
 
 		if max_length > -1 && bytes.buffer_length(&body_buff) + size > max_length {
@@ -343,11 +371,11 @@ response_body_chunked :: proc(headers: ^http.Headers, _body: ^bufio.Scanner, max
 
 		bytes.buffer_write(&body_buff, bufio.scanner_bytes(_body))
 
-        // Read empty line after chunk.
-        if !bufio.scanner_scan(_body) {
-            return "", .Scan_Failed
-        }
-        assert(bufio.scanner_text(_body) == "")
+		// Read empty line after chunk.
+		if !bufio.scanner_scan(_body) {
+			return "", .Scan_Failed
+		}
+		assert(bufio.scanner_text(_body) == "")
 	}
 
 	// Read trailing empty line (after body, before trailing headers).
@@ -357,9 +385,9 @@ response_body_chunked :: proc(headers: ^http.Headers, _body: ^bufio.Scanner, max
 
 	// Keep parsing the request as line delimited headers until we get to an empty line.
 	for {
-        // If there are no trailing headers, this case is hit.
+		// If there are no trailing headers, this case is hit.
 		if !bufio.scanner_scan(_body) {
-            break
+			break
 		}
 
 		line := bufio.scanner_text(_body)
@@ -394,7 +422,10 @@ response_body_chunked :: proc(headers: ^http.Headers, _body: ^bufio.Scanner, max
 // A scanner bufio.Split_Proc implementation to scan a given amount of bytes.
 // The amount of bytes should be set in the context.user_index.
 @(private)
-scan_num_bytes :: proc(data: []byte, at_eof: bool) -> (
+scan_num_bytes :: proc(
+	data: []byte,
+	at_eof: bool,
+) -> (
 	advance: int,
 	token: []byte,
 	err: bufio.Scanner_Error,
@@ -406,7 +437,7 @@ scan_num_bytes :: proc(data: []byte, at_eof: bool) -> (
 	}
 
 	if len(data) < n {
-        return
+		return
 	}
 
 	return n, data[:n], nil, false

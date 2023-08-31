@@ -1,7 +1,7 @@
 package http
 
-import "core:reflect"
 import "core:fmt"
+import "core:reflect"
 import "core:strings"
 
 Status :: enum {
@@ -9,7 +9,6 @@ Status :: enum {
 	Switching_Protocols             = 101,
 	Processing                      = 102,
 	Early_Hints                     = 103,
-
 	OK                              = 200,
 	Created                         = 201,
 	Accepted                        = 202,
@@ -20,7 +19,6 @@ Status :: enum {
 	Multi_Status                    = 207,
 	Already_Reported                = 208,
 	IM_Used                         = 226,
-
 	Multiple_Choices                = 300,
 	Moved_Permanently               = 301,
 	Found                           = 302,
@@ -28,7 +26,6 @@ Status :: enum {
 	Not_Modified                    = 304,
 	Temporary_Redirect              = 307,
 	Permanent_Redirect              = 308,
-
 	Bad_Request                     = 400,
 	Unauthorized                    = 401,
 	Payment_Required                = 402,
@@ -58,7 +55,6 @@ Status :: enum {
 	Too_Many_Requests               = 429,
 	Request_Header_Fields_Too_Large = 431,
 	Unavailable_For_Legal_Reasons   = 451,
-
 	Internal_Server_Error           = 500,
 	Not_Implemented                 = 501,
 	Bad_Gateway                     = 502,
@@ -78,19 +74,19 @@ status_strings: [max(Status) + Status(1)]string
 // Where an empty string means an invalid code.
 @(init)
 status_strings_init :: proc() {
-    // Some edge cases aside, replaces underscores in the enum name with spaces.
-    status_name_fmt :: proc(val: Status, orig: string) -> (new: string, allocated: bool) {
-        #partial switch val {
-        case .Non_Authoritative_Information:
-            return "Non-Authoritative Information", false
-        case .Multi_Status:
-            return "Multi-Status", false
-        case .Im_A_Teapot:
-            return "I'm a teapot", false
-        case:
-            return strings.replace_all(orig, "_", " ")
-        }
-    }
+	// Some edge cases aside, replaces underscores in the enum name with spaces.
+	status_name_fmt :: proc(val: Status, orig: string) -> (new: string, allocated: bool) {
+		#partial switch val {
+		case .Non_Authoritative_Information:
+			return "Non-Authoritative Information", false
+		case .Multi_Status:
+			return "Multi-Status", false
+		case .Im_A_Teapot:
+			return "I'm a teapot", false
+		case:
+			return strings.replace_all(orig, "_", " ")
+		}
+	}
 
 	fields := reflect.enum_fields_zipped(Status)
 	for field in fields {
@@ -102,22 +98,22 @@ status_strings_init :: proc() {
 }
 
 status_string :: #force_inline proc(s: Status) -> string {
-    return status_strings[s] if s <= .Network_Authentication_Required else ""
+	return status_strings[s] if s <= .Network_Authentication_Required else ""
 }
 
 status_valid :: #force_inline proc(s: Status) -> bool {
-    return s >= Status(0) && s <= .Network_Authentication_Required && status_strings[s] != ""
+	return s >= Status(0) && s <= .Network_Authentication_Required && status_strings[s] != ""
 }
 
 status_from_string :: proc(s: string) -> (Status, bool) {
 	if len(s) < 3 do return {}, false
 
-    // Turns the string of length 3 into an int.
-    // It goes from right to left, increasing a multiplier (for base 10).
-    // Say we got status "123"
-    // i == 0, b == "3", (b - '0') == 3, code_int += 3 * 1
-    // i == 1, b == "2", (b - '0') == 2, code_int += 2 * 10
-    // i == 2, b == "1", (b - '0') == 1, code_int += 1 * 100
+	// Turns the string of length 3 into an int.
+	// It goes from right to left, increasing a multiplier (for base 10).
+	// Say we got status "123"
+	// i == 0, b == "3", (b - '0') == 3, code_int += 3 * 1
+	// i == 1, b == "2", (b - '0') == 2, code_int += 2 * 10
+	// i == 2, b == "1", (b - '0') == 1, code_int += 1 * 100
 
 	code := s[:3]
 	code_int: int

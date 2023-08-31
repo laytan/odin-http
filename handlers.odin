@@ -1,11 +1,11 @@
 package http
 
-import "core:time"
+import "core:bytes"
 import "core:log"
 import "core:net"
-import "core:sync"
 import "core:strconv"
-import "core:bytes"
+import "core:sync"
+import "core:time"
 
 Handler_Proc :: proc(handler: ^Handler, req: ^Request, res: ^Response)
 Handle_Proc :: proc(req: ^Request, res: ^Response)
@@ -72,7 +72,8 @@ middleware_logger :: proc(next: Maybe(^Handler), opts: ^Logger_Opts = nil) -> Ha
 		}
 
 		switch n in h.next {
-		case ^Handler: n.handle(n, req, res)
+		case ^Handler:
+			n.handle(n, req, res)
 		case:
 			log.warn("middleware_logger does not have a next handler")
 			respond(res)
@@ -90,14 +91,11 @@ Rate_Limit_On_Limit :: struct {
 
 // Convenience method to create a Rate_Limit_On_Limit that writes the given message.
 on_limit_message :: proc(message: ^string) -> Rate_Limit_On_Limit {
-	return Rate_Limit_On_Limit{
-        user_data = message,
-        on_limit = proc(_: ^Request, res: ^Response, user_data: rawptr) {
-            message := (^string)(user_data)
-            bytes.buffer_write_string(&res.body, message^)
-			respond(res)
-        },
-    }
+	return Rate_Limit_On_Limit{user_data = message, on_limit = proc(_: ^Request, res: ^Response, user_data: rawptr) {
+				message := (^string)(user_data)
+				bytes.buffer_write_string(&res.body, message^)
+				respond(res)
+			}}
 }
 
 Rate_Limit_Opts :: struct {
