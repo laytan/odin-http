@@ -10,6 +10,7 @@ import "core:strings"
 
 Request :: struct {
 	// If in a handler, this is always there and never None.
+	// TODO: we should not expose this as a maybe to package users.
 	line:            Maybe(Requestline),
 	// Is true if the request is actually a HEAD request,
 	// line.method will be .Get if Server_Opts.redirect_head_to_get is set.

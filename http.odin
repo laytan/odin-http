@@ -54,7 +54,6 @@ requestline_parse :: proc(s: string, allocator := context.allocator) -> (line: R
 }
 
 requestline_write :: proc(w: io.Writer, rline: Requestline) -> io.Error {
-	
 	// odinfmt:disable
 	io.write_string(w, method_string(rline.method)) or_return // <METHOD>
 	io.write_byte(w, ' ')                           or_return // <METHOD> <SP>
@@ -113,43 +112,31 @@ version_string :: proc(v: Version, allocator := context.allocator) -> string {
 
 Method :: enum {
 	Get,
-	Head,
 	Post,
-	Put,
-	Patch,
 	Delete,
+	Patch,
+	Put,
+	Head,
 	Connect,
 	Options,
 	Trace,
 }
 
-method_parse :: proc(m: string) -> (method: Method, ok: bool) {
-	(len(m) <= 7) or_return
+method_strings := [?]string{"GET", "POST", "DELETE", "PATCH", "PUT", "HEAD", "CONNECT", "OPTIONS", "TRACE"}
 
+method_string :: proc(m: Method) -> string #no_bounds_check {
+	if m < .Get || m > .Trace do return ""
+	return method_strings[m]
+}
+
+method_parse :: proc(m: string) -> (method: Method, ok: bool) #no_bounds_check {
 	for r in Method {
-		if method_string(r) == m {
+		if method_strings[r] == m {
 			return r, true
 		}
 	}
 
 	return nil, false
-}
-
-method_string :: proc(m: Method) -> string {
-	// odinfmt:disable
-	switch m {
-	case .Get:     return "GET"
-	case .Head:    return "HEAD"
-	case .Post:    return "POST"
-	case .Put:     return "PUT"
-	case .Patch:   return "PATCH"
-	case .Trace:   return "TRACE"
-	case .Delete:  return "DELETE"
-	case .Connect: return "CONNECT"
-	case .Options: return "OPTIONS"
-	case:          return ""
-	}
-	// odinfmt:enable
 }
 
 // Headers are request or response headers.
@@ -158,6 +145,9 @@ method_string :: proc(m: Method) -> string {
 // This allows you to just check the lowercase variant for existence/value.
 //
 // Thus, you should always add keys in lowercase.
+//
+// TODO: for usability make this a case-insensitive lookup and store, so users can pass whatever
+// casing they want, it will cost some performance but forcing lowercase is not expected.
 Headers :: map[string]string
 
 header_parse :: proc(headers: ^Headers, line: string, allocator := context.allocator) -> (key: string, ok: bool) {
@@ -255,7 +245,7 @@ write_date_header :: proc(w: io.Writer, t: time.Time) -> io.Error {
 	year, month, day := time.date(t)
 	hour, minute, second := time.clock_from_time(t)
 	wday := time.weekday(t)
-	
+
 	// odinfmt:disable
 	io.write_string(w, DAYS[wday])    or_return // 'Fri, '
 	write_padded_int(w, day)          or_return // 'Fri, 05'
@@ -294,7 +284,7 @@ parse_date_header :: proc(value: string) -> (t: time.Time, ok: bool) #no_bounds_
 	value = value[5:]
 
 	// Parse '05'
-	day := strconv.atoi(value[:2])
+	day := strconv.parse_i64_of_base(value[:2], 10) or_return
 	value = value[2:]
 
 	// Parse ' Feb ' or '-Feb-' (latter is a deprecated format but should still be parsed).
@@ -310,22 +300,22 @@ parse_date_header :: proc(value: string) -> (t: time.Time, ok: bool) #no_bounds_
 	month_index += 1
 	if month_index <= 0 do return
 
-	year := strconv.parse_int(value[:4], 10) or_return
+	year := strconv.parse_i64_of_base(value[:4], 10) or_return
 	value = value[4:]
 
-	hour := strconv.parse_int(value[1:3], 10) or_return
+	hour := strconv.parse_i64_of_base(value[1:3], 10) or_return
 	value = value[4:]
 
-	minute := strconv.parse_int(value[:2], 10) or_return
+	minute := strconv.parse_i64_of_base(value[:2], 10) or_return
 	value = value[3:]
 
-	seconds := strconv.parse_int(value[:2], 10) or_return
+	seconds := strconv.parse_i64_of_base(value[:2], 10) or_return
 	value = value[3:]
 
 	// Should have only 'GMT' left now.
 	if value != "GMT" do return
 
-	t = time.datetime_to_time(year, month_index, day, hour, minute, seconds) or_return
+	t = time.datetime_to_time(int(year), int(month_index), int(day), int(hour), int(minute), int(seconds)) or_return
 	ok = true
 	return
 }
