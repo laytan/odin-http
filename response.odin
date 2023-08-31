@@ -73,11 +73,10 @@ response_send_got_body :: proc(r: ^Response, will_close: bool) {
 	bytes.buffer_write_string(&res, status_string(r.status))
 	bytes.buffer_write_string(&res, "\r\n")
 
-	// Write the status code as the body, if there is no body set by the handlers.
-	if response_can_have_body(r, conn) && !status_success(r.status) && bytes.buffer_length(&r.body) == 0 {
-		bytes.buffer_write_string(&r.body, status_string(r.status))
-		bytes.buffer_write_string(&res, "content-type: ")
-		bytes.buffer_write_string(&res, mime_to_content_type(.Plain))
+	// Per RFC 9910 6.6.1 a Date header must be added in 2xx, 3xx, 4xx responses.
+	if r.status >= .OK && r.status <= .Internal_Server_Error && "date" not_in r.headers {
+		bytes.buffer_write_string(&res, "date: ")
+		bytes.buffer_write_string(&res, server_date(conn.server))
 		bytes.buffer_write_string(&res, "\r\n")
 	}
 
@@ -99,17 +98,6 @@ response_send_got_body :: proc(r: ^Response, will_close: bool) {
 
 			bytes.buffer_write_string(&res, "\r\n")
 		}
-	}
-
-	if "server" not_in r.headers {
-		bytes.buffer_write_string(&res, "server: Odin-HTTP\r\n")
-	}
-
-	// Per RFC 9910 6.6.1 a Date header must be added in 2xx, 3xx, 4xx responses.
-	if r.status >= .OK && r.status <= .Internal_Server_Error && "date" not_in r.headers {
-		bytes.buffer_write_string(&res, "date: ")
-		bytes.buffer_write_string(&res, server_date(conn.server))
-		bytes.buffer_write_string(&res, "\r\n")
 	}
 
 	for header, value in r.headers {
