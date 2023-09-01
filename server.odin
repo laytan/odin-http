@@ -20,11 +20,11 @@ import "nbio"
 Server_Opts :: struct {
 	// Whether the server should accept every request that sends a "Expect: 100-continue" header automatically.
 	// Defaults to true.
-	auto_expect_continue:  bool,
+	auto_expect_continue:    bool,
 	// When this is true, any HEAD request is automatically redirected to the handler as a GET request.
 	// Then, when the response is sent, the body is removed from the response.
 	// Defaults to true.
-	redirect_head_to_get:  bool,
+	redirect_head_to_get:    bool,
 	// Limit the maximum number of bytes to read for the request line (first line of request containing the URI).
 	// The HTTP spec does not specify any limits but in practice it is safer.
 	// RFC 7230 3.1.1 says:
@@ -32,24 +32,30 @@ Server_Opts :: struct {
 	// practice.  It is RECOMMENDED that all HTTP senders and recipients
 	// support, at a minimum, request-line lengths of 8000 octets.
 	// defaults to 8000.
-	limit_request_line:    int,
+	limit_request_line:      int,
 	// Limit the length of the headers.
 	// The HTTP spec does not specify any limits but in practice it is safer.
 	// defaults to 8000.
-	limit_headers:         int,
+	limit_headers:           int,
 	// The size of the growing arena's blocks, each connection has its own arena.
 	// defaults to 256KB (quarter of a megabyte).
-	connection_arena_size: uint,
+	connection_arena_size:   uint,
+	// The amount of memory a connection can use before it is freed.
+	// Freeing memory is costly in instructions, but not doing it is costly in RAM.
+	// A delicate balance, default is 3MB.
+	// TODO: can we make the default automatically scale based on available memory and amount of connections?
+	connection_allowed_size: uint,
 	// The thread count to use, defaults to your core count - 1.
-	thread_count:          int,
+	thread_count:            int,
 }
 
 Default_Server_Opts := Server_Opts {
-	auto_expect_continue  = true,
-	redirect_head_to_get  = true,
-	limit_request_line    = 8000,
-	limit_headers         = 8000,
-	connection_arena_size = mem.Kilobyte,
+	auto_expect_continue    = true,
+	redirect_head_to_get    = true,
+	limit_request_line      = 8000,
+	limit_headers           = 8000,
+	connection_arena_size   = 256 * mem.Kilobyte,
+	connection_allowed_size = 3   * mem.Megabyte,
 }
 
 @(init)
@@ -63,6 +69,7 @@ server_opts_init :: proc() {
 }
 
 Server_State :: enum {
+	Uninitialized,
 	Idle,
 	Listening,
 	Serving,
@@ -86,16 +93,15 @@ Server :: struct {
 }
 
 Server_Thread :: struct {
-	conns:       map[net.TCP_Socket]^Connection,
-	state:       Server_State,
-	io:          nbio.IO,
-	initialized: bool,
+	conns: map[net.TCP_Socket]^Connection,
+	state: Server_State,
+	io:    nbio.IO,
 }
 
 @(private)
-@(disabled=ODIN_DISABLE_ASSERT)
+@(disabled = ODIN_DISABLE_ASSERT)
 assert_has_td :: #force_inline proc(loc := #caller_location) {
-	assert(td.initialized, "The thread you are calling from is not a server/handler thread", loc)
+	assert(td.state != .Uninitialized, "The thread you are calling from is not a server/handler thread", loc)
 }
 
 @(thread_local)
@@ -238,16 +244,19 @@ server_shutdown_on_interrupt :: proc(s: ^Server) {
 	on_interrupt_server = s
 	on_interrupt_context = context
 
-	libc.signal(libc.SIGINT, proc "cdecl" (_: i32) {
-		context = on_interrupt_context
+	libc.signal(
+		libc.SIGINT,
+		proc "cdecl" (_: i32) {
+			context = on_interrupt_context
 
-		// Force close on second signal.
-		if td.state == .Closing {
-			os.exit(1)
-		}
+			// Force close on second signal.
+			if td.state == .Closing {
+				os.exit(1)
+			}
 
-		server_shutdown(on_interrupt_server)
-	})
+			server_shutdown(on_interrupt_server)
+		},
+	)
 }
 
 @(private)
@@ -285,7 +294,6 @@ Connection :: struct {
 	scanner:   Scanner,
 	arena:     virtual.Arena,
 	loop:      Loop,
-	uncleaned: int,
 }
 
 // Loop/request cycle state.

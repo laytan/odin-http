@@ -157,10 +157,8 @@ on_response_sent :: proc(conn_: rawptr, sent: int, err: net.Network_Error) {
 clean_request_loop :: proc(conn: ^Connection, close: bool = false) {
 	allocator := conn.loop.req.allocator
 
-	// TODO/FIXME: this is very rudimentary and bad, we should determine a max size
-	// for a connection to be allowed to have and free_all when close to it instead.
-	conn.uncleaned += 1
-	if conn.uncleaned % 1000 == 0 {
+	// log.debugf("%i: %v", conn.socket, conn.arena.total_used)
+	if conn.arena.total_used >= conn.server.opts.connection_allowed_size {
 		free_all(conn.loop.req.allocator)
 	}
 
