@@ -25,7 +25,6 @@ _IO :: struct {
 
 @(private="file")
 Completion :: struct {
-	// NOTE: needs to be the first field.
 	over: win.OVERLAPPED,
 
 	// TODO: make a proc outside of this, don't need it in here.
@@ -35,7 +34,7 @@ Completion :: struct {
 	user_data: rawptr,
 	op: Operation,
 }
-
+#assert(offset_of(Completion, over) == 0, "needs to be the first field to work")
 
 _init :: proc(io: ^IO, allocator := context.allocator) -> (err: os.Errno) {
 	io.allocator = allocator
