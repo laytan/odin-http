@@ -94,10 +94,10 @@ response_send_got_body :: proc(r: ^Response, will_close: bool) {
 			bytes.buffer_grow(&res, buf_len + 20)
 
 			// Write the length into unwritten portion.
-            unwritten := dynamic_unwritten(res.buf)
-            l := len(strconv.itoa(unwritten, bytes.buffer_length(&r.body)))
-            assert(l <= 20)
-            dynamic_add_len(&res.buf, l)
+			unwritten := _dynamic_unwritten(res.buf)
+			l := len(strconv.itoa(unwritten, bytes.buffer_length(&r.body)))
+			assert(l <= 20)
+			_dynamic_add_len(&res.buf, l)
 
 			bytes.buffer_write_string(&res, "\r\n")
 		}

@@ -55,10 +55,10 @@ format_request :: proc(target: http.URL, request: ^Request, allocator := context
 			bytes.buffer_grow(&buf, buf_len + 20)
 
 			// Write the length into unwritten portion.
-			unwritten := http.dynamic_unwritten(buf.buf)
+			unwritten := http._dynamic_unwritten(buf.buf)
 			l := len(strconv.itoa(unwritten, buf_len))
 			assert(l <= 20)
-			http.dynamic_add_len(&buf.buf, l)
+			http._dynamic_add_len(&buf.buf, l)
 
 			bytes.buffer_write_string(&buf, "\r\n")
 		}
