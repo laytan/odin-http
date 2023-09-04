@@ -1,0 +1,43 @@
+name: Deploy docs to GitHub pages
+
+on:
+  push:
+    branches: [$default-branch]
+  workflow_dispatch:
+
+env:
+  FORCE_COLOR: "1"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  docs:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: laytan/setup-odin@v1
+      - name: Get and build Odin docs generator
+        run: |
+          cd /home/runner
+          git clone https://github.com/laytan/pkg.odin-lang.org --branch=configurable-for-third-party odin-doc
+          cd odin-doc
+          odin build . -out:/home/runner/odin/odin-doc
+          cd /home/runner
+      - uses: actions/checkout@v1
+      - name: Generate documentation
+        run: ./docs/generate.sh
+      - uses: actions/configure-pages@v3
+      - uses: actions/upload-pages-artifact@v2
+        with:
+          path: ./docs/build
+      - uses: actions/deploy-pages@v2
+        id: deployment

@@ -8,6 +8,7 @@ import "core:mem"
 import "core:net"
 import "core:os"
 import "core:runtime"
+import "core:sys/unix"
 import "core:time"
 
 import io_uring "_io_uring"
@@ -597,7 +598,7 @@ write_enqueue :: proc(io: ^IO, completion: ^Completion) {
 }
 
 Op_Timeout :: struct {
-	expires: os.Unix_File_Time,
+	expires: unix.timespec,
 }
 
 @(private="file")
@@ -611,9 +612,9 @@ _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout
 
 	nsec := time.duration_nanoseconds(dur)
 	completion.operation = Op_Timeout {
-		expires = os.Unix_File_Time{
-			seconds = nsec / NANOSECONDS_PER_SECOND,
-			nanoseconds = nsec % NANOSECONDS_PER_SECOND,
+		expires = unix.timespec{
+			tv_sec = nsec / NANOSECONDS_PER_SECOND,
+			tv_nsec = nsec % NANOSECONDS_PER_SECOND,
 		},
 	}
 

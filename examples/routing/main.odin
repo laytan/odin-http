@@ -1,4 +1,4 @@
-package main
+package routing_example
 
 import "core:fmt"
 import "core:log"
