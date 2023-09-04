@@ -1,4 +1,4 @@
-package main
+package complete_example
 
 import "core:fmt"
 import "core:log"

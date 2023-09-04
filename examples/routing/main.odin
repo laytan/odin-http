@@ -1,4 +1,4 @@
-package main
+package routing_example
 
 import "core:bytes"
 import "core:encoding/json"

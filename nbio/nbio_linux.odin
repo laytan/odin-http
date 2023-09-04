@@ -625,7 +625,10 @@ _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout
 
 	nsec := time.duration_nanoseconds(dur)
 	completion.operation = Op_Timeout {
-		expires = unix.timespec{tv_sec = nsec / NANOSECONDS_PER_SECOND, tv_nsec = nsec % NANOSECONDS_PER_SECOND},
+		expires = unix.timespec{
+			tv_sec = nsec / NANOSECONDS_PER_SECOND,
+			tv_nsec = nsec % NANOSECONDS_PER_SECOND,
+		},
 	}
 
 	completion.callback = proc(io: ^IO, completion: ^Completion) {
