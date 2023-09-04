@@ -1,3 +1,6 @@
+/*
+This file simply imports any packages we want in the documentation.
+*/
 package docs
 
 import "../client"
