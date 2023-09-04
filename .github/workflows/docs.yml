@@ -2,7 +2,7 @@ name: Deploy docs to GitHub pages
 
 on:
   push:
-    branches: [$default-branch]
+    branches: [main]
   workflow_dispatch:
 
 env:
@@ -25,6 +25,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: laytan/setup-odin@v1
+      - name: Get commonmark
+        run: sudo apt-fast install libcmark-dev
       - name: Get and build Odin docs generator
         run: |
           cd /home/runner
