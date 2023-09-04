@@ -13,6 +13,8 @@ cd build
 
 odin-doc ../docs.odin-doc ../odin-doc.json
 
+echo "odin-http.laytan.dev" > CNAME
+
 cd ..
 
 rm docs.odin-doc
