@@ -161,7 +161,7 @@ procedures
 		- socket:  The socket to start listening
 		- backlog: The amount of events to keep in the backlog when they are not consumed
 
-		Outputs:
+		Returns:
 		- err: A network error that happened when starting listening
 
 	open :: proc(io: ^IO, path: string, mode: int = os.O_RDONLY, perm: int = 0) -> (handle: os.Handle, err: os.Errno) {...}
@@ -175,7 +175,7 @@ procedures
 		- mode: The file mode                                 (default: os.O_RDONLY)
 		- perm: The permissions to use when creating a file   (default: 0)
 
-		Outputs:
+		Returns:
 		- handle: The file handle
 		- err:    The error code when an error occured, 0 otherwise
 
@@ -186,7 +186,7 @@ procedures
 		- io:       The IO instance to initialize the socket on/with
 		- endpoint: Where to bind the socket to
 
-		Outputs:
+		Returns:
 		- socket: The opened, bound and listening socket
 		- err:    A network error that happened while opening
 
@@ -198,7 +198,7 @@ procedures
 		- family:   Should this be an IP4 or IP6 socket
 		- protocol: The type of socket (TCP or UDP)
 
-		Outputs:
+		Returns:
 		- socket: The opened socket
 		- err:    A network error that happened while opening
 
@@ -249,7 +249,7 @@ procedures
 		- fd:     The file handle to seek
 		- whence: The seek mode/where to seek from (default: Whence.Set)
 
-		Outputs:
+		Returns:
 		- new_offset: The offset that the file is at when the operation completed
 		- err:        The error when an error occured, 0 otherwise
 
