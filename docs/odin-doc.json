@@ -1,19 +1,19 @@
 {
-	"hide_core": true,
+    "hide_core": true,
     "collections": {
         "odin-http": {
             "name": "http",
             "source_url": "https://github.com/laytan/odin-http/blob/main",
-			"base_url": "/http",
+            "base_url": "/http",
             "root_path": "$PWD/../..",
             "license": {
                 "text": "MIT",
                 "url": "https://github.com/laytan/odin-http/tree/main/LICENSE"
             },
-			"home": {
-				"title": "Odin-HTTP",
-				"embed_readme": "$PWD/../../README.md"
-			}
-		}
+            "home": {
+                "title": "Odin-HTTP",
+                "embed_readme": "$PWD/../../README.md"
+            }
+        }
     }
 }
