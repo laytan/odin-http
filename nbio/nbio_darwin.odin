@@ -8,7 +8,7 @@ import "core:os"
 import "core:runtime"
 import "core:time"
 
-import "../kqueue"
+import kqueue "_kqueue"
 
 _IO :: struct {
 	kq:              os.Handle,

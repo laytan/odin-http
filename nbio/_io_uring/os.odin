@@ -141,6 +141,8 @@ get_sqe :: proc(ring: ^IO_Uring) -> (sqe: ^io_uring_sqe, err: IO_Uring_Error) {
 	}
 
 	sqe = &sq.sqes[sq.sqe_tail & sq.mask]
+	sqe^ = {}
+
 	sq.sqe_tail = next
 	return
 }
@@ -172,7 +174,7 @@ enter :: proc(
 	err: IO_Uring_Error,
 ) {
 	assert(ring.fd >= 0)
-	ns := sys_io_uring_enter(i32(ring.fd), n_to_submit, min_complete, flags, nil)
+	ns := sys_io_uring_enter(u32(ring.fd), n_to_submit, min_complete, flags, nil)
 	if ns < 0 {
 		switch os.Errno(-ns) {
 		case os.ERROR_NONE:
@@ -320,7 +322,6 @@ fsync :: proc(
 	err: IO_Uring_Error,
 ) {
 	sqe = get_sqe(ring) or_return
-	sqe^ = {}
 	sqe.opcode = .FSYNC
 	sqe.rw_flags = i32(flags)
 	sqe.fd = i32(fd)
@@ -335,7 +336,6 @@ fsync :: proc(
 // know when the ring is idle before acting on a kill signal.
 nop :: proc(ring: ^IO_Uring, user_data: u64) -> (sqe: ^io_uring_sqe, err: IO_Uring_Error) {
 	sqe = get_sqe(ring) or_return
-	sqe^ = {}
 	sqe.opcode = .NOP
 	sqe.user_data = user_data
 	return
@@ -353,7 +353,6 @@ read :: proc(
 	err: IO_Uring_Error,
 ) {
 	sqe = get_sqe(ring) or_return
-	sqe^ = {}
 	sqe.opcode = .READ
 	sqe.fd = i32(fd)
 	sqe.addr = cast(u64)uintptr(&buf[0])
@@ -375,7 +374,6 @@ write :: proc(
 	err: IO_Uring_Error,
 ) {
 	sqe = get_sqe(ring) or_return
-	sqe^ = {}
 	sqe.opcode = .WRITE
 	sqe.fd = i32(fd)
 	sqe.addr = cast(u64)uintptr(&buf[0])
@@ -399,7 +397,6 @@ accept :: proc(
 	err: IO_Uring_Error,
 ) {
 	sqe = get_sqe(ring) or_return
-	sqe^ = {}
 	sqe.opcode = IORING_OP.ACCEPT
 	sqe.fd = i32(sockfd)
 	sqe.addr = cast(u64)uintptr(addr)
@@ -421,7 +418,6 @@ connect :: proc(
 	err: IO_Uring_Error,
 ) {
 	sqe = get_sqe(ring) or_return
-	sqe^ = {}
 	sqe.opcode = IORING_OP.CONNECT
 	sqe.fd = i32(sockfd)
 	sqe.addr = cast(u64)uintptr(addr)
@@ -442,7 +438,6 @@ recv :: proc(
 	err: IO_Uring_Error,
 ) {
 	sqe = get_sqe(ring) or_return
-	sqe^ = {}
 	sqe.opcode = IORING_OP.RECV
 	sqe.fd = i32(sockfd)
 	sqe.addr = cast(u64)uintptr(&buf[0])
@@ -464,7 +459,6 @@ send :: proc(
 	err: IO_Uring_Error,
 ) {
 	sqe = get_sqe(ring) or_return
-	sqe^ = {}
 	sqe.opcode = IORING_OP.SEND
 	sqe.fd = i32(sockfd)
 	sqe.addr = cast(u64)uintptr(&buf[0])
@@ -487,7 +481,6 @@ openat :: proc(
 	err: IO_Uring_Error,
 ) {
 	sqe = get_sqe(ring) or_return
-	sqe^ = {}
 	sqe.opcode = IORING_OP.OPENAT
 	sqe.fd = i32(fd)
 	sqe.addr = cast(u64)transmute(uintptr)path
@@ -501,7 +494,6 @@ openat :: proc(
 close :: proc(ring: ^IO_Uring, user_data: u64, fd: os.Handle) -> (sqe: ^io_uring_sqe, err: IO_Uring_Error) {
 	sqe, err = get_sqe(ring)
 	if err != .None {return}
-	sqe^ = {}
 	sqe.opcode = IORING_OP.CLOSE
 	sqe.fd = i32(fd)
 	sqe.user_data = user_data
@@ -524,7 +516,7 @@ close :: proc(ring: ^IO_Uring, user_data: u64, fd: os.Handle) -> (sqe: ^io_uring
 timeout :: proc(
 	ring: ^IO_Uring,
 	user_data: u64,
-	ts: ^os.Unix_File_Time,
+	ts: ^unix.timespec,
 	count: u32,
 	flags: u32,
 ) -> (
@@ -532,7 +524,6 @@ timeout :: proc(
 	err: IO_Uring_Error,
 ) {
 	sqe = get_sqe(ring) or_return
-	sqe^ = {}
 	sqe.opcode = IORING_OP.TIMEOUT
 	sqe.fd = -1
 	sqe.addr = transmute(u64)uintptr(ts)
@@ -561,7 +552,6 @@ timeout_remove :: proc(
 	err: IO_Uring_Error,
 ) {
 	sqe = get_sqe(ring) or_return
-	sqe^ = {}
 	sqe.opcode = IORING_OP.TIMEOUT_REMOVE
 	sqe.fd = -1
 	sqe.addr = timeout_user_data
@@ -596,7 +586,6 @@ link_timeout :: proc(
 	err: IO_Uring_Error,
 ) {
 	sqe = get_sqe(ring) or_return
-	sqe^ = {}
 	sqe.opcode = IORING_OP.LINK_TIMEOUT
 	sqe.fd = -1
 	sqe.addr = transmute(u64)uintptr(ts)

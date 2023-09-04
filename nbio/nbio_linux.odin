@@ -10,7 +10,7 @@ import "core:os"
 import "core:runtime"
 import "core:time"
 
-import "../io_uring"
+import io_uring "_io_uring"
 
 _IO :: struct {
 	ring:            io_uring.IO_Uring,

@@ -1,8 +1,8 @@
 //+build darwin
 package kqueue
 
-import "core:os"
 import "core:c"
+import "core:os"
 
 Queue_Error :: enum {
 	None,
