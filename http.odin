@@ -356,11 +356,11 @@ request_path :: proc(target: URL, allocator := context.allocator) -> (rq_path: s
 	return strings.to_string(res)
 }
 
-dynamic_unwritten :: proc(d: [dynamic]$E) -> []E {
+_dynamic_unwritten :: proc(d: [dynamic]$E) -> []E #no_bounds_check {
 	return slice.from_ptr(slice.ptr_add(&d[0], len(d) * size_of(E)), cap(d))
 }
 
-dynamic_add_len :: proc(d: ^[dynamic]$E, len: int) {
+_dynamic_add_len :: proc(d: ^[dynamic]$E, len: int) {
 	(transmute(^runtime.Raw_Dynamic_Array)d).len += len
 }
 
