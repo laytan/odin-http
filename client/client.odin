@@ -40,7 +40,7 @@ request_destroy :: proc(r: ^Request) {
 
 with_json :: proc(r: ^Request, v: any, opt: json.Marshal_Options = {}) -> json.Marshal_Error {
 	r.method = .Post
-	r.headers["content-type"] = http.mime_to_content_type(.Json)
+	http.header_set_key_lower(&r.headers, "content-type", http.mime_to_content_type(.Json))
 
 	stream := bytes.buffer_to_stream(&r.body)
 	opt := opt
@@ -83,7 +83,7 @@ request :: proc(target: string, request: ^Request, allocator := context.allocato
 	defer delete(url.queries)
 
 	// NOTE: we don't support persistent connections yet.
-	request.headers["connection"] = "close"
+	http.header_set_key_lower(&request.headers, "connection", "close")
 
 	req_buf := format_request(url, request, allocator)
 	defer bytes.buffer_destroy(&req_buf)

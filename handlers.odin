@@ -116,6 +116,7 @@ Rate_Limit_Data :: struct {
 }
 
 // Basic rate limit based on IP address.
+// TODO: This is pretty slow and needs to be thought out.
 middleware_rate_limit :: proc(next: ^Handler, opts: ^Rate_Limit_Opts, allocator := context.allocator) -> Handler {
 	assert(next != nil)
 
@@ -150,7 +151,7 @@ middleware_rate_limit :: proc(next: ^Handler, opts: ^Rate_Limit_Opts, allocator 
 			retry_dur := int(time.diff(time.now(), data.next_sweep) / time.Second)
 			buf := make([]byte, 32, res.allocator)
 			retry_str := strconv.itoa(buf, retry_dur)
-			res.headers["retry-after"] = retry_str
+			header_set_key_lower(&res.headers, "retry-after", retry_str)
 
 			if on, ok := data.opts.on_limit.(Rate_Limit_On_Limit); ok {
 				on.on_limit(req, res, on.user_data)

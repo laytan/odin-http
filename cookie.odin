@@ -29,9 +29,9 @@ Cookie :: struct {
 cookie_write :: proc(w: io.Writer, c: Cookie) -> io.Error {
 	// odinfmt:disable
 	io.write_string(w, "set-cookie: ") or_return
-	io.write_string(w, c.name)         or_return
-	io.write_byte(w, '=')              or_return
-	io.write_string(w, c.value)        or_return
+	_write_escaped_newlines(w, c.name)
+	io.write_byte(w, '=') or_return
+	_write_escaped_newlines(w, c.value)
 
 	if d, ok := c.domain.(string); ok {
 		io.write_string(w, "; Domain=") or_return

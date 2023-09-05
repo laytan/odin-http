@@ -40,7 +40,9 @@ request_init :: proc(r: ^Request, allocator := context.allocator) {
 server_headers_validate :: proc(headers: ^Headers) -> bool {
 	// RFC 7230 5.4: A server MUST respond with a 400 (Bad Request) status code to any
 	// HTTP/1.1 request message that lacks a Host header field.
-	("host" in headers) or_return
+	if _, has_host := header_get_key_lower(headers^, "host"); !has_host {
+		return false
+	}
 
 	return headers_validate(headers)
 }
@@ -53,7 +55,7 @@ headers_validate :: proc(headers: ^Headers) -> bool {
 	// the final encoding, the message body length cannot be determined
 	// reliably; the server MUST respond with the 400 (Bad Request)
 	// status code and then close the connection.
-	if enc_header, ok := headers["transfer-encoding"]; ok {
+	if enc_header, ok := header_get_key_lower(headers^, "transfer-encoding"); ok {
 		strings.has_suffix(enc_header, "chunked") or_return
 	}
 
@@ -62,9 +64,11 @@ headers_validate :: proc(headers: ^Headers) -> bool {
 	// Content-Length.  Such a message might indicate an attempt to
 	// perform request smuggling (Section 9.5) or response splitting
 	// (Section 9.4) and ought to be handled as an error.
-	if "transfer-encoding" in headers && "content-length" in headers {
-		delete(headers["content-length"])
-		delete_key(headers, "content-length")
+	_, has_transfer_encoding := header_get_key_lower(headers^, "transfer-encoding")
+	cl, has_content_length := header_get_key_lower(headers^, "content-length")
+	if has_transfer_encoding && has_content_length {
+		delete(cl)
+		header_delete_key_lower(headers, "content-length")
 	}
 
 	return true
@@ -209,7 +213,7 @@ parse_body :: proc(
 		}
 
 		// Automatically decode url encoded bodies.
-		if typ, ok := pb.headers["content-type"]; ok && typ == "application/x-www-form-urlencoded" {
+		if typ, ok := header_get_key_lower(pb.headers^, "content-type"); ok && typ == "application/x-www-form-urlencoded" {
 			plain := body
 			defer if was_allocation do delete(plain)
 
@@ -270,7 +274,7 @@ parse_body :: proc(
 // "Decodes" a request body based on the content length header.
 // Meant for internal usage, you should use `http.request_body`.
 request_body_length :: proc(pb: ^Parsing_Body) {
-	len, ok := pb.headers["content-length"]
+	len, ok := header_get_key_lower(pb.headers^, "content-length")
 	if !ok {
 		pb.parsing_callback(pb, "", false, .No_Length)
 		return
@@ -445,23 +449,21 @@ request_body_chunked :: proc(pb: ^Parsing_Body, allocator := context.allocator) 
 
 		// A recipient MUST ignore (or consider as an error) any fields that are forbidden to be sent in a trailer.
 		if !header_allowed_trailer(key) {
-			delete(pb.headers[key])
-			delete_key(pb.headers, key)
+			_, k := header_delete_key_lower(pb.headers, key)
+			delete(k)
 		}
 
 		scanner_scan(pb.scanner, pb, on_scan_trailer)
 	}
 
 	on_trailer_end :: proc(pb: ^Parsing_Body) {
-		if "trailer" in pb.headers {
-			delete(pb.headers["trailer"])
-			delete_key(pb.headers, "trailer")
+		if trailer, has_trailer := header_get_key_lower(pb.headers^, "trailer"); has_trailer {
+			delete(trailer)
+			header_delete_key_lower(pb.headers, "trailer")
 		}
 
-		pb.headers["transfer-encoding"] = strings.trim_suffix(
-			pb.headers["transfer-encoding"],
-			"chunked",
-		)
+		te := header_get_key_lower(pb.headers^, "transfer-encoding")
+		header_set_key_lower(pb.headers, "transfer-encoding", strings.trim_suffix(te, "chunked"))
 
 		pb.parsing_callback(pb, bytes.buffer_to_string(&pb.buf), true, .None)
 	}

@@ -44,7 +44,7 @@ format_request :: proc(target: http.URL, request: ^Request, allocator := context
 		{method = request.method, target = target, version = http.Version{1, 1}},
 	)
 
-	if "content-length" not_in request.headers {
+	if _, has_cl := http.header_get_key_lower(request.headers, "content-length"); !has_cl {
 		buf_len := bytes.buffer_length(&request.body)
 		if buf_len == 0 {
 			bytes.buffer_write_string(&buf, "content-length: 0\r\n")
@@ -64,30 +64,25 @@ format_request :: proc(target: http.URL, request: ^Request, allocator := context
 		}
 	}
 
-	if "accept" not_in request.headers {
+	if _, has_acc := http.header_get_key_lower(request.headers, "accept"); !has_acc {
 		bytes.buffer_write_string(&buf, "accept: */*\r\n")
 	}
 
-	if "user-agent" not_in request.headers {
+	if _, has_agent := http.header_get_key_lower(request.headers, "user-agent"); !has_agent {
+		// TODO: allow setting to something like firefox or chrome as spoofing.
 		bytes.buffer_write_string(&buf, "user-agent: odin-http\r\n")
 	}
 
-	if "host" not_in request.headers {
+	if _, has_host := http.header_get_key_lower(request.headers, "host"); !has_host {
 		bytes.buffer_write_string(&buf, "host: ")
 		bytes.buffer_write_string(&buf, target.host)
 		bytes.buffer_write_string(&buf, "\r\n")
 	}
 
+	w := bytes.buffer_to_stream(&buf)
+
 	for header, value in request.headers {
-		bytes.buffer_write_string(&buf, header)
-		bytes.buffer_write_string(&buf, ": ")
-
-		// Escape newlines in headers, if we don't, an attacker can find an endpoint
-		// that returns a header with user input, and inject headers into the response.
-		esc_value, was_allocation := strings.replace_all(value, "\n", "\\n", allocator)
-		defer if was_allocation do delete(esc_value)
-
-		bytes.buffer_write_string(&buf, esc_value)
+		http.header_write(w, header, value)
 		bytes.buffer_write_string(&buf, "\r\n")
 	}
 
@@ -95,9 +90,9 @@ format_request :: proc(target: http.URL, request: ^Request, allocator := context
 		bytes.buffer_write_string(&buf, "cookie: ")
 
 		for cookie, i in request.cookies {
-			bytes.buffer_write_string(&buf, cookie.name)
+			http._write_escaped_newlines(w, cookie.name)
 			bytes.buffer_write_byte(&buf, '=')
-			bytes.buffer_write_string(&buf, cookie.value)
+			http._write_escaped_newlines(w, cookie.value)
 
 			if i != len(request.cookies) - 1 {
 				bytes.buffer_write_string(&buf, "; ")
@@ -185,7 +180,7 @@ parse_response :: proc(socket: Communication, allocator := context.allocator) ->
 		}
 
 		if key == "set-cookie" {
-			cookie_str := res.headers["set-cookie"]
+			cookie_str := http.header_get_key_lower(res.headers, "set-cookie")
 			delete_key(&res.headers, key)
 			delete(key)
 

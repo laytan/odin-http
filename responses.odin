@@ -13,7 +13,7 @@ respond_html :: proc(r: ^Response, html: string, send := true) {
 
 	r.status = .OK
 	bytes.buffer_write_string(&r.body, html)
-	r.headers["content-type"] = mime_to_content_type(Mime_Type.Html)
+	header_set_key_lower(&r.headers, "content-type", mime_to_content_type(Mime_Type.Html))
 }
 
 // Sets the response to one that sends the given plain text.
@@ -22,7 +22,7 @@ respond_plain :: proc(r: ^Response, text: string, send := true) {
 
 	r.status = .OK
 	bytes.buffer_write_string(&r.body, text)
-	r.headers["content-type"] = mime_to_content_type(Mime_Type.Plain)
+	header_set_key_lower(&r.headers, "content-type", mime_to_content_type(Mime_Type.Plain))
 }
 
 // Sets the response to one that sends the contents of the file at the given path.
@@ -45,7 +45,7 @@ respond_file_content :: proc(r: ^Response, path: string, content: []byte, send :
 	content_type := mime_to_content_type(mime)
 
 	r.status = .OK
-	r.headers["content-type"] = content_type
+	header_set_key_lower(&r.headers, "content-type", content_type)
 	bytes.buffer_write(&r.body, content)
 }
 
@@ -88,8 +88,7 @@ respond_json :: proc(r: ^Response, v: any, opt: json.Marshal_Options = {}, send 
 	}
 
 	r.status = .OK
-	r.headers["content-type"] = mime_to_content_type(Mime_Type.Json)
-
+	header_set_key_lower(&r.headers, "content-type", mime_to_content_type(.Json))
 	return nil
 }
 

@@ -23,7 +23,7 @@ response_init :: proc(r: ^Response, allocator := context.allocator) {
 	r.allocator = allocator
 	r.status = .Not_Found
 	r.headers = make(Headers, 3, allocator)
-	r.headers["server"] = "Odin"
+	header_set_key_lower(&r.headers, "server", "Odin")
 	bytes.buffer_init_allocator(&r.body, 0, 0, allocator)
 }
 
@@ -40,7 +40,7 @@ response_send :: proc(r: ^Response, conn: ^Connection) {
 			case .Scan_Failed, .Invalid_Length, .Invalid_Trailer_Header, .Too_Long, .Invalid_Chunk_Size:
 				// Any read error should close the connection.
 				res.status = body_error_status(err)
-				res.headers["connection"] = "close"
+				header_set_key_lower(&res.headers, "connection", "close")
 				will_close = true
 			case .No_Length, .None: // no-op, request had no body or read succeeded.
 			case:
@@ -110,21 +110,15 @@ response_send_got_body :: proc(r: ^Response, will_close: bool) {
 		bytes.buffer_write_string(&res, "\r\n")
 	}
 
+	w := bytes.buffer_to_stream(&res)
+
 	for header, value in r.headers {
-		bytes.buffer_write_string(&res, header)
-		bytes.buffer_write_string(&res, ": ")
-
-		// Escape newlines in headers, if we don't, an attacker can find an endpoint
-		// that returns a header with user input, and inject headers into the response.
-		// PERF: probably slow.
-		esc_value, _ := strings.replace_all(value, "\n", "\\n", r.allocator)
-		bytes.buffer_write_string(&res, esc_value)
-
+		header_write(w, header, value)
 		bytes.buffer_write_string(&res, "\r\n")
 	}
 
 	for cookie in r.cookies {
-		cookie_write(bytes.buffer_to_stream(&res), cookie)
+		cookie_write(w, cookie)
 		bytes.buffer_write_string(&res, "\r\n")
 	}
 
@@ -218,9 +212,9 @@ response_can_have_body :: proc(r: ^Response, conn: ^Connection) -> bool {
 // If we are responding with a close connection header, make sure we close.
 @(private)
 response_must_close :: proc(req: ^Request, res: ^Response) -> bool {
-	if req, req_has := req.headers["connection"]; req_has && req == "close" {
+	if req, req_has := header_get_key_lower(req.headers, "connection"); req_has && req == "close" {
 		return true
-	} else if res, res_has := res.headers["connection"]; res_has && res == "close" {
+	} else if res, res_has := header_get_key_lower(res.headers, "connection"); res_has && res == "close" {
 		return true
 	}
 
