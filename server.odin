@@ -519,7 +519,7 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.allocator) {
 			return
 		}
 
-		l.req._scanner = l.conn.scanner
+		l.req._scanner = &l.conn.scanner
 
 		rline := l.req.line.(Requestline)
 		// An options request with the "*" is a no-op/ping request to

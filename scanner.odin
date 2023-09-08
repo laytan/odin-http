@@ -10,7 +10,7 @@ import "nbio"
 Scan_Callback :: proc(user_data: rawptr, token: []byte, err: bufio.Scanner_Error)
 
 // A callback based scanner over the connection based on nbio.
-Scanner :: struct {
+Scanner :: struct #no_copy {
 	connection:                   ^Connection,
 	split:                        bufio.Split_Proc,
 	buf:                          [dynamic]byte,

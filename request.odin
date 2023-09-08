@@ -27,7 +27,7 @@ Request :: struct {
 	allocator:       mem.Allocator,
 
 	// Body memoization and scanner.
-	_scanner:        Scanner,
+	_scanner:        ^Scanner,
 	_body:           Body_Type,
 	_body_was_alloc: bool,
 }
@@ -167,7 +167,7 @@ request_body :: proc(
 	state.user_data = user_data
 	state.req = req
 
-	parse_body(&req.headers, &req._scanner, max_length, state, on_body, req.allocator)
+	parse_body(&req.headers, req._scanner, max_length, state, on_body, req.allocator)
 }
 
 @(private)
