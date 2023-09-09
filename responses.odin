@@ -6,6 +6,9 @@ import "core:io"
 import "core:os"
 import "core:path/filepath"
 import "core:strings"
+import "core:log"
+
+import "nbio"
 
 // Sets the response to one that sends the given HTML.
 respond_html :: proc(r: ^Response, html: string, send := true) {
@@ -25,19 +28,94 @@ respond_plain :: proc(r: ^Response, text: string, send := true) {
 	r.headers["content-type"] = mime_to_content_type(Mime_Type.Plain)
 }
 
-// Sets the response to one that sends the contents of the file at the given path.
-// Content-Type header is set based on the file extension, see the MimeType enum for known file extensions.
-respond_file :: proc(r: ^Response, path: string, send := true) {
-	bs, ok := os.read_entire_file(path, r.allocator)
-	if !ok {
-		r.status = .Not_Found
-		respond(r)
+/*
+Sends the content of the file at the given path as the response.
+
+This procedure uses non blocking IO and only allocates the size of the file in the body's buffer,
+no other allocations or temporary buffers, this is to make it as fast as possible.
+
+The content type is taken from the path, optionally overwritten using the parameter.
+
+If the file doesn't exist, a 404 response is sent.
+If any other error occurs, a 500 is sent and the error is logged.
+
+// PERF: we are still putting the content into the Response.body buffer, and the respond call
+// is then creating a new buffer, writing headers etc. and copying this buffer into it, so there
+// are still inefficiencies.
+*/
+respond_file :: proc(r: ^Response, path: string, content_type: Maybe(Mime_Type) = nil) {
+	io := &r._conn.server.io
+	handle, errno := nbio.open(io, path)
+	if errno != os.ERROR_NONE {
+		respond(r, Status.Not_Found)
 		return
 	}
 
-	respond_file_content(r, path, bs)
+	size, err := nbio.seek(io, handle, 0, .End)
+	if err != os.ERROR_NONE {
+		log.errorf("Could not seek the file size of file at %q, error number: %i", path, err)
+		respond(r, Status.Internal_Server_Error)
+		nbio.close(io, handle, nil, proc(_: rawptr, _: bool) {})
+		return
+	}
+
+	_, err = nbio.seek(io, handle, 0, .Set)
+	if err != os.ERROR_NONE {
+		log.errorf("Could not seek back to the start of file at %q, error number: %i", path, err)
+		respond(r, Status.Internal_Server_Error)
+		nbio.close(io, handle, nil, proc(_: rawptr, _: bool) {})
+		return
+	}
+
+	mime := mime_from_extension(path)
+	content_type := mime_to_content_type(mime)
+	r.headers["content-type"] = content_type
+
+	bytes.buffer_grow(&r.body, size)
+	buf := _dynamic_unwritten(r.body.buf)
+
+	on_read :: proc(user: rawptr, read: int, err: os.Errno) {
+		r := cast(^Response)user
+		io := &r._conn.server.io
+		handle := os.Handle(uintptr(context.user_ptr))
+
+		// Update the size and whats left to read.
+		_dynamic_add_len(&r.body.buf, read)
+		context.user_index -= read
+
+		if err != os.ERROR_NONE {
+			log.errorf("Reading file from respond_file failed, error number: %i", err)
+			respond(r, Status.Internal_Server_Error)
+			nbio.close(io, handle, nil, proc(_: rawptr, _: bool) {})
+			return
+		}
+
+		// There is more to read.
+		if context.user_index > 0 {
+			log.debug("respond_file did not read the whole file at once, requires more reading")
+
+			buf := _dynamic_unwritten(r.body.buf)
+			nbio.read(&r._conn.server.io, handle, buf, r, on_read)
+			return
+		}
+
+		respond(r, Status.OK)
+		nbio.close(io, handle, nil, proc(_: rawptr, _: bool) {})
+	}
+
+	// Using the context.user_index for the amount of bytes that are left to be read.
+	context.user_index = size
+	// Using the context.user_ptr to point to the file handle.
+	context.user_ptr   = rawptr(uintptr(handle))
+
+	nbio.read(&r._conn.server.io, handle, buf, r, on_read)
 }
 
+/*
+Responds with the given content, determining content type from the given path.
+
+This is very useful when you want to `#load(path)` at compile time and respond with that.
+*/
 respond_file_content :: proc(r: ^Response, path: string, content: []byte, send := true) {
 	defer if send do respond(r)
 
@@ -58,8 +136,7 @@ respond_file_content :: proc(r: ^Response, path: string, content: []byte, send :
 // The Content-Type is set based on the file extension, see the MimeType enum for known file extensions.
 respond_dir :: proc(r: ^Response, base, target, request: string, send := true) {
 	if !strings.has_prefix(request, base) {
-		r.status = .Not_Found
-		respond(r)
+		respond(r, Status.Not_Found)
 		return
 	}
 
@@ -67,8 +144,7 @@ respond_dir :: proc(r: ^Response, base, target, request: string, send := true) {
 	req_clean := filepath.clean(request, r.allocator)
 	base_clean := filepath.clean(base, r.allocator)
 	if !strings.has_prefix(req_clean, base_clean) {
-		r.status = .Not_Found
-		respond(r)
+		respond(r, Status.Not_Found)
 		return
 	}
 
@@ -93,8 +169,7 @@ respond_json :: proc(r: ^Response, v: any, opt: json.Marshal_Options = {}, send 
 	return nil
 }
 
-// Sends the response back to the client, handlers should call this.
-respond :: proc(r: ^Response, loc := #caller_location) {
+respond_with_none :: proc(r: ^Response, loc := #caller_location) {
 	assert_has_td(loc)
 
 	conn := r._conn
@@ -106,4 +181,28 @@ respond :: proc(r: ^Response, loc := #caller_location) {
 	}
 
 	response_send(r, conn)
+}
+
+respond_with_status :: proc(r: ^Response, status: Status) {
+	r.status = status
+	respond(r)
+}
+
+respond_with_content_type :: proc(r: ^Response, content_type: Mime_Type) {
+	r.headers["content-type"] = mime_to_content_type(content_type)
+	respond(r)
+}
+
+respond_with_status_and_content_type :: proc(r: ^Response, status: Status, content_type: Mime_Type) {
+	r.status = status
+	r.headers["content-type"] = mime_to_content_type(content_type)
+	respond(r)
+}
+
+// Sends the response back to the client, handlers should call this.
+respond :: proc {
+	respond_with_none,
+	respond_with_status,
+	respond_with_content_type,
+	respond_with_status_and_content_type,
 }

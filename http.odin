@@ -356,6 +356,7 @@ request_path :: proc(target: URL, allocator := context.allocator) -> (rq_path: s
 	return strings.to_string(res)
 }
 
+// NOTE: #no_bounds_check is very important here, if `len(d) == 0`, it would panic, even though it is fine.
 _dynamic_unwritten :: proc(d: [dynamic]$E) -> []E #no_bounds_check {
 	return slice.from_ptr(slice.ptr_add(&d[0], len(d) * size_of(E)), cap(d))
 }
