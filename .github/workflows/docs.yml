@@ -25,9 +25,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: laytan/setup-odin@v1
-        with:
-          repository: https://github.com/laytan/Odin
-          odin-version: fix-commonmark
       - name: Get commonmark
         run: sudo apt-fast install libcmark-dev
       - name: Get and build Odin docs generator
