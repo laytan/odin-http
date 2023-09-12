@@ -157,8 +157,10 @@ listen_and_serve :: proc(
 
 	sync.wait(&s.threads_closed)
 
+	log.debug("threads are shut down, shutting down main thread")
+
 	net.close(s.tcp_sock)
-	for t in s.threads do free(t)
+	for t in s.threads do free(t, s.conn_allocator)
 	delete(s.threads)
 
 	return nil
@@ -303,6 +305,20 @@ Connection_State :: enum {
 	Closed, // Fully closed.
 }
 
+@(private)
+connection_set_state :: proc(c: ^Connection, s: Connection_State) -> bool {
+	if s < .Closing && c.state >= .Closing {
+		return false
+	}
+
+	if s == .Closing && c.state == .Closed {
+		return false
+	}
+
+	c.state = s
+	return true
+}
+
 Connection :: struct {
 	server:    ^Server,
 	socket:    net.TCP_Socket,
@@ -333,8 +349,10 @@ Response_Inflight :: struct {
 connection_close :: proc(c: ^Connection, loc := #caller_location) {
 	assert_has_td(loc)
 
-	if c.state == .Closed {
-		log.infof("connection %i already closed", c.socket)
+	log.warnf("c.state, %s", c.state)
+
+	if c.state >= .Closing {
+		log.infof("connection %i already closing/closed", c.socket)
 		return
 	}
 
@@ -416,7 +434,7 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.allocator) {
 	on_rline1 :: proc(loop: rawptr, token: []byte, err: bufio.Scanner_Error) {
 		l := cast(^Loop)loop
 
-		l.conn.state = .Active
+		if !connection_set_state(l.conn, .Active) do return
 
 		if err != nil {
 			if err == .EOF {

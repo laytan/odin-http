@@ -176,10 +176,9 @@ clean_request_loop :: proc(conn: ^Connection, close: bool = false) {
 
 	switch {
 	case close:
-		conn.state = .Closing
 		connection_close(conn)
-	case:
-		conn.state = .Idle
+
+	case connection_set_state(conn, .Idle):
 		conn_handle_req(conn, allocator)
 	}
 }
