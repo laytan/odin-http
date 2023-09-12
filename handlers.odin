@@ -67,6 +67,11 @@ Rate_Limit_Data :: struct {
 	mu:         sync.Mutex,
 }
 
+middleware_rate_limit_destroy :: proc(data: ^Rate_Limit_Data) {
+	sync.guard(&data.mu)
+	delete(data.hits)
+}
+
 // Basic rate limit based on IP address.
 middleware_rate_limit :: proc(data: ^Rate_Limit_Data, next: ^Handler, opts: ^Rate_Limit_Opts, allocator := context.allocator) -> Handler {
 	assert(next != nil)
