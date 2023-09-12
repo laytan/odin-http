@@ -240,6 +240,10 @@ test_client_and_server_send_recv :: proc(t: ^testing.T) {
 		expect(t, err == nil, fmt.tprintf("create socket error: %s", err))
 
 		accept(&io, server, &tctx, accept_callback)
+
+		terr := tick(&io)
+		expect(t, terr == os.ERROR_NONE, fmt.tprintf("tick error: %v", terr))
+
 		connect(&io, tctx.ep, &tctx, connect_callback)
 
 		for !tctx.done {

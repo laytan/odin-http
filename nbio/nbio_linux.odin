@@ -273,10 +273,6 @@ _close :: proc(io: ^IO, fd: Closable, user: rawptr, callback: On_Close) {
 	completion.user_data = user
 	completion.user_callback = rawptr(callback)
 
-
-
-
-
 	//odinfmt:disable
 	switch h in fd {
 	case net.TCP_Socket: completion.operation = Op_Close(h)
