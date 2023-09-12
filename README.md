@@ -34,6 +34,9 @@ Once I know the API is good on Linux and how I want the multithreading to work I
 MacOS uses kqueue, Linux uses io_uring and Windows currently uses threading (which when compared to others is slow),
 non-blocking IO for Windows using IOCP is planned in the future.
 
+The IO part of this package can be used on its own for other types of applications, see the nbio directory for the documentation on that.
+It has APIs for reading, writing, opening, closing, seeking files and accepting, connecting, sending, receiving and closing sockets, both UDP and TCP, fully cross-platform.
+
 ## Server example
 
 ```odin

@@ -223,14 +223,13 @@ _close :: proc(io: ^IO, fd: Closable, user: rawptr, callback: On_Close) {
 	completion.user_data = user
 	completion.user_callback = rawptr(callback)
 
+	//odinfmt:disable
 	switch h in fd {
-	case net.TCP_Socket:
-		completion.operation = Op_Close(os.Handle(h))
-	case net.UDP_Socket:
-		completion.operation = Op_Close(os.Handle(h))
-	case os.Handle:
-		completion.operation = Op_Close(h)
+	case net.TCP_Socket: completion.operation = Op_Close(os.Handle(h))
+	case net.UDP_Socket: completion.operation = Op_Close(os.Handle(h))
+	case os.Handle:      completion.operation = Op_Close(h)
 	}
+	//odinfmt:enable
 
 	completion.callback = proc(io: ^IO, completion: ^Completion) {
 		op := completion.operation.(Op_Close)
@@ -332,12 +331,12 @@ _read :: proc(io: ^IO, fd: os.Handle, offset: Maybe(int), buf: []byte, user: raw
 
 		read: int
 		err: os.Errno
+		//odinfmt:disable
 		switch off in op.offset {
-		case int:
-			read, err = os.read_at(op.fd, op.buf, i64(off))
-		case:
-			read, err = os.read(op.fd, op.buf)
+		case int: read, err = os.read_at(op.fd, op.buf, i64(off))
+		case:     read, err = os.read(op.fd, op.buf)
 		}
+		//odinfmt:enable
 
 		if err == os.EWOULDBLOCK {
 			append(&io.io_pending, completion)
@@ -485,12 +484,12 @@ _write :: proc(io: ^IO, fd: os.Handle, offset: Maybe(int), buf: []byte, user: ra
 
 		written: int
 		err: os.Errno
+		//odinfmt:disable
 		switch off in op.offset {
-		case int:
-			written, err = os.write_at(op.fd, op.buf, i64(off))
-		case:
-			written, err = os.write(op.fd, op.buf)
+		case int: written, err = os.write_at(op.fd, op.buf, i64(off))
+		case:     written, err = os.write(op.fd, op.buf)
 		}
+		//odinfmt:enable
 
 		if err == os.EWOULDBLOCK {
 			append(&io.io_pending, completion)
