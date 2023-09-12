@@ -187,29 +187,26 @@ response_body :: proc(
 ) {
 	defer res._body_err = err
 	assert(res._body_err == nil)
-	body, was_allocation, err = parse_body(&res.headers, &res._body, max_length, allocator)
+    body, was_allocation, err = _parse_body(&res.headers, &res._body, max_length, allocator)
 	return
 }
 
-// TODO: Body parsing is pretty much a duplicate of the http, just not non-blocking.
-// This needs serious refactoring.
+_parse_body :: proc(headers: ^http.Headers, _body: ^bufio.Scanner, max_length := -1, allocator := context.allocator) -> (body: http.Body_Type, was_allocation: bool, err: http.Body_Error) {
+	// See [RFC 7230 3.3.3](https://www.rfc-editor.org/rfc/rfc7230#section-3.3.3) for the rules.
+	// Point 3 paragraph 3 and point 4 are handled before we get here.
 
-// Meant for internal use, you should use `client.response_body`.
-parse_body :: proc(
-	headers: ^http.Headers,
-	_body: ^bufio.Scanner,
-	max_length := -1,
-	allocator := context.allocator,
-) -> (
-	body: http.Body_Type,
-	was_allocation: bool,
-	err: http.Body_Error,
-) {
-	if enc_header, ok := headers["transfer-encoding"]; ok && strings.has_suffix(enc_header, "chunked") {
+	enc, has_enc       := headers["transfer-encoding"]
+	length, has_length := headers["content-length"]
+	switch {
+	case has_enc && strings.has_suffix(enc, "chunked"):
 		was_allocation = true
-		body = response_body_chunked(headers, _body, max_length, allocator) or_return
-	} else {
-		body = response_body_length(headers, _body, max_length) or_return
+		body = _response_body_chunked(headers, _body, max_length, allocator) or_return
+
+	case has_length:
+		body = _response_body_length(_body, max_length, length) or_return
+
+	case:
+		body = _response_till_close(_body, max_length) or_return
 	}
 
 	// Automatically decode url encoded bodies.
@@ -249,21 +246,33 @@ parse_body :: proc(
 	return
 }
 
-// "Decodes" a response body based on the content length header.
-// Meant for internal usage, you should use `client.response_body`.
-response_body_length :: proc(
-	headers: ^http.Headers,
-	_body: ^bufio.Scanner,
-	max_length: int,
-) -> (
-	string,
-	http.Body_Error,
-) {
-	len, ok := headers["content-length"]
-	if !ok {
-		return "", .No_Length
+_response_till_close :: proc(_body: ^bufio.Scanner, max_length: int) -> (string, http.Body_Error) {
+	_body.max_token_size = max_length
+	defer _body.max_token_size = bufio.DEFAULT_MAX_SCAN_TOKEN_SIZE
+
+	_body.split = proc(data: []byte, at_eof: bool) -> (advance: int, token: []byte, err: bufio.Scanner_Error, final_token: bool) {
+		if at_eof {
+			return len(data), data, nil, true
+		}
+
+		return
+	}
+	defer _body.split = bufio.scan_lines
+
+	if !bufio.scanner_scan(_body) {
+		if bufio.scanner_error(_body) == .Too_Long {
+			return "", .Too_Long
+		}
+
+		return "", .Scan_Failed
 	}
 
+	return bufio.scanner_text(_body), .None
+}
+
+// "Decodes" a response body based on the content length header.
+// Meant for internal usage, you should use `client.response_body`.
+_response_body_length :: proc(_body: ^bufio.Scanner, max_length: int, len: string) -> (string, http.Body_Error) {
 	ilen, lenok := strconv.parse_int(len, 10)
 	if !lenok {
 		return "", .Invalid_Length
@@ -318,15 +327,7 @@ response_body_length :: proc(
 // Content-Length := length
 // Remove "chunked" from Transfer-Encoding
 // Remove Trailer from existing header fields
-response_body_chunked :: proc(
-	headers: ^http.Headers,
-	_body: ^bufio.Scanner,
-	max_length: int,
-	allocator := context.allocator,
-) -> (
-	body: string,
-	err: http.Body_Error,
-) {
+_response_body_chunked :: proc(headers: ^http.Headers, _body: ^bufio.Scanner, max_length: int, allocator := context.allocator) -> (body: string, err: http.Body_Error) {
 	body_buff: bytes.Buffer
 
 	bytes.buffer_init_allocator(&body_buff, 0, 0, allocator)
