@@ -2,7 +2,6 @@ package http
 
 import "core:path/filepath"
 
-<<<<<<< HEAD
 Mime_Type :: enum {
 	Plain,
 	Json,

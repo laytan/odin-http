@@ -43,8 +43,9 @@ If any other error occurs, a 500 is sent and the error is logged.
 // is then creating a new buffer, writing headers etc. and copying this buffer into it, so there
 // are still inefficiencies.
 */
-respond_file :: proc(r: ^Response, path: string, content_type: Maybe(Mime_Type) = nil) {
-	io := &r._conn.server.io
+respond_file :: proc(r: ^Response, path: string, content_type: Maybe(Mime_Type) = nil, loc := #caller_location) {
+	assert_has_td(loc)
+	io := &td.io
 	handle, errno := nbio.open(io, path)
 	if errno != os.ERROR_NONE {
 		respond(r, Status.Not_Found)
@@ -76,7 +77,7 @@ respond_file :: proc(r: ^Response, path: string, content_type: Maybe(Mime_Type) 
 
 	on_read :: proc(user: rawptr, read: int, err: os.Errno) {
 		r := cast(^Response)user
-		io := &r._conn.server.io
+		io := &td.io
 		handle := os.Handle(uintptr(context.user_ptr))
 
 		// Update the size and whats left to read.
@@ -95,7 +96,7 @@ respond_file :: proc(r: ^Response, path: string, content_type: Maybe(Mime_Type) 
 			log.debug("respond_file did not read the whole file at once, requires more reading")
 
 			buf := _dynamic_unwritten(r.body.buf)
-			nbio.read(&r._conn.server.io, handle, buf, r, on_read)
+			nbio.read(io, handle, buf, r, on_read)
 			return
 		}
 
@@ -108,7 +109,7 @@ respond_file :: proc(r: ^Response, path: string, content_type: Maybe(Mime_Type) 
 	// Using the context.user_ptr to point to the file handle.
 	context.user_ptr   = rawptr(uintptr(handle))
 
-	nbio.read(&r._conn.server.io, handle, buf, r, on_read)
+	nbio.read(io, handle, buf, r, on_read)
 }
 
 /*
