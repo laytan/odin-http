@@ -48,6 +48,7 @@ respond_file :: proc(r: ^Response, path: string, content_type: Maybe(Mime_Type) 
 	io := &td.io
 	handle, errno := nbio.open(io, path)
 	if errno != os.ERROR_NONE {
+		log.warnf("respond_file, open %q error: %i", path, errno)
 		respond(r, Status.Not_Found)
 		return
 	}
