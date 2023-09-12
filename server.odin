@@ -194,6 +194,8 @@ server_thread_init :: proc(s: ^Server) {
 	}
 
 	log.debug("event loop end")
+
+	sync.wait_group_done(&s.threads_closed)
 }
 
 
@@ -247,8 +249,6 @@ server_thread_shutdown :: proc(s: ^Server, loc := #caller_location) {
 	td.state = .Cleaning
 	nbio.destroy(&td.io)
 	td.state = .Closed
-
-	sync.wait_group_done(&s.threads_closed)
 
 	log.info("shutdown: done")
 }
