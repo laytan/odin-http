@@ -86,10 +86,17 @@ Server :: struct {
 	handler:        Handler,
 	main_thread:    int,
 
+	threads:        []^thread.Thread,
+	// Once the server starts closing/shutdown this is set to true, all threads will check it
+	// and start their thread local shutdown procedure.
+	closing:        bool,
+	// Threads will decrement the wait group when they have fully closed/shutdown.
+	// The main thread waits on this to clean up global data and return.
+	threads_closed: sync.Wait_Group,
+
 	// Updated every second with an updated date, this speeds up the server considerably
 	// because it would otherwise need to call time.now() and format the date on each response.
 	date:           Server_Date,
-	closing:        bool,
 }
 
 Server_Thread :: struct {
@@ -135,14 +142,24 @@ listen_and_serve :: proc(
 		return
 	}
 
-	for _ in 0 ..< max(0, s.opts.thread_count - 1) {
-		thread.create_and_start_with_poly_data(s, server_thread_init, context)
+	thread_count := max(0, s.opts.thread_count - 1)
+	sync.wait_group_add(&s.threads_closed, thread_count)
+	s.threads = make([]^thread.Thread, thread_count, s.conn_allocator)
+	for i in 0 ..< thread_count {
+		s.threads[i] = thread.create_and_start_with_poly_data(s, server_thread_init, context)
 	}
 
 	// Start keeping track of and caching the date for the required date header.
 	server_date_start(s)
 
+	sync.wait_group_add(&s.threads_closed, 1)
 	server_thread_init(s)
+
+	sync.wait(&s.threads_closed)
+
+	net.close(s.tcp_sock)
+	for t in s.threads do free(t)
+	delete(s.threads)
 
 	return nil
 }
@@ -226,9 +243,10 @@ server_thread_shutdown :: proc(s: ^Server, loc := #caller_location) {
 	}
 
 	td.state = .Cleaning
-	net.close(s.tcp_sock)
 	nbio.destroy(&td.io)
 	td.state = .Closed
+
+	sync.wait_group_done(&s.threads_closed)
 
 	log.info("shutdown: done")
 }
@@ -264,7 +282,6 @@ server_on_connection_close :: proc(s: ^Server, c: ^Connection) {
 	delete_key(&td.conns, c.socket)
 	free(c, s.conn_allocator)
 }
-
 
 // Taken from Go's implementation,
 // The maximum amount of bytes we will read (if handler did not)
