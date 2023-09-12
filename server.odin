@@ -349,8 +349,6 @@ Response_Inflight :: struct {
 connection_close :: proc(c: ^Connection, loc := #caller_location) {
 	assert_has_td(loc)
 
-	log.warnf("c.state, %s", c.state)
-
 	if c.state >= .Closing {
 		log.infof("connection %i already closing/closed", c.socket)
 		return
