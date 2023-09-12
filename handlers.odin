@@ -1,7 +1,6 @@
 package http
 
 import "core:bytes"
-import "core:log"
 import "core:net"
 import "core:strconv"
 import "core:sync"
