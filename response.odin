@@ -23,6 +23,7 @@ response_init :: proc(r: ^Response, allocator := context.allocator) {
 	r.status = .Not_Found
 	r.allocator = allocator
 	r.headers.allocator = allocator
+	r.cookies.allocator = allocator
 	r.body.buf.allocator = allocator
 }
 
