@@ -14,8 +14,8 @@ Bombardier command used: `bombardier -c 250 -n 10000000 http://localhost:8080`
 
 | Language/framework | Command                                                   | Requests per second | Total time | Avg response time | Throughput |
 |--------------------|-----------------------------------------------------------|---------------------|------------|-------------------|------------|
-| Rust Actix  4.2    | `cargo build --release` (this installs 256 dependencies!) | 792k                | 12s        | 310us             | 135.8MB/s  |
-| Odin-HTTP   dev    | `odin build . -o:speed -disable-assert -no-bounds-check`  | 617k                | 16s        | 401us             | 92.25MB/s  |
-| Go net/http 1.21   | `go build main.go`                                        | 574k                | 17s        | 430us             | 75.56MB/s  |
-| Bun.serve   0.8    | `NODE_ENV=production bun run index.ts`                    | 275k                | 36s        | 0.91ms            | 35.93MB/s  |
+| Rust Actix  4.2    | `cargo build --release` (this installs 256 dependencies!) | 712k                | 14s        | 347us             | 120.8MB/s  |
+| Odin-HTTP   dev    | `odin build . -o:speed -disable-assert -no-bounds-check`  | 637k                | 15s        | 340us             | 105.2MB/s  |
+| Go net/http 1.21   | `go build main.go`                                        | 598k                | 16s        | 417us             | 77.98MB/s  |
+| Bun.serve   1.1    | `NODE_ENV=production bun run index.ts`                    | 302k                | 33s        | 827us             | 39.43MB/s  |
 | Node http   20.5   | `NODE_ENV=production node app.js`                         |  65k                | 2m35s      | 3.88ms            | 12.90MB/s  |
