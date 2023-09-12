@@ -82,13 +82,7 @@ serve :: proc() {
 		// Pass the request to the next handler.
 		next := handler.next.(^http.Handler)
 		next.handle(next, req, res)
-
-		// The next handler has finished, we can now do things with the response.
-		// TODO: this is not true when the handler uses callbacks for nonblocking.
-		// Middleware in general doesn't work as expected.
-		log.infof("index handler returned status code: %s", res.status)
-	},
-	)
+	})
 	http.route_get(&router, "/", index_with_middleware)
 
 	// Matches every get request that did not match another route.
@@ -98,11 +92,8 @@ serve :: proc() {
 
 	route_handler := http.router_handler(&router)
 
-	// Wrap our handler with a logger middleware.
-	with_logger := http.middleware_logger(&route_handler, &http.Logger_Opts{log_time = true})
-
 	// Start the server on 127.0.0.1:6969.
-	err := http.listen_and_serve(&s, with_logger, net.Endpoint{address = net.IP4_Loopback, port = 6969})
+	err := http.listen_and_serve(&s, route_handler, net.Endpoint{address = net.IP4_Loopback, port = 6969})
 	fmt.assertf(err == nil, "server stopped with error: %v", err)
 }
 

@@ -38,52 +38,6 @@ middleware_proc :: proc(next: Maybe(^Handler), handle: Handler_Proc) -> Handler 
 	return h
 }
 
-Logger_Opts :: struct {
-	log_time: bool,
-}
-
-Default_Logger_Opts := Logger_Opts {
-	log_time = false,
-}
-
-// TODO: this does not work with the non blocking IO,
-// Might need to change to a Handler.pre and Handler.post so we can do stuff before and after.
-middleware_logger :: proc(next: Maybe(^Handler), opts: ^Logger_Opts = nil) -> Handler {
-	h: Handler
-	h.user_data = opts != nil ? opts : &Default_Logger_Opts
-	h.next = next
-
-	handle := proc(h: ^Handler, req: ^Request, res: ^Response) {
-		opts := (^Logger_Opts)(h.user_data)
-		rline := req.line.(Requestline)
-
-		start: time.Tick
-		if opts.log_time do start = time.tick_now()
-
-		defer {
-			method_str := method_string(rline.method)
-			switch opts.log_time {
-			case true:
-				dur := time.tick_since(start)
-				log.infof("[%i|%v] %s %s", res.status, dur, method_str, rline.target)
-			case:
-				log.infof("[%i] %s %s", res.status, method_str, rline.target)
-			}
-		}
-
-		switch n in h.next {
-		case ^Handler:
-			n.handle(n, req, res)
-		case:
-			log.warn("middleware_logger does not have a next handler")
-			respond(res)
-		}
-	}
-
-	h.handle = handle
-	return h
-}
-
 Rate_Limit_On_Limit :: struct {
 	user_data: rawptr,
 	on_limit:  proc(req: ^Request, res: ^Response, user_data: rawptr),
