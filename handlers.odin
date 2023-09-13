@@ -102,7 +102,7 @@ middleware_rate_limit :: proc(data: ^Rate_Limit_Data, next: ^Handler, opts: ^Rat
 			res.status = .Too_Many_Requests
 
 			retry_dur := int(time.diff(time.now(), data.next_sweep) / time.Second)
-			buf := make([]byte, 32, res.allocator)
+			buf := make([]byte, 32, context.temp_allocator)
 			retry_str := strconv.itoa(buf, retry_dur)
 			res.headers["retry-after"] = retry_str
 

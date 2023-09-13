@@ -148,14 +148,14 @@ respond_dir :: proc(r: ^Response, base, target, request: string, send := true) {
 	}
 
 	// Detect path traversal attacks.
-	req_clean := filepath.clean(request, r.allocator)
-	base_clean := filepath.clean(base, r.allocator)
+	req_clean := filepath.clean(request, context.temp_allocator)
+	base_clean := filepath.clean(base, context.temp_allocator)
 	if !strings.has_prefix(req_clean, base_clean) {
 		respond(r, Status.Not_Found)
 		return
 	}
 
-	file_path := filepath.join([]string{"./", target, strings.trim_prefix(req_clean, base_clean)}, r.allocator)
+	file_path := filepath.join([]string{"./", target, strings.trim_prefix(req_clean, base_clean)}, context.temp_allocator)
 	respond_file(r, file_path)
 }
 

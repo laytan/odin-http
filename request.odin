@@ -22,10 +22,6 @@ Request :: struct {
 	// Route params/captures.
 	url_params:      []string,
 
-	// A growing arena where allocations are freed after the response is sent.
-	// PERF: we can remove this field, and use the context.temp_allocator.
-	allocator:       mem.Allocator,
-
 	// Body memoization and scanner.
 	_scanner:        ^Scanner,
 	_body:           Body_Type,
@@ -34,7 +30,6 @@ Request :: struct {
 
 request_init :: proc(r: ^Request, allocator := context.allocator) {
 	r.headers = make(Headers, 3, allocator)
-	r.allocator = allocator
 }
 
 // Validates the headers of a request, from the pov of the server.
@@ -157,17 +152,17 @@ request_body :: proc(
 
 		cb := state.cb
 		ud := state.user_data
-		free(state, state.req.allocator)
+		free(state, context.temp_allocator)
 
 		cb(body, was_allocation, ud)
 	}
 
-	state := new(Request_Body_State, req.allocator)
+	state := new(Request_Body_State, context.temp_allocator)
 	state.cb = cb
 	state.user_data = user_data
 	state.req = req
 
-	parse_body(&req.headers, req._scanner, max_length, state, on_body, req.allocator)
+	parse_body(&req.headers, req._scanner, max_length, state, on_body, context.temp_allocator)
 }
 
 @(private)

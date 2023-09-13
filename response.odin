@@ -2,7 +2,6 @@ package http
 
 import "core:bytes"
 import "core:log"
-import "core:mem"
 import "core:net"
 import "core:strconv"
 import "core:strings"
@@ -10,8 +9,6 @@ import "core:strings"
 import "nbio"
 
 Response :: struct {
-	// A growing arena where allocations are freed after the response is sent.
-	allocator: mem.Allocator,
 	status:    Status,
 	headers:   Headers,
 	cookies:   [dynamic]Cookie,
@@ -21,9 +18,8 @@ Response :: struct {
 
 response_init :: proc(r: ^Response, allocator := context.allocator) {
 	r.status = .Not_Found
-	r.allocator = allocator
-	r.headers.allocator = allocator
-	r.cookies.allocator = allocator
+	r.headers.allocator  = allocator
+	r.cookies.allocator  = allocator
 	r.body.buf.allocator = allocator
 }
 
@@ -69,7 +65,7 @@ response_send_got_body :: proc(r: ^Response, will_close: bool) {
 	res: bytes.Buffer
 	// Responses are on average at least 100 bytes, so lets start there, but add the body's length.
 	initial_buf_cap := response_needs_content_length(r, conn) ? 100 + bytes.buffer_length(&r.body) : 100
-	bytes.buffer_init_allocator(&res, 0, initial_buf_cap, r.allocator)
+	bytes.buffer_init_allocator(&res, 0, initial_buf_cap, r.body.buf.allocator)
 
 	bytes.buffer_write_string(&res, "HTTP/1.1 ")
 	bytes.buffer_write_string(&res, status_string(r.status))
@@ -116,7 +112,7 @@ response_send_got_body :: proc(r: ^Response, will_close: bool) {
 		// Escape newlines in headers, if we don't, an attacker can find an endpoint
 		// that returns a header with user input, and inject headers into the response.
 		// PERF: probably slow.
-		esc_value, _ := strings.replace_all(value, "\n", "\\n", r.allocator)
+		esc_value, _ := strings.replace_all(value, "\n", "\\n", r.body.buf.allocator)
 		bytes.buffer_write_string(&res, esc_value)
 
 		bytes.buffer_write_string(&res, "\r\n")
@@ -163,11 +159,9 @@ on_response_sent :: proc(conn_: rawptr, sent: int, err: net.Network_Error) {
 // Response has been sent, clean up and close/handle next.
 @(private)
 clean_request_loop :: proc(conn: ^Connection, close: bool = false) {
-	allocator := conn.loop.req.allocator
-
 	// log.debugf("%i: %v", conn.socket, conn.arena.total_used)
 	if conn.arena.total_used >= conn.server.opts.connection_allowed_size {
-		free_all(conn.loop.req.allocator)
+		free_all(context.temp_allocator)
 	}
 
 	conn.loop.inflight = nil
@@ -179,7 +173,7 @@ clean_request_loop :: proc(conn: ^Connection, close: bool = false) {
 		connection_close(conn)
 
 	case connection_set_state(conn, .Idle):
-		conn_handle_req(conn, allocator)
+		conn_handle_req(conn, context.temp_allocator)
 	}
 }
 

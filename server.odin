@@ -422,11 +422,11 @@ conn_handle_reqs :: proc(c: ^Connection) {
 
 	allocator := virtual.arena_allocator(&c.arena)
 	context.temp_allocator = allocator
-	conn_handle_req(c, allocator)
+	conn_handle_req(c, context.temp_allocator)
 }
 
 @(private)
-conn_handle_req :: proc(c: ^Connection, allocator := context.allocator) {
+conn_handle_req :: proc(c: ^Connection, allocator := context.temp_allocator) {
 	on_rline1 :: proc(loop: rawptr, token: []byte, err: bufio.Scanner_Error) {
 		l := cast(^Loop)loop
 
@@ -464,7 +464,7 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.allocator) {
 			return
 		}
 
-		rline, err := requestline_parse(string(token), l.req.allocator)
+		rline, err := requestline_parse(string(token), context.temp_allocator)
 		switch err {
 		case .Method_Not_Implemented:
 			log.infof("request-line %q invalid method", string(token))
@@ -489,7 +489,7 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.allocator) {
 			return
 		}
 
-		l.req.url = url_parse(rline.target.(string), l.req.allocator)
+		l.req.url = url_parse(rline.target.(string), context.temp_allocator)
 		l.conn.scanner.max_token_size = l.conn.server.opts.limit_headers
 		scanner_scan(&l.conn.scanner, loop, on_header_line)
 	}
@@ -509,7 +509,7 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.allocator) {
 			return
 		}
 
-		if _, ok := header_parse(&l.req.headers, string(token), l.req.allocator); !ok {
+		if _, ok := header_parse(&l.req.headers, string(token), context.temp_allocator); !ok {
 			log.warnf("header-line %s is invalid", string(token))
 			l.res.headers["connection"] = "close"
 			l.res.status = .Bad_Request
