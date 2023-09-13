@@ -322,7 +322,6 @@ connection_set_state :: proc(c: ^Connection, s: Connection_State) -> bool {
 Connection :: struct {
 	server:    ^Server,
 	socket:    net.TCP_Socket,
-	client:    net.Endpoint,
 	state:     Connection_State,
 	scanner:   Scanner,
 	arena:     virtual.Arena,
@@ -405,12 +404,11 @@ on_accept :: proc(server: rawptr, sock: net.TCP_Socket, source: net.Endpoint, er
 	c := new(Connection, server.conn_allocator)
 	c.state = .New
 	c.server = server
-	c.client = source
 	c.socket = sock
 
 	td.conns[c.socket] = c
 
-	log.infof("new connection with %v, got %d conns", source, len(td.conns))
+	log.debugf("new connection with thread got %d conns", len(td.conns))
 	conn_handle_reqs(c)
 }
 
