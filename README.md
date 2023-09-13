@@ -53,7 +53,7 @@ import "core:time"
 import http "../.." // Change to path of package.
 
 main :: proc() {
-	context.logger = log.create_console_logger()
+	context.logger = log.create_console_logger(.Info)
 
 	s: http.Server
 	// Register a graceful shutdown when the program receives a SIGINT signal.
@@ -72,7 +72,7 @@ main :: proc() {
 	// Matches /users followed by any word (alphanumeric) followed by /comments and then / with any number.
 	// The word is available as req.url_params[0], and the number as req.url_params[1].
 	http.route_get(&router, "/users/(%w+)/comments/(%d+)", http.handler(proc(req: ^http.Request, res: ^http.Response) {
-		http.respond_plain( res, fmt.tprintf("user %s, comment: %s", req.url_params[0], req.url_params[1]))
+		http.respond_plain(res, fmt.tprintf("user %s, comment: %s", req.url_params[0], req.url_params[1]))
 	}))
 	http.route_get(&router, "/cookies", http.handler(cookies))
 	http.route_get(&router, "/api", http.handler(api))
@@ -84,18 +84,10 @@ main :: proc() {
 
 	http.route_post(&router, "/ping", http.handler(post_ping))
 
-	route_handler := http.router_handler(&router)
-
-	// Wrap our handler with a logger middleware.
-	// You can also wrap individual routes with middleware and pass it to the http.route_* procedures.
-	with_logger := http.middleware_logger(&route_handler, &http.Logger_Opts{log_time = true})
+	routed := http.router_handler(&router)
 
 	// Start the server on 127.0.0.1:6969.
-	err := http.listen_and_serve(
-		&s,
-		with_logger,
-		net.Endpoint{address = net.IP4_Loopback, port = 6969},
-	)
+	err := http.listen_and_serve(&s, routed, net.Endpoint{address = net.IP4_Loopback, port = 6969})
 	log.warnf("server stopped: %s", err)
 }
 
@@ -191,7 +183,7 @@ get :: proc() {
 }
 
 Post_Body :: struct {
-	name: string,
+	name:    string,
 	message: string,
 }
 

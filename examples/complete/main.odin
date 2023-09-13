@@ -8,7 +8,9 @@ import "core:time"
 
 import http "../.."
 
-LoggerOpts :: log.Options{.Level, .Time, .Short_File_Path, .Line, .Terminal_Color}
+import bt "shared:obacktracing"
+
+LoggerOpts :: log.Options{.Level, .Time, .Short_File_Path, .Line, .Terminal_Color, .Thread_Id}
 
 TRACK_LEAKS :: true
 
@@ -16,20 +18,15 @@ main :: proc() {
 	context.logger = log.create_console_logger(log.Level.Debug, LoggerOpts)
 
 	when TRACK_LEAKS {
-		track: mem.Tracking_Allocator
-		mem.tracking_allocator_init(&track, context.allocator)
-		context.allocator = mem.tracking_allocator(&track)
+		track: bt.Tracking_Allocator
+		bt.tracking_allocator_init(&track, 16, context.allocator)
+		context.allocator = bt.tracking_allocator(&track)
 	}
 
 	serve()
 
 	when TRACK_LEAKS {
-		for _, leak in track.allocation_map {
-			fmt.printf("%v leaked %v bytes\n", leak.location, leak.size)
-		}
-		for bad_free in track.bad_free_array {
-			fmt.printf("%v allocation %p was freed badly\n", bad_free.location, bad_free.memory)
-		}
+		bt.tracking_allocator_print_results(&track)
 	}
 }
 
