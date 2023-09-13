@@ -115,7 +115,7 @@ assert_has_td :: #force_inline proc(loc := #caller_location) {
 td: Server_Thread
 
 Default_Endpoint := net.Endpoint {
-	address = net.IP4_Loopback,
+	address = net.IP4_Any,
 	port    = 8080,
 }
 
