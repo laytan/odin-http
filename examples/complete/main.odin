@@ -8,8 +8,6 @@ import "core:time"
 
 import http "../.."
 
-import bt "shared:obacktracing"
-
 LoggerOpts :: log.Options{.Level, .Time, .Short_File_Path, .Line, .Terminal_Color, .Thread_Id}
 
 TRACK_LEAKS :: true
@@ -18,15 +16,20 @@ main :: proc() {
 	context.logger = log.create_console_logger(log.Level.Debug, LoggerOpts)
 
 	when TRACK_LEAKS {
-		track: bt.Tracking_Allocator
-		bt.tracking_allocator_init(&track, 16, context.allocator)
-		context.allocator = bt.tracking_allocator(&track)
+		track: mem.Tracking_Allocator
+		mem.tracking_allocator_init(&track, context.allocator)
+		context.allocator = mem.tracking_allocator(&track)
 	}
 
 	serve()
 
 	when TRACK_LEAKS {
-		bt.tracking_allocator_print_results(&track)
+		for _, leak in track.allocation_map {
+			fmt.printf("%v leaked %v bytes\n", leak.location, leak.size)
+		}
+		for bad_free in track.bad_free_array {
+			fmt.printf("%v allocation %p was freed badly\n", bad_free.location, bad_free.memory)
+		}
 	}
 }
 
@@ -48,8 +51,8 @@ serve :: proc() {
 	// Matches /users followed by any word (alphanumeric) followed by /comments and then / with any number.
 	// The word is available as params[0], and the number as params[1].
 	http.route_get(&router, "/users/(%w+)/comments/(%d+)", http.handler(proc(req: ^http.Request, res: ^http.Response) {
-			http.respond_plain(res, fmt.tprintf("user %s, comment: %s", req.url_params[0], req.url_params[1]))
-		}))
+		http.respond_plain(res, fmt.tprintf("user %s, comment: %s", req.url_params[0], req.url_params[1]))
+	}))
 
 	cookies := http.handler(cookies)
 
@@ -132,20 +135,20 @@ static :: proc(req: ^http.Request, res: ^http.Response) {
 // TODO: this needs abstractions.
 post_ping :: proc(req: ^http.Request, res: ^http.Response) {
 	http.request_body(req, proc(body: http.Body_Type, was_alloc: bool, res: rawptr) {
-			res := cast(^http.Response)res
+		res := cast(^http.Response)res
 
-			if err, is_err := body.(http.Body_Error); is_err {
-				res.status = http.body_error_status(err)
-				http.respond(res)
-				return
-			}
+		if err, is_err := body.(http.Body_Error); is_err {
+			res.status = http.body_error_status(err)
+			http.respond(res)
+			return
+		}
 
-			if (body.(http.Body_Plain) or_else "") != "ping" {
-				res.status = .Unprocessable_Content
-				http.respond(res)
-				return
-			}
+		if (body.(http.Body_Plain) or_else "") != "ping" {
+			res.status = .Unprocessable_Content
+			http.respond(res)
+			return
+		}
 
-			http.respond_plain(res, "pong")
-		}, len("ping"), res)
+		http.respond_plain(res, "pong")
+	}, len("ping"), res)
 }
