@@ -28,6 +28,9 @@ respond_plain :: proc(r: ^Response, text: string, send := true) {
 	r.headers["content-type"] = mime_to_content_type(Mime_Type.Plain)
 }
 
+@(private)
+ENOENT :: os.ERROR_FILE_NOT_FOUND when ODIN_OS == .Windows else os.ENOENT
+
 /*
 Sends the content of the file at the given path as the response.
 
@@ -48,7 +51,7 @@ respond_file :: proc(r: ^Response, path: string, content_type: Maybe(Mime_Type) 
 	io := &td.io
 	handle, errno := nbio.open(io, path)
 	if errno != os.ERROR_NONE {
-		if errno == os.ENOENT {
+		if errno == ENOENT {
 			log.debugf("respond_file, open %q, no such file or directory", path)
 		} else {
 			log.warnf("respond_file, open %q error: %i", path, errno)
