@@ -73,6 +73,8 @@ serve :: proc() {
 	http.route_get(&router, "/api", http.handler(api))
 	http.route_get(&router, "/ping", http.handler(ping))
 
+	http.route_post(&router, "/echo", http.handler(echo))
+
 	// Can also have specific middleware for each route:
 	index_handler := http.handler(index)
 	index_with_middleware := http.middleware_proc(
@@ -134,21 +136,42 @@ static :: proc(req: ^http.Request, res: ^http.Response) {
 
 // TODO: this needs abstractions.
 post_ping :: proc(req: ^http.Request, res: ^http.Response) {
-	http.request_body(req, proc(body: http.Body_Type, was_alloc: bool, res: rawptr) {
+	http.body(req, len("ping"), res, proc(res: rawptr, body: http.Body, err: http.Body_Error) {
 		res := cast(^http.Response)res
 
-		if err, is_err := body.(http.Body_Error); is_err {
-			res.status = http.body_error_status(err)
-			http.respond(res)
+		if err != nil {
+			http.respond(res, http.body_error_status(err))
 			return
 		}
 
-		if (body.(http.Body_Plain) or_else "") != "ping" {
-			res.status = .Unprocessable_Content
-			http.respond(res)
+		if body != "ping" {
+			http.respond(res, http.Status.Unprocessable_Content)
 			return
 		}
 
 		http.respond_plain(res, "pong")
-	}, len("ping"), res)
+	})
+}
+
+import "core:bytes"
+
+echo :: proc(req: ^http.Request, res: ^http.Response) {
+	http.body(req, -1, res, proc(res: rawptr, body: http.Body, err: http.Body_Error) {
+		res := cast(^http.Response)res
+
+		if err != nil {
+			http.respond(res, http.body_error_status(err))
+			log.error(err)
+			return
+		}
+
+		ma, ok := http.body_url_encoded(body)
+		if !ok {
+			http.respond(res, http.Status.Bad_Request)
+			return
+		}
+
+		fmt.wprint(bytes.buffer_to_stream(&res.body), ma)
+		http.respond(res, http.Status.OK)
+	})
 }

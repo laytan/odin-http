@@ -427,7 +427,7 @@ conn_handle_reqs :: proc(c: ^Connection) {
 
 @(private)
 conn_handle_req :: proc(c: ^Connection, allocator := context.temp_allocator) {
-	on_rline1 :: proc(loop: rawptr, token: []byte, err: bufio.Scanner_Error) {
+	on_rline1 :: proc(loop: rawptr, token: string, err: bufio.Scanner_Error) {
 		l := cast(^Loop)loop
 
 		if !connection_set_state(l.conn, .Active) do return
@@ -455,7 +455,7 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.temp_allocator) {
 		on_rline2(loop, token, err)
 	}
 
-	on_rline2 :: proc(loop: rawptr, token: []byte, err: bufio.Scanner_Error) {
+	on_rline2 :: proc(loop: rawptr, token: string, err: bufio.Scanner_Error) {
 		l := cast(^Loop)loop
 
 		if err != nil {
@@ -464,7 +464,7 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.temp_allocator) {
 			return
 		}
 
-		rline, err := requestline_parse(string(token), context.temp_allocator)
+		rline, err := requestline_parse(string(token))
 		switch err {
 		case .Method_Not_Implemented:
 			log.infof("request-line %q invalid method", string(token))
@@ -489,12 +489,14 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.temp_allocator) {
 			return
 		}
 
+		// TODO: don't parse the URL here, user or middleware can always do it if needed.
 		l.req.url = url_parse(rline.target.(string), context.temp_allocator)
+
 		l.conn.scanner.max_token_size = l.conn.server.opts.limit_headers
 		scanner_scan(&l.conn.scanner, loop, on_header_line)
 	}
 
-	on_header_line :: proc(loop: rawptr, token: []byte, err: bufio.Scanner_Error) {
+	on_header_line :: proc(loop: rawptr, token: string, err: bufio.Scanner_Error) {
 		l := cast(^Loop)loop
 
 		if err != nil {
@@ -509,7 +511,7 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.temp_allocator) {
 			return
 		}
 
-		if _, ok := header_parse(&l.req.headers, string(token), context.temp_allocator); !ok {
+		if _, ok := header_parse(&l.req.headers, string(token)); !ok {
 			log.warnf("header-line %s is invalid", string(token))
 			l.res.headers["connection"] = "close"
 			l.res.status = .Bad_Request
@@ -572,14 +574,10 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.temp_allocator) {
 		}
 	}
 
-
 	c.loop.conn = c
 	c.loop.res._conn = c
 	request_init(&c.loop.req, allocator)
 	response_init(&c.loop.res, allocator)
-
-	// Expensive call:
-	// log.debugf("waiting for next request on %s", net.endpoint_to_string(c.client, allocator))
 
 	c.scanner.max_token_size = c.server.opts.limit_request_line
 	scanner_scan(&c.scanner, &c.loop, on_rline1)
