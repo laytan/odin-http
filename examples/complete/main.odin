@@ -1,6 +1,5 @@
 package complete_example
 
-import "core:bytes"
 import "core:fmt"
 import "core:log"
 import "core:mem"
@@ -166,7 +165,6 @@ echo :: proc(req: ^http.Request, res: ^http.Response) {
 			return
 		}
 
-		fmt.wprint(bytes.buffer_to_stream(&res.body), ma)
-		http.respond(res, http.Status.OK)
+		http.respond_plain(res, fmt.tprint(ma))
 	})
 }

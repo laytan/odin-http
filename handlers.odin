@@ -1,6 +1,5 @@
 package http
 
-import "core:bytes"
 import "core:net"
 import "core:strconv"
 import "core:sync"
@@ -46,7 +45,7 @@ Rate_Limit_On_Limit :: struct {
 on_limit_message :: proc(message: ^string) -> Rate_Limit_On_Limit {
 	return Rate_Limit_On_Limit{user_data = message, on_limit = proc(_: ^Request, res: ^Response, user_data: rawptr) {
 				message := (^string)(user_data)
-				bytes.buffer_write_string(&res.body, message^)
+				body_set(res, message^)
 				respond(res)
 			}}
 }

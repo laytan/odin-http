@@ -1,31 +1,28 @@
 package http
 
-import "core:bytes"
 import "core:encoding/json"
 import "core:io"
+import "core:log"
 import "core:os"
 import "core:path/filepath"
 import "core:strings"
-import "core:log"
 
 import "nbio"
 
 // Sets the response to one that sends the given HTML.
-respond_html :: proc(r: ^Response, html: string, send := true, loc := #caller_location) {
-	defer if send do respond(r, loc)
-
+respond_html :: proc(r: ^Response, html: string, status: Status = .OK, loc := #caller_location) {
 	r.status = .OK
-	bytes.buffer_write_string(&r.body, html)
 	r.headers["content-type"] = mime_to_content_type(Mime_Type.Html)
+	body_set(r, html, loc)
+	respond(r, loc)
 }
 
 // Sets the response to one that sends the given plain text.
-respond_plain :: proc(r: ^Response, text: string, send := true, loc := #caller_location) {
-	defer if send do respond(r, loc)
-
+respond_plain :: proc(r: ^Response, text: string, status: Status = .OK, loc := #caller_location) {
 	r.status = .OK
-	bytes.buffer_write_string(&r.body, text)
 	r.headers["content-type"] = mime_to_content_type(Mime_Type.Plain)
+	body_set(r, text, loc)
+	respond(r, loc)
 }
 
 @(private)
@@ -42,9 +39,7 @@ The content type is taken from the path, optionally overwritten using the parame
 If the file doesn't exist, a 404 response is sent.
 If any other error occurs, a 500 is sent and the error is logged.
 
-// PERF: we are still putting the content into the Response.body buffer, and the respond call
-// is then creating a new buffer, writing headers etc. and copying this buffer into it, so there
-// are still inefficiencies.
+// PERF: we are still putting the content into the body buffer, we could stream it.
 */
 respond_file :: proc(r: ^Response, path: string, content_type: Maybe(Mime_Type) = nil, loc := #caller_location) {
 	assert_has_td(loc)
@@ -83,8 +78,8 @@ respond_file :: proc(r: ^Response, path: string, content_type: Maybe(Mime_Type) 
 	content_type := mime_to_content_type(mime)
 	r.headers["content-type"] = content_type
 
-	bytes.buffer_grow(&r.body, size)
-	buf := _dynamic_unwritten(r.body.buf)
+	_response_write_heading(r, size)
+	buf := _dynamic_unwritten(r._buf.buf)
 
 	on_read :: proc(user: rawptr, read: int, err: os.Errno) {
 		r := cast(^Response)user
@@ -92,7 +87,7 @@ respond_file :: proc(r: ^Response, path: string, content_type: Maybe(Mime_Type) 
 		handle := os.Handle(uintptr(context.user_ptr))
 
 		// Update the size and whats left to read.
-		_dynamic_add_len(&r.body.buf, read)
+		_dynamic_add_len(&r._buf.buf, read)
 		context.user_index -= read
 
 		if err != os.ERROR_NONE {
@@ -106,7 +101,7 @@ respond_file :: proc(r: ^Response, path: string, content_type: Maybe(Mime_Type) 
 		if context.user_index > 0 {
 			log.debug("respond_file did not read the whole file at once, requires more reading")
 
-			buf := _dynamic_unwritten(r.body.buf)
+			buf := _dynamic_unwritten(r._buf.buf)
 			nbio.read(io, handle, buf, r, on_read)
 			return
 		}
@@ -128,15 +123,14 @@ Responds with the given content, determining content type from the given path.
 
 This is very useful when you want to `#load(path)` at compile time and respond with that.
 */
-respond_file_content :: proc(r: ^Response, path: string, content: []byte, send := true, loc := #caller_location) {
-	defer if send do respond(r, loc)
-
+respond_file_content :: proc(r: ^Response, path: string, content: []byte, status: Status = .OK, loc := #caller_location) {
 	mime := mime_from_extension(path)
 	content_type := mime_to_content_type(mime)
 
-	r.status = .OK
+	r.status = status
 	r.headers["content-type"] = content_type
-	bytes.buffer_write(&r.body, content)
+	body_set(r, content, loc)
+	respond(r, loc)
 }
 
 // Sets the response to one that, based on the request path, returns a file.
@@ -146,7 +140,7 @@ respond_file_content :: proc(r: ^Response, path: string, content: []byte, send :
 //
 // Path traversal is detected and cleaned up.
 // The Content-Type is set based on the file extension, see the MimeType enum for known file extensions.
-respond_dir :: proc(r: ^Response, base, target, request: string, send := true, loc := #caller_location) {
+respond_dir :: proc(r: ^Response, base, target, request: string, loc := #caller_location) {
 	if !strings.has_prefix(request, base) {
 		respond(r, Status.Not_Found)
 		return
@@ -165,27 +159,33 @@ respond_dir :: proc(r: ^Response, base, target, request: string, send := true, l
 }
 
 // Sets the response to one that returns the JSON representation of the given value.
-respond_json :: proc(r: ^Response, v: any, opt: json.Marshal_Options = {}, send := true, loc := #caller_location) -> json.Marshal_Error {
-	defer if send do respond(r, loc)
-
-	stream := bytes.buffer_to_stream(&r.body)
+respond_json :: proc(r: ^Response, v: any, status: Status = .OK, opt: json.Marshal_Options = {}, loc := #caller_location) -> (err: json.Marshal_Error) {
 	opt := opt
-	if err := json.marshal_to_writer(io.to_writer(stream), v, &opt); err != nil {
-		r.status = .Internal_Server_Error
-		return err
-	}
 
-	r.status = .OK
+	r.status = status
 	r.headers["content-type"] = mime_to_content_type(Mime_Type.Json)
 
-	return nil
+	// Going to write a MINIMUM of 128 bytes at a time.
+	rw:  Response_Writer
+	buf: [128]byte
+	response_writer_init(&rw, r, buf[:])
+
+	// Ends the body and sends the response.
+	defer io.close(rw.w)
+
+	if err = json.marshal_to_writer(rw.w, v, &opt); err != nil {
+		r.headers["connection"] = "close"
+		response_status(r, .Internal_Server_Error)
+	}
+
+	return
 }
 
-respond_with_none :: proc(r: ^Response, loc := #caller_location) {
+_respond_with_none :: proc(r: ^Response, loc := #caller_location) {
 	assert_has_td(loc)
 
 	conn := r._conn
-	req := conn.loop.req
+	req  := conn.loop.req
 
 	// Respond as head request if we set it to get.
 	if rline, ok := req.line.(Requestline); ok && req.is_head && conn.server.opts.redirect_head_to_get {
@@ -195,26 +195,13 @@ respond_with_none :: proc(r: ^Response, loc := #caller_location) {
 	response_send(r, conn, loc)
 }
 
-respond_with_status :: proc(r: ^Response, status: Status, loc := #caller_location) {
-	r.status = status
-	respond(r, loc)
-}
-
-respond_with_content_type :: proc(r: ^Response, content_type: Mime_Type, loc := #caller_location) {
-	r.headers["content-type"] = mime_to_content_type(content_type)
-	respond(r, loc)
-}
-
-respond_with_status_and_content_type :: proc(r: ^Response, status: Status, content_type: Mime_Type, loc := #caller_location) {
-	r.status = status
-	r.headers["content-type"] = mime_to_content_type(content_type)
+_respond_with_status :: proc(r: ^Response, status: Status, loc := #caller_location) {
+	response_status(r, status)
 	respond(r, loc)
 }
 
 // Sends the response back to the client, handlers should call this.
 respond :: proc {
-	respond_with_none,
-	respond_with_status,
-	respond_with_content_type,
-	respond_with_status_and_content_type,
+	_respond_with_none,
+	_respond_with_status,
 }

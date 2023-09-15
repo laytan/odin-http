@@ -1,27 +1,276 @@
 package http
 
 import "core:bytes"
+import "core:io"
 import "core:log"
 import "core:net"
+import "core:slice"
 import "core:strconv"
 import "core:strings"
 
 import "nbio"
 
 Response :: struct {
-	status:    Status,
-	headers:   Headers,
-	cookies:   [dynamic]Cookie,
-	body:      bytes.Buffer,
-	_conn:     ^Connection,
-	sent:      bool,
+	// Add your headers and cookies here directly.
+	headers:          Headers,
+	cookies:          [dynamic]Cookie,
+
+	// If the response has been sent.
+	sent:             bool,
+
+	// NOTE: use `http.response_status` if the response body might have been set already.
+	status:           Status,
+
+	// Only for internal usage.
+	_conn:            ^Connection,
+	// TODO/PERF: with some internal refactoring, we should be able to write directly to the
+	// connection (maybe a small buffer in this struct).
+	_buf:             bytes.Buffer,
+	_heading_written: bool,
 }
 
 response_init :: proc(r: ^Response, allocator := context.allocator) {
-	r.status = .Not_Found
+	r.status             = .Not_Found
 	r.headers.allocator  = allocator
 	r.cookies.allocator  = allocator
-	r.body.buf.allocator = allocator
+	r._buf.buf.allocator = allocator
+}
+
+_body_set_bytes :: proc(r: ^Response, byts: []byte, loc := #caller_location) {
+	assert(bytes.buffer_length(&r._buf) == 0, "the response body has already been written", loc)
+	_response_write_heading(r, len(byts))
+	bytes.buffer_write(&r._buf, byts)
+}
+
+_body_set_str :: proc(r: ^Response, str: string, loc := #caller_location) {
+	// This is safe because we don't write to the bytes.
+	_body_set_bytes(r, transmute([]byte)str, loc)
+}
+
+/*
+Sets the response body. After calling this you can no longer add headers to the response.
+If, after calling, you want to change the status code, use the `response_status` procedure.
+
+For bodies where you do not know the size or want an `io.Writer`, use the `response_writer_init`
+procedure to create a writer.
+*/
+body_set :: proc{
+	_body_set_str,
+	_body_set_bytes,
+}
+
+/*
+Sets the status code with the safety of being able to do this after writing (part of) the body.
+*/
+response_status :: proc(r: ^Response, status: Status) {
+	if r.status == status do return
+
+	r.status = status
+
+	// If we have already written the heading, we can address the bytes directly to overwrite,
+	// this is because of the fact that every status code is of length 3, and because we omit
+	// the "optional" reason phrase out of the response.
+	if bytes.buffer_length(&r._buf) > 0 {
+		OFFSET :: len("HTTP/1.1 ")
+
+		status_int_str := status_string(r.status)
+		if len(status_int_str) < 4 {
+			status_int_str = "500 "
+		} else {
+			status_int_str = status_int_str[0:4]
+		}
+
+		copy(r._buf.buf[OFFSET:OFFSET + 4], status_int_str)
+	}
+}
+
+Response_Writer :: struct {
+	r:     ^Response,
+	// The writer you can write to.
+	w:     io.Writer,
+	// A dynamic wrapper over the `buffer` given in `response_writer_init`, doesn't allocate.
+	buf:   [dynamic]byte,
+	// If destroy or close has been called.
+	ended: bool,
+}
+
+/*
+Initialize a writer you can use to write responses. Use the `body_set` procedure group if you have
+a string or byte slice.
+
+The buffer can be used to avoid very small writes, like the ones when you use the json package
+(each write in the json package is only a few bytes). You are allowed to pass nil which will disable
+buffering.
+
+NOTE: You need to call io.destroy to signal the end of the body, OR io.close to send the response.
+*/
+response_writer_init :: proc(rw: ^Response_Writer, r: ^Response, buffer: []byte) -> io.Writer {
+	r.headers["transfer-encoding"] = "chunked"
+	_response_write_heading(r, -1)
+
+	rw.buf = slice.into_dynamic(buffer)
+	rw.r   = r
+
+	rw.w = io.Stream{
+		procedure = proc(stream_data: rawptr, mode: io.Stream_Mode, p: []byte, offset: i64, whence: io.Seek_From) -> (n: i64, err: io.Error) {
+			ws :: bytes.buffer_write_string
+			write_chunk :: proc(b: ^bytes.Buffer, chunk: []byte) {
+				plen := i64(len(chunk))
+				if plen == 0 do return
+
+				log.debugf("response_writer chunk of size: %i", plen)
+
+				bytes.buffer_grow(b, 16)
+				size_buf := _dynamic_unwritten(b.buf)
+				size := strconv.append_int(size_buf, plen, 16)
+				_dynamic_add_len(&b.buf, len(size))
+
+				ws(b, "\r\n")
+				bytes.buffer_write(b, chunk)
+				ws(b, "\r\n")
+			}
+
+			rw := (^Response_Writer)(stream_data)
+			b := &rw.r._buf
+
+			#partial switch mode {
+			case .Flush:
+				assert(!rw.ended)
+
+				write_chunk(b, rw.buf[:])
+				clear(&rw.buf)
+
+			case .Destroy:
+				assert(!rw.ended)
+
+				// Write what is left.
+				write_chunk(b, rw.buf[:])
+
+				// Signals the end of the body.
+				ws(b, "0\r\n\r\n")
+
+				rw.ended = true
+
+			case .Close:
+				// Write what is left.
+				write_chunk(b, rw.buf[:])
+
+				if !rw.ended {
+					// Signals the end of the body.
+					ws(b, "0\r\n\r\n")
+					rw.ended = true
+				}
+
+				// Send the response.
+				respond(rw.r)
+
+			case .Write:
+				assert(!rw.ended)
+
+				// No space, first write rw.buf, then check again for space, if still no space,
+				// fully write the given p.
+				if len(rw.buf) + len(p) > cap(rw.buf) {
+					write_chunk(b, rw.buf[:])
+					clear(&rw.buf)
+
+					if len(p) > cap(rw.buf) {
+						write_chunk(b, p)
+					} else {
+						append(&rw.buf, ..p)
+					}
+				} else {
+					// Space, append bytes to the buffer.
+					append(&rw.buf, ..p)
+				}
+
+				return i64(len(p)), .None
+
+			case .Query:
+				return io.query_utility({.Write, .Flush, .Destroy, .Close})
+			}
+			return 0, .Empty
+		},
+		data = rw,
+	}
+	return rw.w
+}
+
+/*
+Writes the response status and headers to the buffer.
+
+This is automatically called before writing anything to the Response.body or before calling a procedure
+that sends the response.
+
+You can pass `content_length < 0` to omit the content-length header, note that this header is
+required on most responses, but there are things like transfer-encodings that could leave it out.
+*/
+_response_write_heading :: proc(r: ^Response, content_length: int) {
+	if r._heading_written do return
+	r._heading_written = true
+
+	ws   :: bytes.buffer_write_string
+	conn := r._conn
+	b    := &r._buf
+
+	MIN             :: len("HTTP/1.1 200 \r\ndate: \r\ncontent-length: 1000\r\n") + DATE_LENGTH
+	AVG_HEADER_SIZE :: 20
+	reserve_size    := MIN + content_length + (AVG_HEADER_SIZE * len(r.headers))
+	bytes.buffer_grow(&r._buf, reserve_size)
+
+	// According to RFC 7230 3.1.2 the reason phrase is insignificant,
+	// because not doing so (and the fact that a status code is always length 3), we can change
+	// the status code when we are already writing a body by just addressing the 3 bytes directly.
+	status_int_str := status_string(r.status)
+	if len(status_int_str) < 4 {
+		status_int_str = "500 "
+	} else {
+		status_int_str = status_int_str[0:4]
+	}
+
+	ws(b, "HTTP/1.1 ")
+	ws(b, status_int_str)
+	ws(b, "\r\n")
+
+	// Per RFC 9910 6.6.1 a Date header must be added in 2xx, 3xx, 4xx responses.
+	if r.status >= .OK && r.status <= .Internal_Server_Error && "date" not_in r.headers {
+		ws(b, "date: ")
+		ws(b, server_date(conn.server))
+		ws(b, "\r\n")
+	}
+
+	if content_length > -1 && "content-length" not_in r.headers && response_needs_content_length(r, conn) {
+		if content_length == 0 {
+			ws(b, "content-length: 0\r\n")
+		} else {
+			ws(b, "content-length: ")
+
+			assert(content_length < 1000000000000000000 && content_length > -1000000000000000000)
+			buf: [20]byte
+			ws(b, strconv.itoa(buf[:], content_length))
+			ws(b, "\r\n")
+		}
+	}
+
+	for header, value in r.headers {
+		ws(b, header)
+		ws(b, ": ")
+
+		// Escape newlines in headers, if we don't, an attacker can find an endpoint
+		// that returns a header with user input, and inject headers into the response.
+		// PERF: probably slow.
+		esc_value, _ := strings.replace_all(value, "\n", "\\n", b.buf.allocator)
+
+		ws(b, esc_value)
+		ws(b, "\r\n")
+	}
+
+	for cookie in r.cookies {
+		cookie_write(bytes.buffer_to_stream(b), cookie)
+		ws(b, "\r\n")
+	}
+
+	// Empty line denotes end of headers and start of body.
+	ws(b, "\r\n")
 }
 
 // Sends the response over the connection.
@@ -38,7 +287,7 @@ response_send :: proc(r: ^Response, conn: ^Connection, loc := #caller_location) 
 
 		if err != nil {
 			// Any read error should close the connection.
-			res.status = body_error_status(err)
+			response_status(res, body_error_status(err))
 			res.headers["connection"] = "close"
 			will_close = true
 		}
@@ -68,73 +317,11 @@ response_send :: proc(r: ^Response, conn: ^Connection, loc := #caller_location) 
 response_send_got_body :: proc(r: ^Response, will_close: bool) {
 	conn := r._conn
 
-	res: bytes.Buffer
-	// Responses are on average at least 100 bytes, so lets start there, but add the body's length.
-	initial_buf_cap := response_needs_content_length(r, conn) ? 100 + bytes.buffer_length(&r.body) : 100
-	bytes.buffer_init_allocator(&res, 0, initial_buf_cap, r.body.buf.allocator)
-
-	bytes.buffer_write_string(&res, "HTTP/1.1 ")
-	bytes.buffer_write_string(&res, status_string(r.status))
-	bytes.buffer_write_string(&res, "\r\n")
-
-	// Per RFC 9910 6.6.1 a Date header must be added in 2xx, 3xx, 4xx responses.
-	if r.status >= .OK && r.status <= .Internal_Server_Error && "date" not_in r.headers {
-		bytes.buffer_write_string(&res, "date: ")
-		bytes.buffer_write_string(&res, server_date(conn.server))
-		bytes.buffer_write_string(&res, "\r\n")
+	if bytes.buffer_length(&r._buf) == 0 {
+		_response_write_heading(r, 0)
 	}
 
-	if "content-length" not_in r.headers && response_needs_content_length(r, conn) {
-		buf_len := bytes.buffer_length(&res)
-		if buf_len == 0 {
-			bytes.buffer_write_string(&res, "content-length: 0\r\n")
-		} else {
-			bytes.buffer_write_string(&res, "content-length: ")
-
-			// Grow to have at least 20 bytes of space, should be enough for the content length. bytes.buffer_grow(&res, bytes.buffer_length(&res) + 20)
-			bytes.buffer_grow(&res, buf_len + 20)
-
-			// Write the length into unwritten portion.
-			unwritten := _dynamic_unwritten(res.buf)
-			l := len(strconv.itoa(unwritten, bytes.buffer_length(&r.body)))
-			assert(l <= 20)
-			_dynamic_add_len(&res.buf, l)
-
-			bytes.buffer_write_string(&res, "\r\n")
-		}
-	}
-
-	// Per RFC 9910 6.6.1 a Date header must be added in 2xx, 3xx, 4xx responses.
-	if r.status >= .OK && r.status <= .Internal_Server_Error && "date" not_in r.headers {
-		bytes.buffer_write_string(&res, "date: ")
-		bytes.buffer_write_string(&res, server_date(conn.server))
-		bytes.buffer_write_string(&res, "\r\n")
-	}
-
-	for header, value in r.headers {
-		bytes.buffer_write_string(&res, header)
-		bytes.buffer_write_string(&res, ": ")
-
-		// Escape newlines in headers, if we don't, an attacker can find an endpoint
-		// that returns a header with user input, and inject headers into the response.
-		// PERF: probably slow.
-		esc_value, _ := strings.replace_all(value, "\n", "\\n", r.body.buf.allocator)
-		bytes.buffer_write_string(&res, esc_value)
-
-		bytes.buffer_write_string(&res, "\r\n")
-	}
-
-	for cookie in r.cookies {
-		cookie_write(bytes.buffer_to_stream(&res), cookie)
-		bytes.buffer_write_string(&res, "\r\n")
-	}
-
-	// Empty line denotes end of headers and start of body.
-	bytes.buffer_write_string(&res, "\r\n")
-
-	if response_can_have_body(r, conn) do bytes.buffer_write(&res, bytes.buffer_to_bytes(&r.body))
-
-	buf := bytes.buffer_to_bytes(&res)
+	buf := bytes.buffer_to_bytes(&r._buf)
 	conn.loop.inflight = Response_Inflight {
 		buf        = buf,
 		will_close = will_close,
