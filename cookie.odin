@@ -112,7 +112,7 @@ cookie_parse :: proc(value: string, allocator := context.allocator) -> (cookie: 
 		value = value[semi + 1:]
 	}
 
-	parse_part :: proc(cookie: ^Cookie, part: string, allocator := context.allocator) -> (ok: bool) {
+	parse_part :: proc(cookie: ^Cookie, part: string, allocator := context.temp_allocator) -> (ok: bool) {
 		eq := strings.index_byte(part, '=')
 		switch eq {
 		case -1:

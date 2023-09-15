@@ -150,7 +150,7 @@ method_parse :: proc(m: string) -> (method: Method, ok: bool) #no_bounds_check {
 // casing they want, it will cost some performance but forcing lowercase is not expected.
 Headers :: map[string]string
 
-header_parse :: proc(headers: ^Headers, line: string, allocator := context.allocator) -> (key: string, ok: bool) {
+header_parse :: proc(headers: ^Headers, line: string, allocator := context.temp_allocator) -> (key: string, ok: bool) {
 	// Preceding spaces should not be allowed.
 	(len(line) > 0 && line[0] != ' ') or_return
 
