@@ -49,7 +49,7 @@ response_send :: proc(r: ^Response, conn: ^Connection) {
 	if !response_must_close(&conn.loop.req, r) {
 
 		// Body has been drained during handling.
-		if conn.loop.req._body_ok.? == true {
+		if _, got_body := conn.loop.req._body_ok.?; got_body {
 			response_send_got_body(r, false)
 		} else {
 			body(&conn.loop.req, Max_Post_Handler_Discard_Bytes, r, check_body)
