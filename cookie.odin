@@ -5,7 +5,7 @@ import "core:strconv"
 import "core:strings"
 import "core:time"
 
-Same_Site :: enum {
+Cookie_Same_Site :: enum {
 	Unspecified,
 	None,
 	Strict,
@@ -21,7 +21,7 @@ Cookie :: struct {
 	max_age_secs: Maybe(int),
 	partitioned:  bool,
 	path:         Maybe(string),
-	same_site:    Same_Site,
+	same_site:    Cookie_Same_Site,
 	secure:       bool,
 }
 
@@ -40,7 +40,7 @@ cookie_write :: proc(w: io.Writer, c: Cookie) -> io.Error {
 
 	if e, ok := c.expires_gmt.(time.Time); ok {
 		io.write_string(w, "; Expires=") or_return
-		write_date_header(w, e)          or_return
+		date_write(w, e)                 or_return
 	}
 
 	if a, ok := c.max_age_secs.(int); ok {
@@ -141,7 +141,7 @@ cookie_parse :: proc(value: string, allocator := context.allocator) -> (cookie: 
 			case "domain":
 				cookie.domain = value
 			case "expires":
-				cookie.expires_gmt = parse_date_header(value) or_return
+				cookie.expires_gmt = date_parse(value) or_return
 			case "max-age":
 				cookie.max_age_secs = strconv.parse_int(value, 10) or_return
 			case "path":

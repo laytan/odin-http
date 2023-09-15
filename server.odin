@@ -146,14 +146,14 @@ listen_and_serve :: proc(
 	sync.wait_group_add(&s.threads_closed, thread_count)
 	s.threads = make([]^thread.Thread, thread_count, s.conn_allocator)
 	for i in 0 ..< thread_count {
-		s.threads[i] = thread.create_and_start_with_poly_data(s, server_thread_init, context)
+		s.threads[i] = thread.create_and_start_with_poly_data(s, _server_thread_init, context)
 	}
 
 	// Start keeping track of and caching the date for the required date header.
 	server_date_start(s)
 
 	sync.wait_group_add(&s.threads_closed, 1)
-	server_thread_init(s)
+	_server_thread_init(s)
 
 	sync.wait(&s.threads_closed)
 
@@ -166,7 +166,7 @@ listen_and_serve :: proc(
 	return nil
 }
 
-server_thread_init :: proc(s: ^Server) {
+_server_thread_init :: proc(s: ^Server) {
 	td.conns = make(map[net.TCP_Socket]^Connection)
 
 	if sync.current_thread_id() != s.main_thread {
@@ -182,7 +182,7 @@ server_thread_init :: proc(s: ^Server) {
 	log.debug("starting event loop")
 	td.state = .Serving
 	for {
-		if s.closing do server_thread_shutdown(s)
+		if s.closing do _server_thread_shutdown(s)
 		if td.state == .Closed do break
 		if td.state == .Cleaning do continue
 
@@ -217,7 +217,7 @@ server_shutdown :: proc(s: ^Server) {
 	s.closing = true
 }
 
-server_thread_shutdown :: proc(s: ^Server, loc := #caller_location) {
+_server_thread_shutdown :: proc(s: ^Server, loc := #caller_location) {
 	assert_has_td(loc)
 
 	td.state = .Closing
@@ -344,7 +344,7 @@ Response_Inflight :: struct {
 	will_close: bool,
 }
 
-// RFC 7230 6.6.
+@(private)
 connection_close :: proc(c: ^Connection, loc := #caller_location) {
 	assert_has_td(loc)
 
@@ -356,6 +356,8 @@ connection_close :: proc(c: ^Connection, loc := #caller_location) {
 	log.debugf("closing connection: %i", c.socket)
 
 	c.state = .Closing
+
+	// RFC 7230 6.6.
 
 	// Close read side of the connection, then wait a little bit, allowing the client
 	// to process the closing and receive any remaining data.
@@ -532,7 +534,7 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.temp_allocator) {
 	}
 
 	on_headers_end :: proc(l: ^Loop) {
-		if !server_headers_validate(&l.req.headers) {
+		if !headers_validate_for_server(&l.req.headers) {
 			log.warn("request headers are invalid")
 			l.res.headers["connection"] = "close"
 			l.res.status = .Bad_Request
@@ -603,7 +605,7 @@ server_date_update :: proc(s: rawptr, now: Maybe(time.Time)) {
 	nbio.timeout(&td.io, time.Second, s, server_date_update)
 
 	bytes.buffer_reset(&s.date.buf)
-	write_date_header(bytes.buffer_to_stream(&s.date.buf), now.? or_else time.now())
+	date_write(bytes.buffer_to_stream(&s.date.buf), now.? or_else time.now())
 }
 
 @(private)

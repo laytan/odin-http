@@ -36,15 +36,21 @@ response_init :: proc(r: ^Response, allocator := context.allocator) {
 	r._buf.buf.allocator = allocator
 }
 
-_body_set_bytes :: proc(r: ^Response, byts: []byte, loc := #caller_location) {
+/*
+Prefer the procedure group `body_set`.
+*/
+body_set_bytes :: proc(r: ^Response, byts: []byte, loc := #caller_location) {
 	assert(bytes.buffer_length(&r._buf) == 0, "the response body has already been written", loc)
 	_response_write_heading(r, len(byts))
 	bytes.buffer_write(&r._buf, byts)
 }
 
-_body_set_str :: proc(r: ^Response, str: string, loc := #caller_location) {
+/*
+Prefer the procedure group `body_set`.
+*/
+body_set_str :: proc(r: ^Response, str: string, loc := #caller_location) {
 	// This is safe because we don't write to the bytes.
-	_body_set_bytes(r, transmute([]byte)str, loc)
+	body_set_bytes(r, transmute([]byte)str, loc)
 }
 
 /*
@@ -55,8 +61,8 @@ For bodies where you do not know the size or want an `io.Writer`, use the `respo
 procedure to create a writer.
 */
 body_set :: proc{
-	_body_set_str,
-	_body_set_bytes,
+	body_set_str,
+	body_set_bytes,
 }
 
 /*
@@ -378,12 +384,12 @@ clean_request_loop :: proc(conn: ^Connection, close: bool = false) {
 // (Successful) response to a CONNECT request.
 @(private)
 response_needs_content_length :: proc(r: ^Response, conn: ^Connection) -> bool {
-	if status_informational(r.status) || r.status == .No_Content {
+	if status_is_informational(r.status) || r.status == .No_Content {
 		return false
 	}
 
 	if rline, ok := conn.loop.req.line.(Requestline); ok {
-		if status_success(r.status) && rline.method == .Connect {
+		if status_is_success(r.status) && rline.method == .Connect {
 			return false
 		}
 

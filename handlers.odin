@@ -42,12 +42,12 @@ Rate_Limit_On_Limit :: struct {
 }
 
 // Convenience method to create a Rate_Limit_On_Limit that writes the given message.
-on_limit_message :: proc(message: ^string) -> Rate_Limit_On_Limit {
+rate_limit_message :: proc(message: ^string) -> Rate_Limit_On_Limit {
 	return Rate_Limit_On_Limit{user_data = message, on_limit = proc(_: ^Request, res: ^Response, user_data: rawptr) {
-				message := (^string)(user_data)
-				body_set(res, message^)
-				respond(res)
-			}}
+		message := (^string)(user_data)
+		body_set(res, message^)
+		respond(res)
+	}}
 }
 
 Rate_Limit_Opts :: struct {
@@ -65,13 +65,13 @@ Rate_Limit_Data :: struct {
 	mu:         sync.Mutex,
 }
 
-middleware_rate_limit_destroy :: proc(data: ^Rate_Limit_Data) {
+rate_limit_destroy :: proc(data: ^Rate_Limit_Data) {
 	sync.guard(&data.mu)
 	delete(data.hits)
 }
 
 // Basic rate limit based on IP address.
-middleware_rate_limit :: proc(data: ^Rate_Limit_Data, next: ^Handler, opts: ^Rate_Limit_Opts, allocator := context.allocator) -> Handler {
+rate_limit :: proc(data: ^Rate_Limit_Data, next: ^Handler, opts: ^Rate_Limit_Opts, allocator := context.allocator) -> Handler {
 	assert(next != nil)
 
 	h: Handler

@@ -38,10 +38,10 @@ The content type is taken from the path, optionally overwritten using the parame
 
 If the file doesn't exist, a 404 response is sent.
 If any other error occurs, a 500 is sent and the error is logged.
-
-// PERF: we are still putting the content into the body buffer, we could stream it.
 */
 respond_file :: proc(r: ^Response, path: string, content_type: Maybe(Mime_Type) = nil, loc := #caller_location) {
+	// PERF: we are still putting the content into the body buffer, we could stream it.
+
 	assert_has_td(loc)
 	assert(!r.sent, "response has already been sent", loc)
 
@@ -133,13 +133,15 @@ respond_file_content :: proc(r: ^Response, path: string, content: []byte, status
 	respond(r, loc)
 }
 
-// Sets the response to one that, based on the request path, returns a file.
-// base:    The base of the request path that should be removed when retrieving the file.
-// target:  The path to the directory to serve.
-// request: The request path.
-//
-// Path traversal is detected and cleaned up.
-// The Content-Type is set based on the file extension, see the MimeType enum for known file extensions.
+/*
+Sets the response to one that, based on the request path, returns a file.
+base:    The base of the request path that should be removed when retrieving the file.
+target:  The path to the directory to serve.
+request: The request path.
+
+Path traversal is detected and cleaned up.
+The Content-Type is set based on the file extension, see the MimeType enum for known file extensions.
+*/
 respond_dir :: proc(r: ^Response, base, target, request: string, loc := #caller_location) {
 	if !strings.has_prefix(request, base) {
 		respond(r, Status.Not_Found)
@@ -181,7 +183,10 @@ respond_json :: proc(r: ^Response, v: any, status: Status = .OK, opt: json.Marsh
 	return
 }
 
-_respond_with_none :: proc(r: ^Response, loc := #caller_location) {
+/*
+Prefer the procedure group `respond`.
+*/
+respond_with_none :: proc(r: ^Response, loc := #caller_location) {
 	assert_has_td(loc)
 
 	conn := r._conn
@@ -195,13 +200,16 @@ _respond_with_none :: proc(r: ^Response, loc := #caller_location) {
 	response_send(r, conn, loc)
 }
 
-_respond_with_status :: proc(r: ^Response, status: Status, loc := #caller_location) {
+/*
+Prefer the procedure group `respond`.
+*/
+respond_with_status :: proc(r: ^Response, status: Status, loc := #caller_location) {
 	response_status(r, status)
 	respond(r, loc)
 }
 
 // Sends the response back to the client, handlers should call this.
 respond :: proc {
-	_respond_with_none,
-	_respond_with_status,
+	respond_with_none,
+	respond_with_status,
 }

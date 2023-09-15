@@ -122,16 +122,18 @@ Method :: enum {
 	Trace,
 }
 
-method_strings := [?]string{"GET", "POST", "DELETE", "PATCH", "PUT", "HEAD", "CONNECT", "OPTIONS", "TRACE"}
+_method_strings := [?]string{"GET", "POST", "DELETE", "PATCH", "PUT", "HEAD", "CONNECT", "OPTIONS", "TRACE"}
 
 method_string :: proc(m: Method) -> string #no_bounds_check {
 	if m < .Get || m > .Trace do return ""
-	return method_strings[m]
+	return _method_strings[m]
 }
 
 method_parse :: proc(m: string) -> (method: Method, ok: bool) #no_bounds_check {
+	// PERF: I assume this is faster than a map with this amount of items.
+
 	for r in Method {
-		if method_strings[r] == m {
+		if _method_strings[r] == m {
 			return r, true
 		}
 	}
@@ -241,8 +243,8 @@ header_allowed_trailer :: proc(key: string) -> bool {
 DATE_LENGTH :: len("Fri, 05 Feb 2023 09:01:10 GMT")
 
 // Formats a time in the HTTP header format (no timezone conversion is done, GMT expected):
-// <day-name>, <day> <month> <year> <hour>:<minute>:<second> GMT
-write_date_header :: proc(w: io.Writer, t: time.Time) -> io.Error {
+// `<day-name>, <day> <month> <year> <hour>:<minute>:<second> GMT`
+date_write :: proc(w: io.Writer, t: time.Time) -> io.Error {
 	year, month, day := time.date(t)
 	hour, minute, second := time.clock_from_time(t)
 	wday := time.weekday(t)
@@ -265,19 +267,19 @@ write_date_header :: proc(w: io.Writer, t: time.Time) -> io.Error {
 }
 
 // Formats a time in the HTTP header format (no timezone conversion is done, GMT expected):
-// <day-name>, <day> <month> <year> <hour>:<minute>:<second> GMT
-format_date_header :: proc(t: time.Time, allocator := context.allocator) -> string {
+// `<day-name>, <day> <month> <year> <hour>:<minute>:<second> GMT`
+date_string :: proc(t: time.Time, allocator := context.allocator) -> string {
 	b: strings.Builder
 
 	buf := make([]byte, DATE_LENGTH, allocator)
 	b.buf = slice.into_dynamic(buf)
 
-	write_date_header(strings.to_writer(&b), t)
+	date_write(strings.to_writer(&b), t)
 
 	return strings.to_string(b)
 }
 
-parse_date_header :: proc(value: string) -> (t: time.Time, ok: bool) #no_bounds_check {
+date_parse :: proc(value: string) -> (t: time.Time, ok: bool) #no_bounds_check {
 	if len(value) != DATE_LENGTH do return
 
 	// Remove 'Fri, '
@@ -321,8 +323,9 @@ parse_date_header :: proc(value: string) -> (t: time.Time, ok: bool) #no_bounds_
 	return
 }
 
-// TODO: maybe net.percent_encode.
 request_path_write :: proc(w: io.Writer, target: URL) -> io.Error {
+	// TODO: maybe net.percent_encode.
+
 	if target.path == "" {
 		io.write_byte(w, '/') or_return
 	} else {

@@ -1,6 +1,6 @@
 # Odin HTTP
 
-A HTTP/1.1 implementation for Odin.
+A HTTP/1.1 implementation for Odin purely written in Odin (besides SSL).
 
 See below examples or the examples directory.
 
@@ -8,6 +8,8 @@ See below examples or the examples directory.
 
 This is beta software, confirmed to work in my own use cases but can certainly contain edge cases and bugs that I did not catch.
 Please file issues for any bug or suggestion you encounter/have.
+
+Because this is still heavily in development, I do not hesitate to push API changes at the moment, so beware.
 
 The has been tested to work with Ubuntu Linux (other "normal" distros should work), MacOS (m1 and intel), and Windows 64 bit.
 Any other distributions or versions have not been tested and might not work.
@@ -96,12 +98,12 @@ cookies :: proc(req: ^http.Request, res: ^http.Response) {
 	append(
 		&res.cookies,
 		http.Cookie{
-			name = "Session",
-			value = "123",
-			expires_gmt = time.now(),
+			name         = "Session",
+			value        = "123",
+			expires_gmt  = time.now(),
 			max_age_secs = 10,
-			http_only = true,
-			same_site = http.Same_Site.Lax,
+			http_only    = true,
+			same_site    = .Lax,
 		},
 	)
 	http.respond_plain(res, "Yo!")
@@ -218,9 +220,3 @@ post :: proc() {
 	fmt.println(body)
 }
 ```
-
-## TODO
- - SSL/TLS for the server
- - decompress "Content-Encoding" middleware
- - Form Data
- - Nice abstractions in both server and client API

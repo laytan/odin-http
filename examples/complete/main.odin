@@ -60,10 +60,10 @@ serve :: proc() {
 	// this one only applies to the /cookies route, but moving it higher up would match others too:
 	rate_limit_data: http.Rate_Limit_Data
 	limit_msg := "Only one cookie is allowed per second, slow down!"
-	limited_cookies := http.middleware_rate_limit(
+	limited_cookies := http.rate_limit(
 		&rate_limit_data,
 		&cookies,
-		&http.Rate_Limit_Opts{window = time.Second, max = 1, on_limit = http.on_limit_message(&limit_msg)},
+		&http.Rate_Limit_Opts{window = time.Second, max = 1, on_limit = http.rate_limit_message(&limit_msg)},
 	)
 
 	http.route_get(&router, "/cookies", limited_cookies)
@@ -107,12 +107,12 @@ cookies :: proc(req: ^http.Request, res: ^http.Response) {
 	append(
 		&res.cookies,
 		http.Cookie{
-			name = "Session",
-			value = "123",
-			expires_gmt = time.now(),
+			name         = "Session",
+			value        = "123",
+			expires_gmt  = time.now(),
 			max_age_secs = 10,
-			http_only = true,
-			same_site = http.Same_Site.Lax,
+			http_only    = true,
+			same_site    = .Lax,
 		},
 	)
 	http.respond_plain(res, "Yo!")

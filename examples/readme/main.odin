@@ -51,12 +51,12 @@ cookies :: proc(req: ^http.Request, res: ^http.Response) {
 	append(
 		&res.cookies,
 		http.Cookie{
-			name = "Session",
-			value = "123",
-			expires_gmt = time.now(),
+			name         = "Session",
+			value        = "123",
+			expires_gmt  = time.now(),
 			max_age_secs = 10,
-			http_only = true,
-			same_site = http.Same_Site.Lax,
+			http_only    = true,
+			same_site    = .Lax,
 		},
 	)
 	http.respond_plain(res, "Yo!")

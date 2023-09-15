@@ -7,9 +7,11 @@ Request :: struct {
 	// If in a handler, this is always there and never None.
 	// TODO: we should not expose this as a maybe to package users.
 	line:       Maybe(Requestline),
+
 	// Is true if the request is actually a HEAD request,
 	// line.method will be .Get if Server_Opts.redirect_head_to_get is set.
 	is_head:    bool,
+
 	headers:    Headers,
 	url:        URL,
 	client:     net.Endpoint,
@@ -17,6 +19,7 @@ Request :: struct {
 	// Route params/captures.
 	url_params: []string,
 
+	// Internal usage only.
 	_scanner:   ^Scanner,
 	_body_ok:   Maybe(bool),
 }
@@ -26,7 +29,7 @@ request_init :: proc(r: ^Request, allocator := context.allocator) {
 }
 
 // Validates the headers of a request, from the pov of the server.
-server_headers_validate :: proc(headers: ^Headers) -> bool {
+headers_validate_for_server :: proc(headers: ^Headers) -> bool {
 	// RFC 7230 5.4: A server MUST respond with a 400 (Bad Request) status code to any
 	// HTTP/1.1 request message that lacks a Host header field.
 	("host" in headers) or_return
@@ -34,8 +37,8 @@ server_headers_validate :: proc(headers: ^Headers) -> bool {
 	return headers_validate(headers)
 }
 
-// Validates the headers, use server_headers_validate if these are request headers,
-// validated from the server side.
+// Validates the headers, use `headers_validate_for_server` if these are request headers
+// that should be validated from the server side.
 headers_validate :: proc(headers: ^Headers) -> bool {
 	// RFC 7230 3.3.3: If a Transfer-Encoding header field
 	// is present in a request and the chunked transfer coding is not

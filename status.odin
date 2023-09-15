@@ -68,11 +68,12 @@ Status :: enum {
 	Network_Authentication_Required = 511,
 }
 
-status_strings: [max(Status) + Status(1)]string
+_status_strings: [max(Status) + Status(1)]string
 
 // Populates the status_strings like a map from status to their string representation.
 // Where an empty string means an invalid code.
 @(init)
+@(private)
 status_strings_init :: proc() {
 	// Some edge cases aside, replaces underscores in the enum name with spaces.
 	status_name_fmt :: proc(val: Status, orig: string) -> (new: string, allocated: bool) {
@@ -93,16 +94,16 @@ status_strings_init :: proc() {
 		fmted, allocated := status_name_fmt(Status(field.value), field.name)
 		defer if allocated do delete(fmted)
 
-		status_strings[field.value] = fmt.aprintf("%i %s", field.value, fmted)
+		_status_strings[field.value] = fmt.aprintf("%i %s", field.value, fmted)
 	}
 }
 
 status_string :: #force_inline proc(s: Status) -> string {
-	return status_strings[s] if s <= .Network_Authentication_Required else ""
+	return _status_strings[s] if s <= .Network_Authentication_Required else ""
 }
 
 status_valid :: #force_inline proc(s: Status) -> bool {
-	return s >= Status(0) && s <= .Network_Authentication_Required && status_strings[s] != ""
+	return s >= Status(0) && s <= .Network_Authentication_Required && _status_strings[s] != ""
 }
 
 status_from_string :: proc(s: string) -> (Status, bool) {
@@ -131,22 +132,22 @@ status_from_string :: proc(s: string) -> (Status, bool) {
 	return Status(code_int), true
 }
 
-status_informational :: proc(s: Status) -> bool {
+status_is_informational :: proc(s: Status) -> bool {
 	return s < .OK
 }
 
-status_success :: proc(s: Status) -> bool {
+status_is_success :: proc(s: Status) -> bool {
 	return s >= .OK && s < .Multiple_Choices
 }
 
-status_redirect :: proc(s: Status) -> bool {
+status_is_redirect :: proc(s: Status) -> bool {
 	return s >= .Multiple_Choices && s < .Bad_Request
 }
 
-status_client_error :: proc(s: Status) -> bool {
+status_is_client_error :: proc(s: Status) -> bool {
 	return s >= .Bad_Request && s < .Internal_Server_Error
 }
 
-status_server_error :: proc(s: Status) -> bool {
+status_is_server_error :: proc(s: Status) -> bool {
 	return s >= .Internal_Server_Error
 }
