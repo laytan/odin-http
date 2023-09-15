@@ -119,7 +119,7 @@ _body_length :: proc(req: ^Request, max_length: int = -1, user_data: rawptr, cb:
 
 	len, ok := req.headers["content-length"]
 	if !ok {
-		cb(user_data, "", .Bad_Read_Count)
+		cb(user_data, "", nil)
 		return
 	}
 
