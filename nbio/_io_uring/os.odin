@@ -355,7 +355,7 @@ read :: proc(
 	sqe = get_sqe(ring) or_return
 	sqe.opcode = .READ
 	sqe.fd = i32(fd)
-	sqe.addr = cast(u64)uintptr(&buf[0])
+	sqe.addr = cast(u64)uintptr(raw_data(buf))
 	sqe.len = u32(len(buf))
 	sqe.off = offset
 	sqe.user_data = user_data
@@ -376,7 +376,7 @@ write :: proc(
 	sqe = get_sqe(ring) or_return
 	sqe.opcode = .WRITE
 	sqe.fd = i32(fd)
-	sqe.addr = cast(u64)uintptr(&buf[0])
+	sqe.addr = cast(u64)uintptr(raw_data(buf))
 	sqe.len = u32(len(buf))
 	sqe.off = offset
 	sqe.user_data = user_data
@@ -440,7 +440,7 @@ recv :: proc(
 	sqe = get_sqe(ring) or_return
 	sqe.opcode = IORING_OP.RECV
 	sqe.fd = i32(sockfd)
-	sqe.addr = cast(u64)uintptr(&buf[0])
+	sqe.addr = cast(u64)uintptr(raw_data(buf))
 	sqe.len = cast(u32)uintptr(len(buf))
 	sqe.rw_flags = i32(flags)
 	sqe.user_data = user_data
@@ -461,7 +461,7 @@ send :: proc(
 	sqe = get_sqe(ring) or_return
 	sqe.opcode = IORING_OP.SEND
 	sqe.fd = i32(sockfd)
-	sqe.addr = cast(u64)uintptr(&buf[0])
+	sqe.addr = cast(u64)uintptr(raw_data(buf))
 	sqe.len = u32(len(buf))
 	sqe.rw_flags = i32(flags)
 	sqe.user_data = user_data

@@ -29,7 +29,7 @@ Requestline :: struct {
 //
 // This allocates a clone of the target, because this is intended to be used with a scanner,
 // which has a buffer that changes every read.
-requestline_parse :: proc(s: string, allocator := context.allocator) -> (line: Requestline, err: Requestline_Error) {
+requestline_parse :: proc(s: string) -> (line: Requestline, err: Requestline_Error) {
 	s := s
 
 	next_space := strings.index_byte(s, ' ')
@@ -43,8 +43,7 @@ requestline_parse :: proc(s: string, allocator := context.allocator) -> (line: R
 	next_space = strings.index_byte(s, ' ')
 	if next_space == -1 do return line, .Not_Enough_Fields
 
-	// Clone because s (from the scanner) could point to something else later.
-	line.target = strings.clone(s[:next_space], allocator)
+	line.target = s[:next_space]
 	s = s[len(line.target.(string)) + 1:]
 
 	line.version, ok = version_parse(s)
@@ -78,6 +77,7 @@ Version :: struct {
 
 // Parses an HTTP version string according to RFC 7230, section 2.6.
 version_parse :: proc(s: string) -> (version: Version, ok: bool) {
+	(len(s) > 5) or_return
 	(s[:5] == "HTTP/") or_return
 	version.major = u8(int(rune(s[5])) - '0')
 	if len(s) > 6 {
@@ -161,6 +161,7 @@ header_parse :: proc(headers: ^Headers, line: string, allocator := context.alloc
 	(line[colon - 1] != ' ') or_return
 
 	// Header field names are case-insensitive, so lets represent them all in lowercase.
+	// TODO: do a to_lower based on the bytes and mutate the original string to safe an allocation.
 	key = strings.to_lower(line[:colon], allocator)
 	defer if !ok do delete(key)
 

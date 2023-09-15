@@ -86,9 +86,10 @@ main :: proc() {
 
 	routed := http.router_handler(&router)
 
-	// Start the server on 127.0.0.1:6969.
+	log.info("Listening on http://localhost:6969")
+
 	err := http.listen_and_serve(&s, routed, net.Endpoint{address = net.IP4_Loopback, port = 6969})
-	log.warnf("server stopped: %s", err)
+	fmt.assertf(err == nil, "server stopped with error: %v", err)
 }
 
 cookies :: proc(req: ^http.Request, res: ^http.Response) {
@@ -124,25 +125,22 @@ static :: proc(req: ^http.Request, res: ^http.Response) {
 	http.respond_dir(res, "/", "examples/complete/static", req.url_params[0])
 }
 
-// TODO: this needs abstractions.
 post_ping :: proc(req: ^http.Request, res: ^http.Response) {
-	http.request_body(req, proc(body: http.Body_Type, was_alloc: bool, res: rawptr) {
+	http.body(req, len("ping"), res, proc(res: rawptr, body: http.Body, err: http.Body_Error) {
 		res := cast(^http.Response)res
 
-		if err, is_err := body.(http.Body_Error); is_err {
-			res.status = http.body_error_status(err)
-			http.respond(res)
+		if err != nil {
+			http.respond(res, http.body_error_status(err))
 			return
 		}
 
-		if (body.(http.Body_Plain) or_else "") != "ping" {
-			res.status = .Unprocessable_Content
-			http.respond(res)
+		if body != "ping" {
+			http.respond(res, http.Status.Unprocessable_Content)
 			return
 		}
 
 		http.respond_plain(res, "pong")
-	}, len("ping"), res)
+	})
 }
 ```
 

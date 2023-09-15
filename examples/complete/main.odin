@@ -1,5 +1,6 @@
 package complete_example
 
+import "core:bytes"
 import "core:fmt"
 import "core:log"
 import "core:mem"
@@ -59,8 +60,6 @@ serve :: proc() {
 	// You can apply a rate limit just like any other middleware,
 	// this one only applies to the /cookies route, but moving it higher up would match others too:
 	rate_limit_data: http.Rate_Limit_Data
-	defer http.middleware_rate_limit_destroy(&rate_limit_data)
-
 	limit_msg := "Only one cookie is allowed per second, slow down!"
 	limited_cookies := http.middleware_rate_limit(
 		&rate_limit_data,
@@ -73,24 +72,27 @@ serve :: proc() {
 	http.route_get(&router, "/api", http.handler(api))
 	http.route_get(&router, "/ping", http.handler(ping))
 
+	http.route_post(&router, "/echo", http.handler(echo))
+
 	// Can also have specific middleware for each route:
 	index_handler := http.handler(index)
 	index_with_middleware := http.middleware_proc(
-	&index_handler,
-	proc(handler: ^http.Handler, req: ^http.Request, res: ^http.Response) {
-		// Before calling the actual handler, can check the request and decide to pass to handler or not, or set a header for example.
-		log.info("about to call the index handler")
+		&index_handler,
+		proc(handler: ^http.Handler, req: ^http.Request, res: ^http.Response) {
+			// Before calling the actual handler, can check the request and decide to pass to handler or not, or set a header for example.
+			log.info("about to call the index handler")
 
-		// Pass the request to the next handler.
-		next := handler.next.(^http.Handler)
-		next.handle(next, req, res)
-	})
+			// Pass the request to the next handler.
+			next := handler.next.(^http.Handler)
+			next.handle(next, req, res)
+
+			// NOTE: You can't assume that the handler is done/the response is sent here.
+		},
+	)
 	http.route_get(&router, "/", index_with_middleware)
 
 	// Matches every get request that did not match another route.
 	http.route_get(&router, "(.*)", http.handler(static))
-
-	http.route_post(&router, "/ping", http.handler(post_ping))
 
 	route_handler := http.router_handler(&router)
 
@@ -99,6 +101,9 @@ serve :: proc() {
 	fmt.assertf(err == nil, "server stopped with error: %v", err)
 }
 
+/*
+Adds a cookie to the response.
+*/
 cookies :: proc(req: ^http.Request, res: ^http.Response) {
 	append(
 		&res.cookies,
@@ -114,6 +119,9 @@ cookies :: proc(req: ^http.Request, res: ^http.Response) {
 	http.respond_plain(res, "Yo!")
 }
 
+/*
+Responds with the request's first line encoded into JSON.
+*/
 api :: proc(req: ^http.Request, res: ^http.Response) {
 	if err := http.respond_json(res, req.line); err != nil {
 		log.errorf("could not respond with JSON: %s", err)
@@ -124,31 +132,41 @@ ping :: proc(req: ^http.Request, res: ^http.Response) {
 	http.respond_plain(res, "pong")
 }
 
+/*
+Responds with the contents of the index.html, baked into the compiled binary.
+*/
 index :: proc(req: ^http.Request, res: ^http.Response) {
-	http.respond_file(res, "examples/complete/static/index.html")
+	http.respond_file_content(res, "index.html", #load("static/index.html"))
 }
 
+/*
+Based on the request path, serves the static folder.
+This prevents path traversal attacks and detects the file type based on its extension.
+*/
 static :: proc(req: ^http.Request, res: ^http.Response) {
 	http.respond_dir(res, "/", "examples/complete/static", req.url_params[0])
 }
 
-// TODO: this needs abstractions.
-post_ping :: proc(req: ^http.Request, res: ^http.Response) {
-	http.request_body(req, proc(body: http.Body_Type, was_alloc: bool, res: rawptr) {
+/*
+Parses the request's URL encoded body, then prints it back as the response.
+*/
+echo :: proc(req: ^http.Request, res: ^http.Response) {
+	http.body(req, -1, res, proc(res: rawptr, body: http.Body, err: http.Body_Error) {
 		res := cast(^http.Response)res
 
-		if err, is_err := body.(http.Body_Error); is_err {
-			res.status = http.body_error_status(err)
-			http.respond(res)
+		if err != nil {
+			http.respond(res, http.body_error_status(err))
+			log.error(err)
 			return
 		}
 
-		if (body.(http.Body_Plain) or_else "") != "ping" {
-			res.status = .Unprocessable_Content
-			http.respond(res)
+		ma, ok := http.body_url_encoded(body)
+		if !ok {
+			http.respond(res, http.Status.Bad_Request)
 			return
 		}
 
-		http.respond_plain(res, "pong")
-	}, len("ping"), res)
+		fmt.wprint(bytes.buffer_to_stream(&res.body), ma)
+		http.respond(res, http.Status.OK)
+	})
 }

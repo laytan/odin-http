@@ -28,20 +28,15 @@ response_init :: proc(r: ^Response, allocator := context.allocator) {
 // Closes the connection or starts the handling of the next request.
 @(private)
 response_send :: proc(r: ^Response, conn: ^Connection) {
-	check_body := proc(body: Body_Type, was_alloc: bool, res: rawptr) {
+	check_body := proc(res: rawptr, body: Body, err: Body_Error) {
 		res := cast(^Response)res
 		will_close: bool
-		if err, is_err := body.(Body_Error); is_err {
-			switch err {
-			case .Scan_Failed, .Invalid_Length, .Invalid_Trailer_Header, .Too_Long, .Invalid_Chunk_Size:
-				// Any read error should close the connection.
-				res.status = body_error_status(err)
-				res.headers["connection"] = "close"
-				will_close = true
-			case .No_Length, .None: // no-op, request had no body or read succeeded.
-			case:
-				assert(err != nil, "always expect error from request_body")
-			}
+
+		if err != nil {
+			// Any read error should close the connection.
+			res.status = body_error_status(err)
+			res.headers["connection"] = "close"
+			will_close = true
 		}
 
 		response_send_got_body(res, will_close)
@@ -52,7 +47,14 @@ response_send :: proc(r: ^Response, conn: ^Connection) {
 	// its response, since otherwise the remaining data on a persistent
 	// connection would be misinterpreted as the next request.
 	if !response_must_close(&conn.loop.req, r) {
-		request_body(&conn.loop.req, check_body, Max_Post_Handler_Discard_Bytes, r)
+
+		// Body has been drained during handling.
+		if conn.loop.req._body_ok.? == true {
+			response_send_got_body(r, false)
+		} else {
+			body(&conn.loop.req, Max_Post_Handler_Discard_Bytes, r, check_body)
+		}
+
 	} else {
 		response_send_got_body(r, true)
 	}
@@ -164,6 +166,8 @@ clean_request_loop :: proc(conn: ^Connection, close: bool = false) {
 		free_all(context.temp_allocator)
 	}
 
+	scanner_reset(&conn.scanner)
+
 	conn.loop.inflight = nil
 	conn.loop.req = {}
 	conn.loop.res = {}
@@ -218,6 +222,11 @@ response_must_close :: proc(req: ^Request, res: ^Response) -> bool {
 	if req, req_has := req.headers["connection"]; req_has && req == "close" {
 		return true
 	} else if res, res_has := res.headers["connection"]; res_has && res == "close" {
+		return true
+	}
+
+	if body_ok, got_body := req._body_ok.?; got_body && !body_ok {
+		req.headers["connection"] = "close"
 		return true
 	}
 

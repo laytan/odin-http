@@ -138,12 +138,12 @@ Response :: struct {
 	cookies:   [dynamic]http.Cookie,
 	_socket:   Communication,
 	_body:     bufio.Scanner,
-	_body_err: http.Body_Error,
+	_body_err: Body_Error,
 }
 
 // Frees the response, closes the connection.
 // Optionally pass the response_body returned 'body' and 'was_allocation' to destroy it too.
-response_destroy :: proc(res: ^Response, body: Maybe(http.Body_Type) = nil, was_allocation := false) {
+response_destroy :: proc(res: ^Response, body: Maybe(Body_Type) = nil, was_allocation := false) {
 	// Header keys are allocated, values are slices into the body.
 	for k in res.headers {
 		delete(k)
@@ -157,7 +157,7 @@ response_destroy :: proc(res: ^Response, body: Maybe(http.Body_Type) = nil, was_
 	delete(res.cookies)
 
 	if body != nil {
-		body_destroy(body.(http.Body_Type), was_allocation)
+		body_destroy(body.(Body_Type), was_allocation)
 	}
 
 	// We close now and not at the time we got the response because reading the body,
@@ -172,7 +172,46 @@ response_destroy :: proc(res: ^Response, body: Maybe(http.Body_Type) = nil, was_
 	}
 }
 
-body_destroy :: http.body_destroy
+Body_Error :: enum {
+	None,
+	No_Length,
+	Invalid_Length,
+	Too_Long,
+	Scan_Failed,
+	Invalid_Chunk_Size,
+	Invalid_Trailer_Header,
+}
+
+// Any non-special body, could have been a chunked body that has been read in fully automatically.
+// Depending on the return value for 'was_allocation' of the parse function, this is either an
+// allocated string that you should delete or a slice into the body.
+Body_Plain :: string
+
+// A URL encoded body, map, keys and values are fully allocated on the allocator given to the parsing function,
+// And should be deleted by you.
+Body_Url_Encoded :: map[string]string
+
+Body_Type :: union {
+	Body_Plain,
+	Body_Url_Encoded,
+	Body_Error,
+}
+
+// Frees the memory allocated by parsing the body.
+// was_allocation is returned by the body parsing procedure.
+body_destroy :: proc(body: Body_Type, was_allocation: bool) {
+	switch b in body {
+	case Body_Plain:
+		if was_allocation do delete(b)
+	case Body_Url_Encoded:
+		for k, v in b {
+			delete(k)
+			delete(v)
+		}
+		delete(b)
+	case Body_Error:
+	}
+}
 
 // Retrieves the response's body, can only be called once.
 // Free the returned body using body_destroy().
@@ -181,9 +220,9 @@ response_body :: proc(
 	max_length := -1,
 	allocator := context.allocator,
 ) -> (
-	body: http.Body_Type,
+	body: Body_Type,
 	was_allocation: bool,
-	err: http.Body_Error,
+	err: Body_Error,
 ) {
 	defer res._body_err = err
 	assert(res._body_err == nil)
@@ -191,7 +230,16 @@ response_body :: proc(
 	return
 }
 
-_parse_body :: proc(headers: ^http.Headers, _body: ^bufio.Scanner, max_length := -1, allocator := context.allocator) -> (body: http.Body_Type, was_allocation: bool, err: http.Body_Error) {
+_parse_body :: proc(
+	headers: ^http.Headers,
+	_body: ^bufio.Scanner,
+	max_length := -1,
+	allocator := context.allocator,
+) -> (
+	body: Body_Type,
+	was_allocation: bool,
+	err: Body_Error,
+) {
 	// See [RFC 7230 3.3.3](https://www.rfc-editor.org/rfc/rfc7230#section-3.3.3) for the rules.
 	// Point 3 paragraph 3 and point 4 are handled before we get here.
 
@@ -211,13 +259,13 @@ _parse_body :: proc(headers: ^http.Headers, _body: ^bufio.Scanner, max_length :=
 
 	// Automatically decode url encoded bodies.
 	if typ, ok := headers["content-type"]; ok && typ == "application/x-www-form-urlencoded" {
-		plain := body.(http.Body_Plain)
+		plain := body.(Body_Plain)
 		defer if was_allocation do delete(plain)
 
 		keyvalues := strings.split(plain, "&", allocator)
 		defer delete(keyvalues, allocator)
 
-		queries := make(http.Body_Url_Encoded, len(keyvalues), allocator)
+		queries := make(Body_Url_Encoded, len(keyvalues), allocator)
 		for keyvalue in keyvalues {
 			seperator := strings.index(keyvalue, "=")
 			if seperator == -1 { 	// The keyvalue has no value.
@@ -246,7 +294,7 @@ _parse_body :: proc(headers: ^http.Headers, _body: ^bufio.Scanner, max_length :=
 	return
 }
 
-_response_till_close :: proc(_body: ^bufio.Scanner, max_length: int) -> (string, http.Body_Error) {
+_response_till_close :: proc(_body: ^bufio.Scanner, max_length: int) -> (string, Body_Error) {
 	_body.max_token_size = max_length
 	defer _body.max_token_size = bufio.DEFAULT_MAX_SCAN_TOKEN_SIZE
 
@@ -272,7 +320,7 @@ _response_till_close :: proc(_body: ^bufio.Scanner, max_length: int) -> (string,
 
 // "Decodes" a response body based on the content length header.
 // Meant for internal usage, you should use `client.response_body`.
-_response_body_length :: proc(_body: ^bufio.Scanner, max_length: int, len: string) -> (string, http.Body_Error) {
+_response_body_length :: proc(_body: ^bufio.Scanner, max_length: int, len: string) -> (string, Body_Error) {
 	ilen, lenok := strconv.parse_int(len, 10)
 	if !lenok {
 		return "", .Invalid_Length
@@ -327,7 +375,15 @@ _response_body_length :: proc(_body: ^bufio.Scanner, max_length: int, len: strin
 // Content-Length := length
 // Remove "chunked" from Transfer-Encoding
 // Remove Trailer from existing header fields
-_response_body_chunked :: proc(headers: ^http.Headers, _body: ^bufio.Scanner, max_length: int, allocator := context.allocator) -> (body: string, err: http.Body_Error) {
+_response_body_chunked :: proc(
+	headers: ^http.Headers,
+	_body: ^bufio.Scanner,
+	max_length: int,
+	allocator := context.allocator,
+) -> (
+	body: string,
+	err: Body_Error,
+) {
 	body_buff: bytes.Buffer
 
 	bytes.buffer_init_allocator(&body_buff, 0, 0, allocator)
