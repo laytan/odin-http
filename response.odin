@@ -14,6 +14,7 @@ Response :: struct {
 	cookies:   [dynamic]Cookie,
 	body:      bytes.Buffer,
 	_conn:     ^Connection,
+	sent:      bool,
 }
 
 response_init :: proc(r: ^Response, allocator := context.allocator) {
@@ -27,7 +28,10 @@ response_init :: proc(r: ^Response, allocator := context.allocator) {
 // Frees the allocator (should be a request scoped allocator).
 // Closes the connection or starts the handling of the next request.
 @(private)
-response_send :: proc(r: ^Response, conn: ^Connection) {
+response_send :: proc(r: ^Response, conn: ^Connection, loc := #caller_location) {
+	assert(!r.sent, "response has already been sent", loc)
+	r.sent = true
+
 	check_body := proc(res: rawptr, body: Body, err: Body_Error) {
 		res := cast(^Response)res
 		will_close: bool

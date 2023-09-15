@@ -11,8 +11,8 @@ import "core:log"
 import "nbio"
 
 // Sets the response to one that sends the given HTML.
-respond_html :: proc(r: ^Response, html: string, send := true) {
-	defer if send do respond(r)
+respond_html :: proc(r: ^Response, html: string, send := true, loc := #caller_location) {
+	defer if send do respond(r, loc)
 
 	r.status = .OK
 	bytes.buffer_write_string(&r.body, html)
@@ -20,8 +20,8 @@ respond_html :: proc(r: ^Response, html: string, send := true) {
 }
 
 // Sets the response to one that sends the given plain text.
-respond_plain :: proc(r: ^Response, text: string, send := true) {
-	defer if send do respond(r)
+respond_plain :: proc(r: ^Response, text: string, send := true, loc := #caller_location) {
+	defer if send do respond(r, loc)
 
 	r.status = .OK
 	bytes.buffer_write_string(&r.body, text)
@@ -48,6 +48,8 @@ If any other error occurs, a 500 is sent and the error is logged.
 */
 respond_file :: proc(r: ^Response, path: string, content_type: Maybe(Mime_Type) = nil, loc := #caller_location) {
 	assert_has_td(loc)
+	assert(!r.sent, "response has already been sent", loc)
+
 	io := &td.io
 	handle, errno := nbio.open(io, path)
 	if errno != os.ERROR_NONE {
@@ -126,8 +128,8 @@ Responds with the given content, determining content type from the given path.
 
 This is very useful when you want to `#load(path)` at compile time and respond with that.
 */
-respond_file_content :: proc(r: ^Response, path: string, content: []byte, send := true) {
-	defer if send do respond(r)
+respond_file_content :: proc(r: ^Response, path: string, content: []byte, send := true, loc := #caller_location) {
+	defer if send do respond(r, loc)
 
 	mime := mime_from_extension(path)
 	content_type := mime_to_content_type(mime)
@@ -144,7 +146,7 @@ respond_file_content :: proc(r: ^Response, path: string, content: []byte, send :
 //
 // Path traversal is detected and cleaned up.
 // The Content-Type is set based on the file extension, see the MimeType enum for known file extensions.
-respond_dir :: proc(r: ^Response, base, target, request: string, send := true) {
+respond_dir :: proc(r: ^Response, base, target, request: string, send := true, loc := #caller_location) {
 	if !strings.has_prefix(request, base) {
 		respond(r, Status.Not_Found)
 		return
@@ -159,12 +161,12 @@ respond_dir :: proc(r: ^Response, base, target, request: string, send := true) {
 	}
 
 	file_path := filepath.join([]string{"./", target, strings.trim_prefix(req_clean, base_clean)}, context.temp_allocator)
-	respond_file(r, file_path)
+	respond_file(r, file_path, loc = loc)
 }
 
 // Sets the response to one that returns the JSON representation of the given value.
-respond_json :: proc(r: ^Response, v: any, opt: json.Marshal_Options = {}, send := true) -> json.Marshal_Error {
-	defer if send do respond(r)
+respond_json :: proc(r: ^Response, v: any, opt: json.Marshal_Options = {}, send := true, loc := #caller_location) -> json.Marshal_Error {
+	defer if send do respond(r, loc)
 
 	stream := bytes.buffer_to_stream(&r.body)
 	opt := opt
@@ -190,23 +192,23 @@ respond_with_none :: proc(r: ^Response, loc := #caller_location) {
 		rline.method = .Head
 	}
 
-	response_send(r, conn)
+	response_send(r, conn, loc)
 }
 
-respond_with_status :: proc(r: ^Response, status: Status) {
+respond_with_status :: proc(r: ^Response, status: Status, loc := #caller_location) {
 	r.status = status
-	respond(r)
+	respond(r, loc)
 }
 
-respond_with_content_type :: proc(r: ^Response, content_type: Mime_Type) {
+respond_with_content_type :: proc(r: ^Response, content_type: Mime_Type, loc := #caller_location) {
 	r.headers["content-type"] = mime_to_content_type(content_type)
-	respond(r)
+	respond(r, loc)
 }
 
-respond_with_status_and_content_type :: proc(r: ^Response, status: Status, content_type: Mime_Type) {
+respond_with_status_and_content_type :: proc(r: ^Response, status: Status, content_type: Mime_Type, loc := #caller_location) {
 	r.status = status
 	r.headers["content-type"] = mime_to_content_type(content_type)
-	respond(r)
+	respond(r, loc)
 }
 
 // Sends the response back to the client, handlers should call this.
