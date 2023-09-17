@@ -7,6 +7,14 @@ import "core:bytes"
 
 import "nbio"
 
+// TODO: memory management.
+
+// TODO: browser example, maybe a clock ran on server time (high frequency)?
+
+// TODO: is there a way to say we are done to the client (in the spec), afaik the browser will always reconnect.
+
+// TODO: might make sense as its own package (sse).
+
 Sse :: struct {
 	user_data: rawptr,
 	on_err:    Maybe(Sse_On_Error),
@@ -23,6 +31,7 @@ Sse_Event :: struct {
 	retry:   Maybe(int),
 	comment: Maybe(string),
 
+	// TODO: put buf on Sse, we only need one because we sent one at a time.
 	_buf:    strings.Builder,
 	_sent:   int,
 }
@@ -50,8 +59,8 @@ Sse_State :: enum {
 }
 
 /*
-A handler that is called when there is an error or when sse_end is called.
-This will always be called in a cycle, and only once.
+A handler that is called when there is an error (client disconnected for example) or when sse_end is called.
+This will always be called in a cycle, and only once, so cleaning up after yourself is easily done here.
 If this is called after a sse_end call the err is nil.
 This is called before the connection is closed.
 */
@@ -67,6 +76,7 @@ sse_start :: proc(sse: ^Sse, r: ^Response, user_data: rawptr = nil, on_error: Ma
 	sse.state     = .Starting
 
 	r.status = .OK
+	// TODO: do we need this header?
 	r.headers["cache-control"] = "no-store"
 	r.headers["content-type"]  = "text/event-stream"
 	_response_write_heading(r, -1)
