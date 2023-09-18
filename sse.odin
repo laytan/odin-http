@@ -1,43 +1,42 @@
 package http
 
+import "core:bytes"
 import "core:container/queue"
+import "core:log"
 import "core:net"
 import "core:strings"
-import "core:bytes"
 
 import "nbio"
 
-// TODO: memory management.
-
-// TODO: browser example, maybe a clock ran on server time (high frequency)?
-
-// TODO: is there a way to say we are done to the client (in the spec), afaik the browser will always reconnect.
-
 // TODO: might make sense as its own package (sse).
+
+// TODO: shutdown doesn't work.
 
 Sse :: struct {
 	user_data: rawptr,
 	on_err:    Maybe(Sse_On_Error),
 
 	r:         ^Response,
-	events:    queue.Queue(Sse_Event),
+
+    // State should be considered read-only by users.
 	state:     Sse_State,
+
+	_events:   queue.Queue(Sse_Event),
+
+	_buf:      strings.Builder,
+	_sent:     int,
 }
 
 Sse_Event :: struct {
 	event:   Maybe(string),
 	data:    Maybe(string),
-	id:      Maybe(int),
+	id:      Maybe(string),
 	retry:   Maybe(int),
 	comment: Maybe(string),
-
-	// TODO: put buf on Sse, we only need one because we sent one at a time.
-	_buf:    strings.Builder,
-	_sent:   int,
 }
 
 Sse_State :: enum {
-	Uninitialized,
+	Pre_Start,
 
 	// The initial HTTP response is being sent over the connection (status code&headers) before
 	// we can start sending events.
@@ -67,19 +66,27 @@ This is called before the connection is closed.
 Sse_On_Error :: #type proc(sse: ^Sse, err: net.Network_Error)
 
 /*
-Initialize the Sse struct, and start sending the status code and headers.
+Initializes an sse struct with the given arguments.
 */
-sse_start :: proc(sse: ^Sse, r: ^Response, user_data: rawptr = nil, on_error: Maybe(Sse_On_Error) = nil) {
+sse_init :: proc(sse: ^Sse, r: ^Response, user_data: rawptr = nil, on_error: Maybe(Sse_On_Error) = nil, allocator := context.temp_allocator) {
 	sse.r         = r
 	sse.user_data = user_data
 	sse.on_err    = on_error
-	sse.state     = .Starting
 
-	r.status = .OK
-	// TODO: do we need this header?
-	r.headers["cache-control"] = "no-store"
-	r.headers["content-type"]  = "text/event-stream"
-	_response_write_heading(r, -1)
+    queue.init(&sse._events, allocator = allocator)
+    strings.builder_init(&sse._buf, allocator)
+
+    // Set the status and content type if they haven't been changed by the user.
+	if r.status == .Not_Found          do r.status = .OK
+	if "content-type" not_in r.headers do r.headers["content-type"] = "text/event-stream"
+}
+
+/*
+Start by sending the status code and headers.
+*/
+sse_start :: proc(sse: ^Sse) {
+	sse.state = .Starting
+	_response_write_heading(sse.r, -1)
 
 	// TODO: use other response logic from response_send proc, have a way to send a response without
 	// actually cleaning up the request, and a way to hook into when that is done.
@@ -103,11 +110,11 @@ sse_start :: proc(sse: ^Sse, r: ^Response, user_data: rawptr = nil, on_error: Ma
 		_sse_process(sse)
 	}
 
-	buf := bytes.buffer_to_bytes(&r._buf)
-	r._conn.loop.inflight = Response_Inflight {
+	buf := bytes.buffer_to_bytes(&sse.r._buf)
+	sse.r._conn.loop.inflight = Response_Inflight {
 		buf = buf,
 	}
-	nbio.send(&td.io, r._conn.socket, buf, sse, on_start_send)
+	nbio.send(&td.io, sse.r._conn.socket, buf, sse, on_start_send)
 }
 
 /*
@@ -117,10 +124,9 @@ You must call `sse_start` first, this is a no-op when end has been called or an 
 sse_event :: proc(sse: ^Sse, ev: Sse_Event, loc := #caller_location) {
 	switch sse.state {
 	case .Starting, .Sending, .Ending, .Idle:
-		queue.push_back(&sse.events, ev)
-		_sse_event_prepare(queue.peek_back(&sse.events))
+		queue.push_back(&sse._events, ev)
 
-	case .Uninitialized:
+	case .Pre_Start:
 		panic("sse_start must be called first", loc)
 
 	case .Close:
@@ -134,10 +140,12 @@ sse_event :: proc(sse: ^Sse, ev: Sse_Event, loc := #caller_location) {
 /*
 Ends the event stream without sending all queued events.
 */
-sse_force_end :: proc(sse: ^Sse) {
+sse_end_force :: proc(sse: ^Sse) {
 	sse.state = .Close
-	if cb, ok := sse.on_err.?; ok do cb(sse, nil)
-	connection_close(sse.r._conn)
+
+	_sse_call_on_err(sse, nil)
+    sse_destroy(sse)
+    connection_close(sse.r._conn)
 }
 
 /*
@@ -151,8 +159,20 @@ sse_end :: proc(sse: ^Sse) {
 		return
 	}
 
-	if cb, ok := sse.on_err.?; ok do cb(sse, nil)
-	connection_close(sse.r._conn)
+	sse.state = .Close
+
+	_sse_call_on_err(sse, nil)
+    sse_destroy(sse)
+    connection_close(sse.r._conn)
+}
+
+/*
+Destroys any memory allocated, and if `sse_new` was used, frees the sse struct.
+This is usually not a call you need to make, it is automatically called after an error or `sse_end`/`sse_end_force`.
+*/
+sse_destroy :: proc(sse: ^Sse) {
+    strings.builder_destroy(&sse._buf)
+    queue.destroy(&sse._events)
 }
 
 _sse_err :: proc(sse: ^Sse, err: net.Network_Error) {
@@ -160,35 +180,44 @@ _sse_err :: proc(sse: ^Sse, err: net.Network_Error) {
 
 	sse.state = .Close
 
-	if cb, ok := sse.on_err.?; ok do cb(sse, err)
-	connection_close(sse.r._conn)
+	_sse_call_on_err(sse, err)
+    sse_destroy(sse)
+    connection_close(sse.r._conn)
+}
+
+_sse_call_on_err :: proc(sse: ^Sse, err: net.Network_Error) {
+	if cb, ok := sse.on_err.?; ok {
+		cb(sse, err)
+	} else if err != nil {
+		// Most likely that the client closed the connection.
+		log.infof("Server Sent Event error: %v", err)
+	}
 }
 
 _sse_process :: proc(sse: ^Sse) {
 	if sse.state == .Close do return
 
-	if queue.len(sse.events) == 0 {
+	if queue.len(sse._events) == 0 {
 		#partial switch sse.state {
 		// We have sent all events in the queue, complete the ending if we are.
-		case .Ending: sse_force_end(sse)
+		case .Ending: sse_end_force(sse)
 		case:         sse.state = .Idle
 		}
 		return
 	}
-
-	ev := queue.peek_front(&sse.events)
 
 	#partial switch sse.state {
 	case .Ending: // noop
 	case: sse.state = .Sending
 	}
 
-	nbio.send(&td.io, sse.r._conn.socket, ev._buf.buf[:], sse, _sse_on_send)
+	ev := queue.peek_front(&sse._events)
+    _sse_event_prepare(sse)
+	nbio.send(&td.io, sse.r._conn.socket, sse._buf.buf[:], sse, _sse_on_send)
 }
 
 _sse_on_send :: proc(sse: rawptr, n: int, err: net.Network_Error) {
 	sse := cast(^Sse)sse
-	ev  := queue.peek_front(&sse.events)
 
 	if err != nil {
 		_sse_err(sse, err)
@@ -197,19 +226,23 @@ _sse_on_send :: proc(sse: rawptr, n: int, err: net.Network_Error) {
 
 	if sse.state == .Close do return
 
-	ev._sent += n
-	if len(ev._buf.buf) > ev._sent {
-		nbio.send(&td.io, sse.r._conn.socket, ev._buf.buf[ev._sent:], sse, _sse_on_send)
+	sse._sent += n
+	if len(sse._buf.buf) > sse._sent {
+		nbio.send(&td.io, sse.r._conn.socket, sse._buf.buf[sse._sent:], sse, _sse_on_send)
 		return
 	}
 
-	queue.pop_front(&sse.events)
+	queue.pop_front(&sse._events)
 	_sse_process(sse)
 }
 
 // TODO :doesn't handle multiline values
-_sse_event_prepare :: proc(ev: ^Sse_Event) {
-	b := &ev._buf
+_sse_event_prepare :: proc(sse: ^Sse) {
+    ev := queue.peek_front(&sse._events)
+	b  := &sse._buf
+
+    strings.builder_reset(b)
+    sse._sent = 0
 
 	if name, ok := ev.event.?; ok {
 		strings.write_string(b, "event: ")
@@ -225,7 +258,7 @@ _sse_event_prepare :: proc(ev: ^Sse_Event) {
 
 	if id, ok := ev.id.?; ok {
 		strings.write_string(b, "id: ")
-		strings.write_int(b, id)
+		strings.write_string(b, id)
 		strings.write_string(b, "\r\n")
 	}
 
