@@ -220,7 +220,6 @@ _sse_process :: proc(sse: ^Sse) {
 		sse.state = .Sending
 	}
 
-	ev := queue.peek_front(&sse._events)
 	_sse_event_prepare(sse)
 	nbio.send(&td.io, sse.r._conn.socket, sse._buf.buf[:], sse, _sse_on_send)
 }
