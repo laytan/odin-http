@@ -8,7 +8,13 @@ import "core:net"
 import http "../.."
 import "../../nbio"
 
-// Minimal server that listens on 127.0.0.1:8080 and responds to every request with 200 Ok.
+/*
+Responds to any requests with a 200 OK that starts an event stream (aka server sent events).
+The first event sent is a general "Hello, World!",
+then it sends one event every second with the current time.
+
+All this is done without spawning any extra threads by using the underlying nbio (non-blocking IO) package.
+*/
 main :: proc() {
 	context.logger = log.create_console_logger(.Debug)
 
@@ -33,6 +39,7 @@ main :: proc() {
 
 			if sse.state > .Ending do return
 
+			// Queue next tick.
 			nbio.timeout(&http.td.io, time.Second, sse, tick)
 
 			http.sse_event(sse, {
