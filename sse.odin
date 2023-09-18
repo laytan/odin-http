@@ -18,7 +18,7 @@ Sse :: struct {
 
 	r:         ^Response,
 
-    // State should be considered read-only by users.
+	// State should be considered read-only by users.
 	state:     Sse_State,
 
 	_events:   queue.Queue(Sse_Event),
@@ -68,16 +68,22 @@ Sse_On_Error :: #type proc(sse: ^Sse, err: net.Network_Error)
 /*
 Initializes an sse struct with the given arguments.
 */
-sse_init :: proc(sse: ^Sse, r: ^Response, user_data: rawptr = nil, on_error: Maybe(Sse_On_Error) = nil, allocator := context.temp_allocator) {
-	sse.r         = r
+sse_init :: proc(
+	sse: ^Sse,
+	r: ^Response,
+	user_data: rawptr = nil,
+	on_error: Maybe(Sse_On_Error) = nil,
+	allocator := context.temp_allocator,
+) {
+	sse.r = r
 	sse.user_data = user_data
-	sse.on_err    = on_error
+	sse.on_err = on_error
 
-    queue.init(&sse._events, allocator = allocator)
-    strings.builder_init(&sse._buf, allocator)
+	queue.init(&sse._events, allocator = allocator)
+	strings.builder_init(&sse._buf, allocator)
 
-    // Set the status and content type if they haven't been changed by the user.
-	if r.status == .Not_Found          do r.status = .OK
+	// Set the status and content type if they haven't been changed by the user.
+	if r.status == .Not_Found do r.status = .OK
 	if "content-type" not_in r.headers do r.headers["content-type"] = "text/event-stream"
 }
 
@@ -144,8 +150,8 @@ sse_end_force :: proc(sse: ^Sse) {
 	sse.state = .Close
 
 	_sse_call_on_err(sse, nil)
-    sse_destroy(sse)
-    connection_close(sse.r._conn)
+	sse_destroy(sse)
+	connection_close(sse.r._conn)
 }
 
 /*
@@ -162,8 +168,8 @@ sse_end :: proc(sse: ^Sse) {
 	sse.state = .Close
 
 	_sse_call_on_err(sse, nil)
-    sse_destroy(sse)
-    connection_close(sse.r._conn)
+	sse_destroy(sse)
+	connection_close(sse.r._conn)
 }
 
 /*
@@ -171,8 +177,8 @@ Destroys any memory allocated, and if `sse_new` was used, frees the sse struct.
 This is usually not a call you need to make, it is automatically called after an error or `sse_end`/`sse_end_force`.
 */
 sse_destroy :: proc(sse: ^Sse) {
-    strings.builder_destroy(&sse._buf)
-    queue.destroy(&sse._events)
+	strings.builder_destroy(&sse._buf)
+	queue.destroy(&sse._events)
 }
 
 _sse_err :: proc(sse: ^Sse, err: net.Network_Error) {
@@ -181,8 +187,8 @@ _sse_err :: proc(sse: ^Sse, err: net.Network_Error) {
 	sse.state = .Close
 
 	_sse_call_on_err(sse, err)
-    sse_destroy(sse)
-    connection_close(sse.r._conn)
+	sse_destroy(sse)
+	connection_close(sse.r._conn)
 }
 
 _sse_call_on_err :: proc(sse: ^Sse, err: net.Network_Error) {
@@ -200,19 +206,22 @@ _sse_process :: proc(sse: ^Sse) {
 	if queue.len(sse._events) == 0 {
 		#partial switch sse.state {
 		// We have sent all events in the queue, complete the ending if we are.
-		case .Ending: sse_end_force(sse)
-		case:         sse.state = .Idle
+		case .Ending:
+			sse_end_force(sse)
+		case:
+			sse.state = .Idle
 		}
 		return
 	}
 
 	#partial switch sse.state {
 	case .Ending: // noop
-	case: sse.state = .Sending
+	case:
+		sse.state = .Sending
 	}
 
 	ev := queue.peek_front(&sse._events)
-    _sse_event_prepare(sse)
+	_sse_event_prepare(sse)
 	nbio.send(&td.io, sse.r._conn.socket, sse._buf.buf[:], sse, _sse_on_send)
 }
 
@@ -238,11 +247,11 @@ _sse_on_send :: proc(sse: rawptr, n: int, err: net.Network_Error) {
 
 // TODO :doesn't handle multiline values
 _sse_event_prepare :: proc(sse: ^Sse) {
-    ev := queue.peek_front(&sse._events)
-	b  := &sse._buf
+	ev := queue.peek_front(&sse._events)
+	b := &sse._buf
 
-    strings.builder_reset(b)
-    sse._sent = 0
+	strings.builder_reset(b)
+	sse._sent = 0
 
 	if name, ok := ev.event.?; ok {
 		strings.write_string(b, "event: ")

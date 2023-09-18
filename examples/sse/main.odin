@@ -2,8 +2,8 @@ package sse_example
 
 import "core:fmt"
 import "core:log"
-import "core:time"
 import "core:net"
+import "core:time"
 
 import http "../.."
 import "../../nbio"
@@ -20,7 +20,7 @@ main :: proc() {
 
 	s: http.Server
 
-	handler := http.handler(proc(_: ^http.Request, res: ^http.Response) {
+	handler := http.handler( proc(_: ^http.Request, res: ^http.Response) {
 		res.headers["access-control-allow-origin"] = "*"
 
 		sse: http.Sse
@@ -55,7 +55,8 @@ main :: proc() {
 			sse.user_data = rawptr(i + 1)
 		}
 		tick(&sse)
-	})
+	},
+	)
 
 	http.server_shutdown_on_interrupt(&s)
 
