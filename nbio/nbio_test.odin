@@ -9,8 +9,8 @@ import "core:testing"
 import "core:time"
 
 expect :: testing.expect
-log :: testing.log
-logf :: testing.logf
+log    :: testing.log
+logf   :: testing.logf
 
 @(test)
 test_timeout :: proc(t: ^testing.T) {

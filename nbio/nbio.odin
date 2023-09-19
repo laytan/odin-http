@@ -252,6 +252,22 @@ recv :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, callbac
 }
 
 /*
+Receives from the given socket until the given buf is full or an error occurred, and calls the given callback
+
+*Due to platform limitations, you must pass a `net.TCP_Socket` or `net.UDP_Socket` that was opened/returned using/by this package*
+
+Inputs:
+- io:       The IO instance to use
+- socket:   Either a `net.TCP_Socket` or a `net.UDP_Socket` (that was opened/returned by this package) to receive from
+- buf:      The buffer to put received bytes into
+- user:     A pointer that will be passed through to the callback, free to use by you and untouched by us
+- callback: The callback that is called when the operation completes, see docs for `On_Recv` for its arguments
+*/
+recv_all :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, callback: On_Recv) {
+	_recv(io, socket, buf, user, callback, all = true)
+}
+
+/*
 The callback for non blocking `send` and `send_all` requests
 
 Inputs:
@@ -453,6 +469,22 @@ read :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_Rea
 }
 
 /*
+Reads from the given handle, at the handle's internal offset, until the given buf is full or an error occurred, increases the file offset, and calls the given callback
+
+*Due to platform limitations, you must pass a `os.Handle` that was opened/returned using/by this package*
+
+Inputs:
+- io:       The IO instance to use
+- fd:       The file handle (created using/by this package) to read from
+- buf:      The buffer to put read bytes into
+- user:     A pointer that will be passed through to the callback, free to use by you and untouched by us
+- callback: The callback that is called when the operation completes, see docs for `On_Read` for its arguments
+*/
+read_all :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_Read) {
+	_read(io, fd, nil, buf, user, callback, all = true)
+}
+
+/*
 Reads from the given handle, at the given offset, at most `len(buf)` bytes, and calls the given callback
 
 *Due to platform limitations, you must pass a `os.Handle` that was opened/returned using/by this package*
@@ -467,6 +499,23 @@ Inputs:
 */
 read_at :: proc(io: ^IO, fd: os.Handle, offset: int, buf: []byte, user: rawptr, callback: On_Read) {
 	_read(io, fd, offset, buf, user, callback)
+}
+
+/*
+Reads from the given handle, at the given offset, until the given buf is full or an error occurred, and calls the given callback
+
+*Due to platform limitations, you must pass a `os.Handle` that was opened/returned using/by this package*
+
+Inputs:
+- io:       The IO instance to use
+- fd:       The file handle (created using/by this package) to read from
+- offset:   The offset to begin the read from
+- buf:      The buffer to put read bytes into
+- user:     A pointer that will be passed through to the callback, free to use by you and untouched by us
+- callback: The callback that is called when the operation completes, see docs for `On_Read` for its arguments
+*/
+read_at_all :: proc(io: ^IO, fd: os.Handle, offset: int, buf: []byte, user: rawptr, callback: On_Read) {
+	_read(io, fd, offset, buf, user, callback, all = true)
 }
 
 /*

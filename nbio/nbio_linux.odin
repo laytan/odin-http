@@ -384,9 +384,12 @@ Op_Read :: struct {
 	fd:     os.Handle,
 	buf:    []byte,
 	offset: Maybe(int),
+	all:    bool,
+	read:   int,
+	len:    int,
 }
 
-_read :: proc(io: ^IO, fd: os.Handle, offset: Maybe(int), buf: []byte, user: rawptr, callback: On_Read) {
+_read :: proc(io: ^IO, fd: os.Handle, offset: Maybe(int), buf: []byte, user: rawptr, callback: On_Read, all := false) {
 	completion := pool_get(&io.completion_pool)
 	completion.ctx = context
 	completion.user_data = user
@@ -395,24 +398,35 @@ _read :: proc(io: ^IO, fd: os.Handle, offset: Maybe(int), buf: []byte, user: raw
 		fd     = fd,
 		buf    = buf,
 		offset = offset,
+		all    = all,
+		len    = len(buf),
 	}
 
 	completion.callback = proc(io: ^IO, completion: ^Completion) {
+		op       := &completion.operation.(Op_Read)
 		callback := cast(On_Read)completion.user_callback
 
 		if completion.result < 0 {
 			errno := os.Errno(-completion.result)
 			if errno == os.EINTR {
-				connect_enqueue(io, completion)
+				read_enqueue(io, completion)
 				return
 			}
 
-			callback(completion.user_data, 0, errno)
+			callback(completion.user_data, op.read, errno)
 			pool_put(&io.completion_pool, completion)
 			return
 		}
 
-		callback(completion.user_data, int(completion.result), os.ERROR_NONE)
+		op.read += int(completion.result)
+
+		if op.all && op.read < op.len {
+			op.buf = op.buf[completion.result:]
+			read_enqueue(io, completion)
+			return
+		}
+
+		callback(completion.user_data, op.read, os.ERROR_NONE)
 		pool_put(&io.completion_pool, completion)
 	}
 
@@ -437,11 +451,14 @@ read_enqueue :: proc(io: ^IO, completion: ^Completion) {
 }
 
 Op_Recv :: struct {
-	socket: net.Any_Socket,
-	buf:    []byte,
+	socket:   net.Any_Socket,
+	buf:      []byte,
+	all:      bool,
+	received: int,
+	len:      int,
 }
 
-_recv :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, callback: On_Recv) {
+_recv :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, callback: On_Recv, all := false) {
 	completion := pool_get(&io.completion_pool)
 	completion.ctx = context
 	completion.user_data = user
@@ -449,9 +466,12 @@ _recv :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, callba
 	completion.operation = Op_Recv {
 		socket = socket,
 		buf    = buf,
+		all    = all,
+		len    = len(buf),
 	}
 
 	completion.callback = proc(io: ^IO, completion: ^Completion) {
+		op       := &completion.operation.(Op_Recv)
 		callback := cast(On_Recv)completion.user_callback
 
 		if completion.result < 0 {
@@ -461,12 +481,20 @@ _recv :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, callba
 				return
 			}
 
-			callback(completion.user_data, 0, {}, net.TCP_Recv_Error(errno))
+			callback(completion.user_data, op.received, {}, net.TCP_Recv_Error(errno))
 			pool_put(&io.completion_pool, completion)
 			return
 		}
 
-		callback(completion.user_data, int(completion.result), {}, nil)
+		op.received += int(completion.result)
+
+		if op.all && op.received < op.len {
+			op.buf = op.buf[completion.result:]
+			recv_enqueue(io, completion)
+			return
+		}
+
+		callback(completion.user_data, op.received, {}, nil)
 		pool_put(&io.completion_pool, completion)
 	}
 
