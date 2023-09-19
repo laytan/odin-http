@@ -452,9 +452,13 @@ Op_Write :: struct {
 	offset:   Maybe(int),
 	buf:      []byte,
 	pending:  bool,
+
+	written:  int,
+	len:      int,
+	all:      bool,
 }
 
-_write :: proc(io: ^IO, fd: os.Handle, offset: Maybe(int), buf: []byte, user: rawptr, callback: On_Write) {
+_write :: proc(io: ^IO, fd: os.Handle, offset: Maybe(int), buf: []byte, user: rawptr, callback: On_Write, all := false) {
 	internal_callback :: proc(io: ^IO, comp: ^Completion, op: ^Op_Write) -> (written: win.DWORD, err: win.DWORD) {
 		ok: win.BOOL
 		if op.pending {
@@ -480,7 +484,15 @@ _write :: proc(io: ^IO, fd: os.Handle, offset: Maybe(int), buf: []byte, user: ra
 		return
 	}
 
-	submit(io, user, rawptr(callback), Op_Write{callback = internal_callback, fd = fd, offset = offset, buf = buf})
+	submit(io, user, rawptr(callback), Op_Write{
+		callback = internal_callback,
+		fd       = fd,
+		offset   = offset,
+		buf      = buf,
+
+		all      = all,
+		len      = len(buf),
+	})
 }
 
 Op_Recv :: struct {
@@ -528,6 +540,10 @@ Op_Send :: struct {
 	socket:   net.Any_Socket,
 	buf:      win.WSABUF,
 	pending:  bool,
+
+	len:      int,
+	sent:     int,
+	all:      bool,
 }
 
 _send :: proc(
@@ -537,6 +553,7 @@ _send :: proc(
 	user: rawptr,
 	callback: On_Sent,
 	endpoint: Maybe(net.Endpoint) = nil,
+	all := false,
 ) {
 	// TODO: implement UDP.
 	if _, ok := socket.(net.UDP_Socket); ok do unimplemented("nbio.send with UDP sockets is not yet implemented")
@@ -563,8 +580,11 @@ _send :: proc(
 		rawptr(callback),
 		Op_Send{
 			callback = internal_callback,
-			socket = socket,
-			buf = win.WSABUF{len = win.ULONG(len(buf)), buf = raw_data(buf)},
+			socket   = socket,
+			buf      = win.WSABUF{len = win.ULONG(len(buf)), buf = raw_data(buf)},
+
+			all      = all,
+			len      = len(buf),
 		},
 	)
 }
@@ -718,7 +738,22 @@ submit :: proc(io: ^IO, user: rawptr, callback: rawptr, op: Operation) {
 			}
 
 			cb := cast(On_Write)completion.user_callback
-			cb(completion.user_data, int(written), os.Errno(err))
+
+			op.written += int(written)
+
+			oerr := os.Errno(err)
+			if oerr != os.ERROR_NONE {
+				cb(completion.user_data, op.written, oerr)
+			} else if op.all && op.written < op.len {
+				op.buf = op.buf[written:]
+				if off, ok := &op.offset.?; ok do off^ += int(written)
+				op.pending = false
+
+				completion.callback(io, completion)
+				return
+			} else {
+				cb(completion.user_data, op.written, os.ERROR_NONE)
+			}
 
 		case Op_Recv:
 			received, err := op.callback(io, completion, &op)
@@ -738,7 +773,24 @@ submit :: proc(io: ^IO, user: rawptr, callback: rawptr, op: Operation) {
 			}
 
 			cb := cast(On_Sent)completion.user_callback
-			cb(completion.user_data, int(sent), net.TCP_Send_Error(err))
+
+			op.sent += int(sent)
+
+			nerr := net.TCP_Send_Error(err)
+			if nerr != nil {
+				cb(completion.user_data, op.sent, nerr)
+			} else if op.all && op.sent < op.len {
+				op.buf = win.WSABUF{
+					len = op.buf.len - win.ULONG(sent),
+					buf = (cast([^]byte)op.buf.buf)[sent:],
+				}
+				op.pending = false
+
+				completion.callback(io, completion)
+				return
+			} else {
+				cb(completion.user_data, op.sent, nil)
+			}
 
 		case Op_Timeout:
 			unreachable()
