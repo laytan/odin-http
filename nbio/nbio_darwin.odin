@@ -418,6 +418,8 @@ _recv :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, callba
 			}
 		}
 
+		op.received += received
+
 		if err != nil {
 			callback(completion.user_data, op.received, remote_endpoint, err)
 			pool_put(&io.completion_pool, completion)
