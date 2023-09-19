@@ -10,6 +10,7 @@ import "core:time"
 
 expect :: testing.expect
 log :: testing.log
+logf :: testing.logf
 
 @(test)
 test_timeout :: proc(t: ^testing.T) {
@@ -242,6 +243,108 @@ test_client_and_server_send_recv :: proc(t: ^testing.T) {
 			expect(ctx.t, err == nil, fmt.tprintf("recv error: %i", err))
 
 			ctx.received = received
+			ctx.done = true
+		}
+	}
+}
+
+@test
+test_send_all :: proc(t: ^testing.T) {
+	Test_Ctx :: struct {
+		t:              ^testing.T,
+		io:             ^IO,
+		send_buf:       []byte,
+		recv_buf:       []byte,
+		sent:           int,
+		received:       int,
+		accepted_sock:  Maybe(net.TCP_Socket),
+		done:           bool,
+		ep:             net.Endpoint,
+		times_received: int,
+	}
+
+	io: IO
+	init(&io)
+	defer destroy(&io)
+
+	tctx := Test_Ctx {
+		send_buf = make([]byte, mem.Megabyte * 50),
+		recv_buf = make([]byte, mem.Megabyte * 60),
+	}
+	defer delete(tctx.send_buf)
+	defer delete(tctx.recv_buf)
+
+	slice.fill(tctx.send_buf, 1)
+
+	tctx.t = t
+	tctx.io = &io
+
+	tctx.ep = {
+		address = net.IP4_Loopback,
+		port    = 3132,
+	}
+
+	server, err := open_and_listen_tcp(&io, tctx.ep)
+	expect(t, err == nil, fmt.tprintf("create socket error: %s", err))
+
+	defer close(&io, server, nil, proc(_: rawptr, _: bool){})
+	defer close(&io, tctx.accepted_sock.?, nil, proc(_: rawptr, _: bool){})
+
+	accept(&io, server, &tctx, accept_callback)
+
+	terr := tick(&io)
+	expect(t, terr == os.ERROR_NONE, fmt.tprintf("tick error: %v", terr))
+
+	connect(&io, tctx.ep, &tctx, connect_callback)
+
+	for !tctx.done {
+		terr := tick(&io)
+		expect(t, terr == os.ERROR_NONE, fmt.tprintf("tick error: %v", terr))
+	}
+
+	expect(t, tctx.times_received > 1, "expected multiple IO calls to send the big buffer")
+	expect(t, slice.simple_equal(tctx.send_buf, tctx.recv_buf[:mem.Megabyte * 50]), "expected the sent bytes to be the same as the received")
+
+	expected := make([]byte, mem.Megabyte * 10)
+	expect(t, slice.simple_equal(tctx.recv_buf[mem.Megabyte * 50:], expected), "expected the rest of the bytes to be 0")
+
+	connect_callback :: proc(ctx: rawptr, sock: net.TCP_Socket, err: net.Network_Error) {
+		ctx := cast(^Test_Ctx)ctx
+		send_all(ctx.io, sock, ctx.send_buf, ctx, send_callback)
+	}
+
+	send_callback :: proc(ctx: rawptr, res: int, err: net.Network_Error) {
+		ctx := cast(^Test_Ctx)ctx
+		if !expect(ctx.t, err == nil, fmt.tprintf("send error: %i", err)) {
+			ctx.done = true
+		}
+
+		ctx.sent = res
+	}
+
+	accept_callback :: proc(ctx: rawptr, client: net.TCP_Socket, source: net.Endpoint, err: net.Network_Error) {
+		ctx := cast(^Test_Ctx)ctx
+		if !expect(ctx.t, err == nil, fmt.tprintf("accept error: %i", err)) {
+			ctx.done = true
+		}
+
+		ctx.accepted_sock = client
+
+		recv(ctx.io, client, ctx.recv_buf, ctx, recv_callback)
+	}
+
+	recv_callback :: proc(ctx: rawptr, received: int, _: Maybe(net.Endpoint), err: net.Network_Error) {
+		ctx := cast(^Test_Ctx)ctx
+		ctx.times_received += 1
+		if !expect(ctx.t, err == nil, fmt.tprintf("recv error: %i", err)) {
+			ctx.done = true
+		}
+
+		ctx.received += received
+		if ctx.received < mem.Megabyte * 50 {
+			recv(ctx.io, ctx.accepted_sock.?, ctx.recv_buf[ctx.received:], ctx, recv_callback)
+			// logf(ctx.t, "received %.0M", received)
+		} else {
 			ctx.done = true
 		}
 	}
