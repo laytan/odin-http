@@ -77,8 +77,7 @@ respond_file :: proc(r: ^Response, path: string, content_type: Maybe(Mime_Type) 
 	buf := _dynamic_unwritten(r._buf.buf)[:size]
 
 	on_read :: proc(user: rawptr, read: int, err: os.Errno) {
-		r := cast(^Response)user
-		io := &td.io
+		r      := cast(^Response)user
 		handle := os.Handle(uintptr(context.user_ptr))
 
 		_dynamic_add_len(&r._buf.buf, read)
@@ -86,16 +85,16 @@ respond_file :: proc(r: ^Response, path: string, content_type: Maybe(Mime_Type) 
 		if err != os.ERROR_NONE {
 			log.errorf("Reading file from respond_file failed, error number: %i", err)
 			respond(r, Status.Internal_Server_Error)
-			nbio.close(io, handle, nil, proc(_: rawptr, _: bool) {})
+			nbio.close(&td.io, handle, nil, proc(_: rawptr, _: bool) {})
 			return
 		}
 
 		respond(r, Status.OK)
-		nbio.close(io, handle, nil, proc(_: rawptr, _: bool) {})
+		nbio.close(&td.io, handle, nil, proc(_: rawptr, _: bool) {})
 	}
 
 	// Using the context.user_ptr to point to the file handle.
-	context.user_ptr   = rawptr(uintptr(handle))
+	context.user_ptr = rawptr(uintptr(handle))
 
 	nbio.read_at_all(io, handle, 0, buf, r, on_read)
 }
