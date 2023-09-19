@@ -1,5 +1,6 @@
 package http
 
+import "core:bytes"
 import "core:encoding/json"
 import "core:io"
 import "core:log"
@@ -66,29 +67,21 @@ respond_file :: proc(r: ^Response, path: string, content_type: Maybe(Mime_Type) 
 		return
 	}
 
-	_, err = nbio.seek(io, handle, 0, .Set)
-	if err != os.ERROR_NONE {
-		log.errorf("Could not seek back to the start of file at %q, error number: %i", path, err)
-		respond(r, Status.Internal_Server_Error)
-		nbio.close(io, handle, nil, proc(_: rawptr, _: bool) {})
-		return
-	}
-
 	mime := mime_from_extension(path)
 	content_type := mime_to_content_type(mime)
 	r.headers["content-type"] = content_type
 
 	_response_write_heading(r, size)
-	buf := _dynamic_unwritten(r._buf.buf)
+
+	bytes.buffer_grow(&r._buf, size)
+	buf := _dynamic_unwritten(r._buf.buf)[:size]
 
 	on_read :: proc(user: rawptr, read: int, err: os.Errno) {
 		r := cast(^Response)user
 		io := &td.io
 		handle := os.Handle(uintptr(context.user_ptr))
 
-		// Update the size and whats left to read.
 		_dynamic_add_len(&r._buf.buf, read)
-		context.user_index -= read
 
 		if err != os.ERROR_NONE {
 			log.errorf("Reading file from respond_file failed, error number: %i", err)
@@ -97,25 +90,14 @@ respond_file :: proc(r: ^Response, path: string, content_type: Maybe(Mime_Type) 
 			return
 		}
 
-		// There is more to read.
-		if context.user_index > 0 {
-			log.debug("respond_file did not read the whole file at once, requires more reading")
-
-			buf := _dynamic_unwritten(r._buf.buf)
-			nbio.read(io, handle, buf, r, on_read)
-			return
-		}
-
 		respond(r, Status.OK)
 		nbio.close(io, handle, nil, proc(_: rawptr, _: bool) {})
 	}
 
-	// Using the context.user_index for the amount of bytes that are left to be read.
-	context.user_index = size
 	// Using the context.user_ptr to point to the file handle.
 	context.user_ptr   = rawptr(uintptr(handle))
 
-	nbio.read(io, handle, buf, r, on_read)
+	nbio.read_at_all(io, handle, 0, buf, r, on_read)
 }
 
 /*
