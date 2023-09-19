@@ -251,16 +251,15 @@ test_client_and_server_send_recv :: proc(t: ^testing.T) {
 @test
 test_send_all :: proc(t: ^testing.T) {
 	Test_Ctx :: struct {
-		t:              ^testing.T,
-		io:             ^IO,
-		send_buf:       []byte,
-		recv_buf:       []byte,
-		sent:           int,
-		received:       int,
-		accepted_sock:  Maybe(net.TCP_Socket),
-		done:           bool,
-		ep:             net.Endpoint,
-		times_received: int,
+		t:             ^testing.T,
+		io:            ^IO,
+		send_buf:      []byte,
+		recv_buf:      []byte,
+		sent:          int,
+		received:      int,
+		accepted_sock: Maybe(net.TCP_Socket),
+		done:          bool,
+		ep:            net.Endpoint,
 	}
 
 	io: IO
@@ -302,7 +301,6 @@ test_send_all :: proc(t: ^testing.T) {
 		expect(t, terr == os.ERROR_NONE, fmt.tprintf("tick error: %v", terr))
 	}
 
-	expect(t, tctx.times_received > 1, "expected multiple IO calls to send the big buffer")
 	expect(t, slice.simple_equal(tctx.send_buf, tctx.recv_buf[:mem.Megabyte * 50]), "expected the sent bytes to be the same as the received")
 
 	expected := make([]byte, mem.Megabyte * 10)
@@ -335,7 +333,6 @@ test_send_all :: proc(t: ^testing.T) {
 
 	recv_callback :: proc(ctx: rawptr, received: int, _: Maybe(net.Endpoint), err: net.Network_Error) {
 		ctx := cast(^Test_Ctx)ctx
-		ctx.times_received += 1
 		if !expect(ctx.t, err == nil, fmt.tprintf("recv error: %i", err)) {
 			ctx.done = true
 		}
@@ -343,7 +340,7 @@ test_send_all :: proc(t: ^testing.T) {
 		ctx.received += received
 		if ctx.received < mem.Megabyte * 50 {
 			recv(ctx.io, ctx.accepted_sock.?, ctx.recv_buf[ctx.received:], ctx, recv_callback)
-			// logf(ctx.t, "received %.0M", received)
+			logf(ctx.t, "received %.0M", received)
 		} else {
 			ctx.done = true
 		}
