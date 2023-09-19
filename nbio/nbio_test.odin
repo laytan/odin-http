@@ -88,7 +88,7 @@ test_write_read_close :: proc(t: ^testing.T) {
 			os.S_IRUSR | os.S_IWUSR | os.S_IRGRP | os.S_IROTH when ODIN_OS != .Windows else 0,
 		)
 		expect(t, errno == os.ERROR_NONE, fmt.tprintf("open file error: %i", errno))
-		defer close(&io, handle, nil, proc(_: rawptr, _: bool) {})
+		defer close(&io, handle)
 		defer os.remove(path)
 
 		tctx.fd = handle
@@ -286,8 +286,8 @@ test_send_all :: proc(t: ^testing.T) {
 	server, err := open_and_listen_tcp(&io, tctx.ep)
 	expect(t, err == nil, fmt.tprintf("create socket error: %s", err))
 
-	defer close(&io, server, nil, proc(_: rawptr, _: bool){})
-	defer close(&io, tctx.accepted_sock.?, nil, proc(_: rawptr, _: bool){})
+	defer close(&io, server)
+	defer close(&io, tctx.accepted_sock.?)
 
 	accept(&io, server, &tctx, accept_callback)
 

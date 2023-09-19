@@ -63,7 +63,7 @@ respond_file :: proc(r: ^Response, path: string, content_type: Maybe(Mime_Type) 
 	if err != os.ERROR_NONE {
 		log.errorf("Could not seek the file size of file at %q, error number: %i", path, err)
 		respond(r, Status.Internal_Server_Error)
-		nbio.close(io, handle, nil, proc(_: rawptr, _: bool) {})
+		nbio.close(io, handle)
 		return
 	}
 
@@ -85,12 +85,12 @@ respond_file :: proc(r: ^Response, path: string, content_type: Maybe(Mime_Type) 
 		if err != os.ERROR_NONE {
 			log.errorf("Reading file from respond_file failed, error number: %i", err)
 			respond(r, Status.Internal_Server_Error)
-			nbio.close(&td.io, handle, nil, proc(_: rawptr, _: bool) {})
+			nbio.close(&td.io, handle)
 			return
 		}
 
 		respond(r, Status.OK)
-		nbio.close(&td.io, handle, nil, proc(_: rawptr, _: bool) {})
+		nbio.close(&td.io, handle)
 	}
 
 	// Using the context.user_ptr to point to the file handle.

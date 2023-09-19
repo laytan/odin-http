@@ -118,12 +118,12 @@ open_and_listen_tcp :: proc(io: ^IO, ep: net.Endpoint) -> (socket: net.TCP_Socke
 	socket = sock.(net.TCP_Socket)
 
 	if err = net.bind(socket, ep); err != nil {
-		close(io, socket, nil, proc(_: rawptr, _: bool) {})
+		close(io, socket)
 		return
 	}
 
 	if err = listen(socket); err != nil {
-		close(io, socket, nil, proc(_: rawptr, _: bool) {})
+		close(io, socket)
 	}
 	return
 }
@@ -151,6 +151,9 @@ Inputs:
 */
 On_Close :: #type proc(user: rawptr, ok: bool)
 
+@private
+empty_on_close :: proc(_: rawptr, _: bool) {}
+
 /*
 A union of types that are `close`'able by this package
 */
@@ -168,10 +171,10 @@ Closes the given `Closable` socket or file handle that was originally created by
 Inputs:
 - io:       The IO instance to use
 - fd:       The `Closable` socket or handle (created using/by this package) to close
-- user:     A pointer that will be passed through to the callback, free to use by you and untouched by us
-- callback: The callback that is called when the operation completes, see docs for `On_Close` for its arguments
+- user:     An optional pointer that will be passed through to the callback, free to use by you and untouched by us
+- callback: An optional callback that is called when the operation completes, see docs for `On_Close` for its arguments
 */
-close :: proc(io: ^IO, fd: Closable, user: rawptr, callback: On_Close) {
+close :: proc(io: ^IO, fd: Closable, user: rawptr = nil, callback: On_Close = empty_on_close) {
 	_close(io, fd, user, callback)
 }
 
