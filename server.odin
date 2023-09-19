@@ -301,6 +301,7 @@ Connection_State :: enum {
 	New, // Got client, waiting to service first request.
 	Active, // Servicing request.
 	Idle, // Waiting for next request.
+	Will_Close, // Closing after the current response is sent.
 	Closing, // Going to close, cleaning up.
 	Closed, // Fully closed.
 }
@@ -331,17 +332,9 @@ Connection :: struct {
 // Loop/request cycle state.
 @(private)
 Loop :: struct {
-	conn:     ^Connection,
-	req:      Request,
-	res:      Response,
-	inflight: Maybe(Response_Inflight),
-}
-
-@(private)
-Response_Inflight :: struct {
-	buf:        []byte,
-	sent:       int,
-	will_close: bool,
+	conn: ^Connection,
+	req:  Request,
+	res:  Response,
 }
 
 @(private)

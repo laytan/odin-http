@@ -82,7 +82,7 @@ Example:
 		fmt.assertf(err == nil, "Error receiving from client: %v", err)
 		c := cast(^Echo_Connection)c
 
-		nbio.send(&c.server.io, c.sock, c.buf[:received], c, echo_on_sent)
+		nbio.send_all(&c.server.io, c.sock, c.buf[:received], c, echo_on_sent)
 	}
 
 	echo_on_sent :: proc(c: rawptr, sent: int, err: net.Network_Error) {

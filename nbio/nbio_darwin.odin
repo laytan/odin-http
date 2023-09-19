@@ -313,9 +313,12 @@ Op_Read :: struct {
 	fd:     os.Handle,
 	buf:    []byte,
 	offset: Maybe(int),
+	all:    bool,
+	read:   int,
+	len:    int,
 }
 
-_read :: proc(io: ^IO, fd: os.Handle, offset: Maybe(int), buf: []byte, user: rawptr, callback: On_Read) {
+_read :: proc(io: ^IO, fd: os.Handle, offset: Maybe(int), buf: []byte, user: rawptr, callback: On_Read, all := false) {
 	completion := pool_get(&io.completion_pool)
 	completion.ctx = context
 	completion.user_data = user
@@ -324,10 +327,13 @@ _read :: proc(io: ^IO, fd: os.Handle, offset: Maybe(int), buf: []byte, user: raw
 		fd     = fd,
 		buf    = buf,
 		offset = offset,
+		all    = all,
+		len    = len(buf),
 	}
 
-	completion.callback = proc(io: ^IO, completion: ^Completion) {
-		op := completion.operation.(Op_Read)
+	on_read :: proc(io: ^IO, completion: ^Completion) {
+		op       := &completion.operation.(Op_Read)
+		callback := cast(On_Read)completion.user_callback
 
 		read: int
 		err: os.Errno
@@ -338,27 +344,43 @@ _read :: proc(io: ^IO, fd: os.Handle, offset: Maybe(int), buf: []byte, user: raw
 		}
 		//odinfmt:enable
 
-		if err == os.EWOULDBLOCK {
-			append(&io.io_pending, completion)
+		op.read += read
+
+		if err != os.ERROR_NONE {
+			if err == os.EWOULDBLOCK {
+				append(&io.io_pending, completion)
+				return
+			}
+
+			callback(completion.user_data, op.read, err)
+			pool_put(&io.completion_pool, completion)
 			return
 		}
 
+		if op.all && op.read < op.len {
+			op.buf = op.buf[read:]
+			if off, ok := &op.offset.?; ok do off^ += read
+			on_read(io, completion)
+			return
+		}
 
-		callback := cast(On_Read)completion.user_callback
-		callback(completion.user_data, read, err)
-
+		callback(completion.user_data, op.read, os.ERROR_NONE)
 		pool_put(&io.completion_pool, completion)
 	}
 
+	completion.callback = on_read
 	queue.push_back(&io.completed, completion)
 }
 
 Op_Recv :: struct {
-	socket: net.Any_Socket,
-	buf:    []byte,
+	socket:   net.Any_Socket,
+	buf:      []byte,
+	all:      bool,
+	received: int,
+	len:      int,
 }
 
-_recv :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, callback: On_Recv) {
+_recv :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, callback: On_Recv, all := false) {
 	completion := pool_get(&io.completion_pool)
 	completion.ctx = context
 	completion.user_data = user
@@ -366,10 +388,13 @@ _recv :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, callba
 	completion.operation = Op_Recv {
 		socket = socket,
 		buf    = buf,
+		all    = all,
+		len    = len(buf),
 	}
 
-	completion.callback = proc(io: ^IO, completion: ^Completion) {
-		op := completion.operation.(Op_Recv)
+	on_recv :: proc(io: ^IO, completion: ^Completion) {
+		op       := &completion.operation.(Op_Recv)
+		callback := cast(On_Recv)completion.user_callback
 
 		received: int
 		err: net.Network_Error
@@ -393,12 +418,25 @@ _recv :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, callba
 			}
 		}
 
-		callback := cast(On_Recv)completion.user_callback
-		callback(completion.user_data, received, remote_endpoint, err)
+		op.received += received
 
+		if err != nil {
+			callback(completion.user_data, op.received, remote_endpoint, err)
+			pool_put(&io.completion_pool, completion)
+			return
+		}
+
+		if op.all && op.received < op.len {
+			op.buf = op.buf[received:]
+			on_recv(io, completion)
+			return
+		}
+
+		callback(completion.user_data, op.received, remote_endpoint, err)
 		pool_put(&io.completion_pool, completion)
 	}
 
+	completion.callback = on_recv
 	queue.push_back(&io.completed, completion)
 }
 
@@ -406,6 +444,9 @@ Op_Send :: struct {
 	socket:   net.Any_Socket,
 	buf:      []byte,
 	endpoint: Maybe(net.Endpoint),
+	all:      bool,
+	len:      int,
+	sent:     int,
 }
 
 _send :: proc(
@@ -415,6 +456,7 @@ _send :: proc(
 	user: rawptr,
 	callback: On_Sent,
 	endpoint: Maybe(net.Endpoint) = nil,
+	all := false,
 ) {
 	if _, ok := socket.(net.UDP_Socket); ok {
 		assert(endpoint != nil)
@@ -428,14 +470,17 @@ _send :: proc(
 		socket   = socket,
 		buf      = buf,
 		endpoint = endpoint,
+		all      = all,
+		len      = len(buf),
 	}
 
-	completion.callback = proc(io: ^IO, completion: ^Completion) {
-		op := completion.operation.(Op_Send)
+	do_send :: proc(io: ^IO, completion: ^Completion) {
+		op       := &completion.operation.(Op_Send)
+		callback := cast(On_Sent)completion.user_callback
 
-		sent: u32
+		sent:  u32
 		errno: os.Errno
-		err: net.Network_Error
+		err:   net.Network_Error
 
 		switch sock in op.socket {
 		case net.TCP_Socket:
@@ -448,27 +493,43 @@ _send :: proc(
 			err = net.UDP_Send_Error(errno)
 		}
 
-		if errno == os.EWOULDBLOCK {
-			append(&io.io_pending, completion)
+		op.sent += int(sent)
+
+		if errno != os.ERROR_NONE {
+			if errno == os.EWOULDBLOCK {
+				append(&io.io_pending, completion)
+				return
+			}
+
+			callback(completion.user_data, op.sent, err)
+			pool_put(&io.completion_pool, completion)
 			return
 		}
 
-		callback := cast(On_Sent)completion.user_callback
-		callback(completion.user_data, int(sent), err)
+		if op.all && op.sent < op.len {
+			op.buf = op.buf[sent:]
+			do_send(io, completion)
+			return
+		}
 
+		callback(completion.user_data, op.sent, nil)
 		pool_put(&io.completion_pool, completion)
 	}
 
+	completion.callback = do_send
 	queue.push_back(&io.completed, completion)
 }
 
 Op_Write :: struct {
-	fd:     os.Handle,
-	buf:    []byte,
-	offset: Maybe(int),
+	fd:      os.Handle,
+	buf:     []byte,
+	offset:  Maybe(int),
+	all:     bool,
+	written: int,
+	len:     int,
 }
 
-_write :: proc(io: ^IO, fd: os.Handle, offset: Maybe(int), buf: []byte, user: rawptr, callback: On_Write) {
+_write :: proc(io: ^IO, fd: os.Handle, offset: Maybe(int), buf: []byte, user: rawptr, callback: On_Write, all := false) {
 	completion := pool_get(&io.completion_pool)
 	completion.ctx = context
 	completion.user_data = user
@@ -477,10 +538,13 @@ _write :: proc(io: ^IO, fd: os.Handle, offset: Maybe(int), buf: []byte, user: ra
 		fd     = fd,
 		buf    = buf,
 		offset = offset,
+		all    = all,
+		len    = len(buf),
 	}
 
-	completion.callback = proc(io: ^IO, completion: ^Completion) {
-		op := completion.operation.(Op_Write)
+	do_write :: proc(io: ^IO, completion: ^Completion) {
+		op       := &completion.operation.(Op_Write)
+		callback := cast(On_Write)completion.user_callback
 
 		written: int
 		err: os.Errno
@@ -491,17 +555,35 @@ _write :: proc(io: ^IO, fd: os.Handle, offset: Maybe(int), buf: []byte, user: ra
 		}
 		//odinfmt:enable
 
-		if err == os.EWOULDBLOCK {
-			append(&io.io_pending, completion)
+		op.written += written
+
+		if err != os.ERROR_NONE {
+			if err == os.EWOULDBLOCK {
+				append(&io.io_pending, completion)
+				return
+			}
+
+			callback(completion.user_data, op.written, err)
+			pool_put(&io.completion_pool, completion)
 			return
 		}
 
-		callback := cast(On_Write)completion.user_callback
-		callback(completion.user_data, written, err)
+		// The write did not write the whole buffer, need to write more.
+		if op.all && op.written < op.len {
+			op.buf = op.buf[written:]
 
+			// Increase offset so we don't overwrite what we just wrote.
+			if off, ok := &op.offset.?; ok do off^ += written
+
+			do_write(io, completion)
+			return
+		}
+
+		callback(completion.user_data, op.written, os.ERROR_NONE)
 		pool_put(&io.completion_pool, completion)
 	}
 
+	completion.callback = do_write
 	queue.push_back(&io.completed, completion)
 }
 

@@ -252,7 +252,23 @@ recv :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, callbac
 }
 
 /*
-The callback for non blocking `send` requests
+Receives from the given socket until the given buf is full or an error occurred, and calls the given callback
+
+*Due to platform limitations, you must pass a `net.TCP_Socket` or `net.UDP_Socket` that was opened/returned using/by this package*
+
+Inputs:
+- io:       The IO instance to use
+- socket:   Either a `net.TCP_Socket` or a `net.UDP_Socket` (that was opened/returned by this package) to receive from
+- buf:      The buffer to put received bytes into
+- user:     A pointer that will be passed through to the callback, free to use by you and untouched by us
+- callback: The callback that is called when the operation completes, see docs for `On_Recv` for its arguments
+*/
+recv_all :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, callback: On_Recv) {
+	_recv(io, socket, buf, user, callback, all = true)
+}
+
+/*
+The callback for non blocking `send` and `send_all` requests
 
 Inputs:
 - user: A passed through pointer from initiation to its callback
@@ -313,6 +329,66 @@ Sends at most `len(buf)` bytes from the given buffer over the socket connection,
 send :: proc {
 	send_udp,
 	send_tcp,
+}
+
+/*
+Sends the bytes from the given buffer over the socket connection, and calls the given callback
+
+This will keep sending until either an error or the full buffer is sent
+
+*Prefer using the `send` proc group*
+
+*Due to platform limitations, you must pass a `net.TCP_Socket` that was opened/returned using/by this package*
+
+Inputs:
+- io:       The IO instance to use
+- socket:   a `net.TCP_Socket` (that was opened/returned by this package) to send to
+- buf:      The buffer send
+- user:     A pointer that will be passed through to the callback, free to use by you and untouched by us
+- callback: The callback that is called when the operation completes, see docs for `On_Sent` for its arguments
+*/
+send_all_tcp :: proc(io: ^IO, socket: net.TCP_Socket, buf: []byte, user: rawptr, callback: On_Sent) {
+	_send(io, socket, buf, user, callback, all = true)
+}
+
+/*
+Sends the bytes from the given buffer over the socket connection to the given endpoint, and calls the given callback
+
+This will keep sending until either an error or the full buffer is sent
+
+*Prefer using the `send` proc group*
+
+*Due to platform limitations, you must pass a `net.UDP_Socket` that was opened/returned using/by this package*
+
+Inputs:
+- io:       The IO instance to use
+- endpoint: The endpoint to send bytes to over the socket
+- socket:   a `net.UDP_Socket` (that was opened/returned by this package) to send to
+- buf:      The buffer send
+- user:     A pointer that will be passed through to the callback, free to use by you and untouched by us
+- callback: The callback that is called when the operation completes, see docs for `On_Sent` for its arguments
+*/
+send_all_udp :: proc(
+	io: ^IO,
+	endpoint: net.Endpoint,
+	socket: net.UDP_Socket,
+	buf: []byte,
+	user: rawptr,
+	callback: On_Sent,
+) {
+	_send(io, socket, buf, user, callback, endpoint, all = true)
+}
+
+/*
+Sends the bytes from the given buffer over the socket connection, and calls the given callback
+
+This will keep sending until either an error or the full buffer is sent
+
+*Due to platform limitations, you must pass a `net.TCP_Socket` or `net.UDP_Socket` that was opened/returned using/by this package*
+*/
+send_all :: proc {
+	send_all_udp,
+	send_all_tcp,
 }
 
 /*
@@ -393,6 +469,22 @@ read :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_Rea
 }
 
 /*
+Reads from the given handle, at the handle's internal offset, until the given buf is full or an error occurred, increases the file offset, and calls the given callback
+
+*Due to platform limitations, you must pass a `os.Handle` that was opened/returned using/by this package*
+
+Inputs:
+- io:       The IO instance to use
+- fd:       The file handle (created using/by this package) to read from
+- buf:      The buffer to put read bytes into
+- user:     A pointer that will be passed through to the callback, free to use by you and untouched by us
+- callback: The callback that is called when the operation completes, see docs for `On_Read` for its arguments
+*/
+read_all :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_Read) {
+	_read(io, fd, nil, buf, user, callback, all = true)
+}
+
+/*
 Reads from the given handle, at the given offset, at most `len(buf)` bytes, and calls the given callback
 
 *Due to platform limitations, you must pass a `os.Handle` that was opened/returned using/by this package*
@@ -410,12 +502,29 @@ read_at :: proc(io: ^IO, fd: os.Handle, offset: int, buf: []byte, user: rawptr, 
 }
 
 /*
-The callback for non blocking `write` or `write_at` requests
+Reads from the given handle, at the given offset, until the given buf is full or an error occurred, and calls the given callback
+
+*Due to platform limitations, you must pass a `os.Handle` that was opened/returned using/by this package*
+
+Inputs:
+- io:       The IO instance to use
+- fd:       The file handle (created using/by this package) to read from
+- offset:   The offset to begin the read from
+- buf:      The buffer to put read bytes into
+- user:     A pointer that will be passed through to the callback, free to use by you and untouched by us
+- callback: The callback that is called when the operation completes, see docs for `On_Read` for its arguments
+*/
+read_at_all :: proc(io: ^IO, fd: os.Handle, offset: int, buf: []byte, user: rawptr, callback: On_Read) {
+	_read(io, fd, offset, buf, user, callback, all = true)
+}
+
+/*
+The callback for non blocking `write`, `write_all`, `write_at` and `write_at_all` requests
 
 Inputs:
 - user:     A passed through pointer from initiation to its callback
-- written: The amount of bytes that were written to the file
-- err:     An error number if an error occured, 0 otherwise
+- written:  The amount of bytes that were written to the file
+- err:      An error number if an error occured, 0 otherwise
 */
 On_Write :: #type proc(user: rawptr, written: int, err: os.Errno)
 
@@ -436,6 +545,24 @@ write :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_Wr
 }
 
 /*
+Writes the given buffer to the given handle, at the handle's internal offset, increases the file offset, and calls the given callback
+
+This keeps writing until either an error or the full buffer being written
+
+*Due to platform limitations, you must pass a `os.Handle` that was opened/returned using/by this package*
+
+Inputs:
+- io:       The IO instance to use
+- fd:       The file handle (created using/by this package) to write to
+- buf:      The buffer to write to the file
+- user:     A pointer that will be passed through to the callback, free to use by you and untouched by us
+- callback: The callback that is called when the operation completes, see docs for `On_Write` for its arguments
+*/
+write_all :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_Write) {
+	_write(io, fd, nil, buf, user, callback, true)
+}
+
+/*
 Writes to the given handle, at the given offset, at most `len(buf)` bytes, and calls the given callback
 
 *Due to platform limitations, you must pass a `os.Handle` that was opened/returned using/by this package*
@@ -450,6 +577,25 @@ Inputs:
 */
 write_at :: proc(io: ^IO, fd: os.Handle, offset: int, buf: []byte, user: rawptr, callback: On_Write) {
 	_write(io, fd, offset, buf, user, callback)
+}
+
+/*
+Writes the given buffer to the given handle, at the given offset, and calls the given callback
+
+This keeps writing until either an error or the full buffer being written
+
+*Due to platform limitations, you must pass a `os.Handle` that was opened/returned using/by this package*
+
+Inputs:
+- io:       The IO instance to use
+- fd:       The file handle (created using/by this package) to write to from
+- offset:   The offset to begin the write from
+- buf:      The buffer to write to the file
+- user:     A pointer that will be passed through to the callback, free to use by you and untouched by us
+- callback: The callback that is called when the operation completes, see docs for `On_Write` for its arguments
+*/
+write_at_all :: proc(io: ^IO, fd: os.Handle, offset: int, buf: []byte, user: rawptr, callback: On_Write) {
+	_write(io, fd, offset, buf, user, callback, true)
 }
 
 @(private)

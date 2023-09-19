@@ -323,41 +323,34 @@ response_send :: proc(r: ^Response, conn: ^Connection, loc := #caller_location) 
 response_send_got_body :: proc(r: ^Response, will_close: bool) {
 	conn := r._conn
 
+	if will_close {
+		if !connection_set_state(r._conn, .Will_Close) do return
+	}
+
 	if bytes.buffer_length(&r._buf) == 0 {
 		_response_write_heading(r, 0)
 	}
 
 	buf := bytes.buffer_to_bytes(&r._buf)
-	conn.loop.inflight = Response_Inflight {
-		buf        = buf,
-		will_close = will_close,
-	}
-	nbio.send(&td.io, conn.socket, buf, conn, on_response_sent)
+	nbio.send_all(&td.io, conn.socket, buf, conn, on_response_sent)
 }
 
 
 @(private)
 on_response_sent :: proc(conn_: rawptr, sent: int, err: net.Network_Error) {
 	conn := cast(^Connection)conn_
-	res := &conn.loop.inflight.(Response_Inflight)
-
-	res.sent += sent
-	if err == nil && len(res.buf) != res.sent {
-		nbio.send(&td.io, conn.socket, res.buf[res.sent:], conn, on_response_sent)
-		return
-	}
 
 	if err != nil {
 		log.errorf("could not send response: %v", err)
-		res.will_close = true
+		if !connection_set_state(conn, .Will_Close) do return
 	}
 
-	clean_request_loop(conn, res.will_close)
+	clean_request_loop(conn)
 }
 
 // Response has been sent, clean up and close/handle next.
 @(private)
-clean_request_loop :: proc(conn: ^Connection, close: bool = false) {
+clean_request_loop :: proc(conn: ^Connection, close: Maybe(bool) = nil) {
 	// log.debugf("%i: %v", conn.socket, conn.arena.total_used)
 	if conn.arena.total_used >= conn.server.opts.connection_allowed_size {
 		free_all(context.temp_allocator)
@@ -365,15 +358,13 @@ clean_request_loop :: proc(conn: ^Connection, close: bool = false) {
 
 	scanner_reset(&conn.scanner)
 
-	conn.loop.inflight = nil
 	conn.loop.req = {}
 	conn.loop.res = {}
 
-	switch {
-	case close:
+	if c, ok := close.?; (ok && c) || conn.state == .Will_Close {
 		connection_close(conn)
-
-	case connection_set_state(conn, .Idle):
+	} else {
+		if !connection_set_state(conn, .Idle) do return
 		conn_handle_req(conn, context.temp_allocator)
 	}
 }
@@ -411,18 +402,26 @@ response_can_have_body :: proc(r: ^Response, conn: ^Connection) -> bool {
 }
 
 // Determines if the connection needs to be closed after sending the response.
-//
-// If the request we are responding to indicates it is closing the connection, close our side too.
-// If we are responding with a close connection header, make sure we close.
 @(private)
 response_must_close :: proc(req: ^Request, res: ^Response) -> bool {
+	// If the request we are responding to indicates it is closing the connection, close our side too.
 	if req, req_has := req.headers["connection"]; req_has && req == "close" {
-		return true
-	} else if res, res_has := res.headers["connection"]; res_has && res == "close" {
 		return true
 	}
 
+	// If we are responding with a close connection header, make sure we close.
+	if res, res_has := res.headers["connection"]; res_has && res == "close" {
+		return true
+	}
+
+	// If the body was tried to be received, but failed, close.
 	if body_ok, got_body := req._body_ok.?; got_body && !body_ok {
+		req.headers["connection"] = "close"
+		return true
+	}
+
+	// If the connection's state indicates closing, close.
+	if res._conn.state >= .Will_Close {
 		req.headers["connection"] = "close"
 		return true
 	}
