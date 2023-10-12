@@ -4,7 +4,7 @@ import "core:c"
 import "core:c/libc"
 
 // odinfmt:disable
-when ODIN_OS == .Darwin {
+when ODIN_OS == .Darwin && ODIN_ARCH == .arm64 {
 	foreign import lib {
 		"./includes/darwin/libssl.a",
 		"./includes/darwin/libcrypto.a",
