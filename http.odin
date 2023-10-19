@@ -360,9 +360,8 @@ request_path :: proc(target: URL, allocator := context.allocator) -> (rq_path: s
 	return strings.to_string(res)
 }
 
-// NOTE: #no_bounds_check is very important here, if `len(d) == 0`, it would panic, even though it is fine.
-_dynamic_unwritten :: proc(d: [dynamic]$E) -> []E #no_bounds_check {
-	return slice.from_ptr(slice.ptr_add(&d[0], len(d) * size_of(E)), cap(d))
+_dynamic_unwritten :: proc(d: [dynamic]$E) -> []E  {
+	return (cast([^]E)raw_data(d))[len(d):cap(d)]
 }
 
 _dynamic_add_len :: proc(d: ^[dynamic]$E, len: int) {
@@ -402,3 +401,34 @@ MONTHS := [13]string {
 	" Nov ",
 	" Dec ",
 }
+
+import "core:testing"
+
+@(test)
+test_dynamic_unwritten :: proc(t: ^testing.T) {
+	{
+		d  := make([dynamic]int, 4, 8)
+		du := _dynamic_unwritten(d)
+
+		testing.expect(t, len(du) == 4)
+	}
+
+	{
+		d := slice.into_dynamic([]int{1, 2, 3, 4, 5})
+		_dynamic_add_len(&d, 3)
+		du := _dynamic_unwritten(d)
+
+		testing.expect(t, len(d)  == 3)
+		testing.expect(t, len(du) == 2)
+		testing.expect(t, du[0] == 4)
+		testing.expect(t, du[1] == 5)
+	}
+
+	{
+		d := slice.into_dynamic([]int{})
+		du := _dynamic_unwritten(d)
+
+		testing.expect(t, len(du) == 0)
+	}
+}
+
