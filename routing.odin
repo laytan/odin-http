@@ -180,8 +180,7 @@ route_add :: proc(router: ^Router, method: Method, route: Route) {
 	append(&router.routes[method], route)
 }
 
-@(private)
-@(thread_local)
+@(private, thread_local)
 routes_try_captures: [match.MAX_CAPTURES]match.Match
 
 @(private)

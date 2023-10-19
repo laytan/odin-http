@@ -72,8 +72,7 @@ _status_strings: [max(Status) + Status(1)]string
 
 // Populates the status_strings like a map from status to their string representation.
 // Where an empty string means an invalid code.
-@(init)
-@(private)
+@(init, private)
 status_strings_init :: proc() {
 	// Some edge cases aside, replaces underscores in the enum name with spaces.
 	status_name_fmt :: proc(val: Status, orig: string) -> (new: string, allocated: bool) {

@@ -58,8 +58,7 @@ Default_Server_Opts := Server_Opts {
 	connection_allowed_size = 3   * mem.Megabyte,
 }
 
-@(init)
-@(private)
+@(init, private)
 server_opts_init :: proc() {
 	when ODIN_OS == .Linux {
 		Default_Server_Opts.thread_count = os.processor_core_count() - 1
@@ -105,8 +104,7 @@ Server_Thread :: struct {
 	io:    nbio.IO,
 }
 
-@(private)
-@(disabled = ODIN_DISABLE_ASSERT)
+@(private, disabled = ODIN_DISABLE_ASSERT)
 assert_has_td :: #force_inline proc(loc := #caller_location) {
 	assert(td.state != .Uninitialized, "The thread you are calling from is not a server/handler thread", loc)
 }
