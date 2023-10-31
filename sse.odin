@@ -105,22 +105,11 @@ sse_start :: proc(sse: ^Sse) {
 			return
 		}
 
-		res := &sse.r._conn.loop.inflight.(Response_Inflight)
-
-		res.sent += n
-		if len(res.buf) != res.sent {
-			nbio.send(&td.io, sse.r._conn.socket, res.buf[res.sent:], sse, on_start_send)
-			return
-		}
-
 		_sse_process(sse)
 	}
 
 	buf := bytes.buffer_to_bytes(&sse.r._buf)
-	sse.r._conn.loop.inflight = Response_Inflight {
-		buf = buf,
-	}
-	nbio.send(&td.io, sse.r._conn.socket, buf, sse, on_start_send)
+	nbio.send_all(&td.io, sse.r._conn.socket, buf, sse, on_start_send)
 }
 
 /*
@@ -221,7 +210,7 @@ _sse_process :: proc(sse: ^Sse) {
 	}
 
 	_sse_event_prepare(sse)
-	nbio.send(&td.io, sse.r._conn.socket, sse._buf.buf[:], sse, _sse_on_send)
+	nbio.send_all(&td.io, sse.r._conn.socket, sse._buf.buf[:], sse, _sse_on_send)
 }
 
 _sse_on_send :: proc(sse: rawptr, n: int, err: net.Network_Error) {
@@ -233,12 +222,6 @@ _sse_on_send :: proc(sse: rawptr, n: int, err: net.Network_Error) {
 	}
 
 	if sse.state == .Close do return
-
-	sse._sent += n
-	if len(sse._buf.buf) > sse._sent {
-		nbio.send(&td.io, sse.r._conn.socket, sse._buf.buf[sse._sent:], sse, _sse_on_send)
-		return
-	}
 
 	queue.pop_front(&sse._events)
 	_sse_process(sse)
