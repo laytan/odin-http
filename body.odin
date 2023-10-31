@@ -29,7 +29,8 @@ Do not call this more than once.
 body :: proc(req: ^Request, max_length: int = 0, user_data: rawptr, cb: Body_Callback) {
 	assert(req._body_ok == nil, "you can only call body once per request")
 
-	if enc_header, ok := headers_get_unsafe(&req.headers, "transfer-encoding"); ok && strings.has_suffix(enc_header, "chunked") {
+	enc_header, ok := headers_get_unsafe(req.headers, "transfer-encoding")
+	if ok && strings.has_suffix(enc_header, "chunked") {
 		_body_chunked(req, max_length, user_data, cb)
 	} else {
 		_body_length(req, max_length, user_data, cb)
@@ -117,7 +118,7 @@ body_error_status :: proc(e: Body_Error) -> Status {
 _body_length :: proc(req: ^Request, max_length: int = -1, user_data: rawptr, cb: Body_Callback) {
 	req._body_ok = false
 
-	len, ok := headers_get_unsafe(&req.headers, "content-length")
+	len, ok := headers_get_unsafe(req.headers, "content-length")
 	if !ok {
 		cb(user_data, "", nil)
 		return
@@ -257,8 +258,9 @@ _body_chunked :: proc(req: ^Request, max_length: int = -1, user_data: rawptr, cb
 		if err != nil || len(line) == 0 {
 			headers_delete_unsafe(&s.req.headers, "trailer")
 
-			new_te_header := strings.trim_suffix(headers_get_unsafe(&s.req.headers, "transfer-encoding"), "chunked")
-			headers_set_unsafe(&s.req.headers, new_te_header)
+			te_header := headers_get_unsafe(s.req.headers, "transfer-encoding")
+			new_te_header := strings.trim_suffix(te_header, "chunked")
+			headers_set_unsafe(&s.req.headers, "transfer-encoding", new_te_header)
 
 			s.req._body_ok = true
 			s.cb(s.user_data, strings.to_string(s.buf), nil)
@@ -275,7 +277,7 @@ _body_chunked :: proc(req: ^Request, max_length: int = -1, user_data: rawptr, cb
 		// A recipient MUST ignore (or consider as an error) any fields that are forbidden to be sent in a trailer.
 		if !header_allowed_trailer(key) {
 			log.infof("Invalid trailer header received, discarding it: %q", key)
-			delete_key(&s.req.headers, key)
+			headers_delete(&s.req.headers, key)
 		}
 
 		scanner_scan(s.req._scanner, s, on_scan_trailer)

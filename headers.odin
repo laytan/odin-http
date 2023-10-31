@@ -1,7 +1,6 @@
 package http
 
 import "core:intrinsics"
-import "core:mem"
 
 // A case-insensitive ASCII map for storing headers.
 Headers :: struct {
@@ -13,7 +12,7 @@ headers_init :: proc(h: ^Headers, allocator := context.temp_allocator) {
 	h._kv.allocator = allocator
 }
 
-headers_count :: proc(h: Headers) -> int {
+headers_count :: #force_inline proc(h: Headers) -> int {
 	return len(h._kv)
 }
 
@@ -45,11 +44,11 @@ headers_set :: proc(h: ^Headers, k: string, v: string, loc := #caller_location) 
 /*
 Unsafely set header, given key is assumed to be a lowercase string.
 */
-headers_set_unsafe :: proc(h: ^Headers, k: string, v: string) {
+headers_set_unsafe :: #force_inline proc(h: ^Headers, k: string, v: string) {
 	h._kv[k] = v
 }
 
-headers_get :: proc(h: Headers, k: string) -> (string, bool) {
+headers_get :: proc(h: Headers, k: string) -> (string, bool) #optional_ok {
 	l := intrinsics.alloca(len(k), 1)[:len(k)]
 	for b, i in transmute([]byte)k {
 		if b >= 'A' && b <= 'Z' {
@@ -65,7 +64,7 @@ headers_get :: proc(h: Headers, k: string) -> (string, bool) {
 /*
 Unsafely get header, given key is assumed to be a lowercase string.
 */
-headers_get_unsafe :: proc(h: Headers, k: string) -> (string, bool) {
+headers_get_unsafe :: #force_inline proc(h: Headers, k: string) -> (string, bool) #optional_ok {
 	return h._kv[k]
 }
 
@@ -85,7 +84,7 @@ headers_has :: proc(h: Headers, k: string) -> bool {
 /*
 Unsafely check for a header, given key is assumed to be a lowercase string.
 */
-headers_has_unsafe :: proc(h: Headers, k: string) -> bool {
+headers_has_unsafe :: #force_inline proc(h: Headers, k: string) -> bool {
 	return k in h._kv
 }
 
@@ -105,6 +104,16 @@ headers_delete :: proc(h: ^Headers, k: string) {
 /*
 Unsafely delete a header, given key is assumed to be a lowercase string.
 */
-headers_delete_unsafe :: proc(h: ^Headers, k: string) {
+headers_delete_unsafe :: #force_inline proc(h: ^Headers, k: string) {
 	delete_key(&h._kv, k)
+}
+
+/* Common Helpers */
+
+headers_set_content_type :: #force_inline proc(h: ^Headers, ct: string) {
+	headers_set_unsafe(h, "content-type", ct)
+}
+
+headers_set_close :: #force_inline proc(h: ^Headers) {
+	headers_set_unsafe(h, "connection", "close")
 }

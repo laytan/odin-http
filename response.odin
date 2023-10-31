@@ -112,7 +112,7 @@ buffering.
 NOTE: You need to call io.destroy to signal the end of the body, OR io.close to send the response.
 */
 response_writer_init :: proc(rw: ^Response_Writer, r: ^Response, buffer: []byte) -> io.Writer {
-	r.headers["transfer-encoding"] = "chunked"
+	headers_set_unsafe(&r.headers, "transfer-encoding", "chunked")
 	_response_write_heading(r, -1)
 
 	rw.buf = slice.into_dynamic(buffer)
@@ -299,7 +299,7 @@ response_send :: proc(r: ^Response, conn: ^Connection, loc := #caller_location) 
 		if err != nil {
 			// Any read error should close the connection.
 			response_status(res, body_error_status(err))
-			res.headers["connection"] = "close"
+			headers_set_close(&res.headers)
 			will_close = true
 		}
 
@@ -410,24 +410,24 @@ response_can_have_body :: proc(r: ^Response, conn: ^Connection) -> bool {
 @(private)
 response_must_close :: proc(req: ^Request, res: ^Response) -> bool {
 	// If the request we are responding to indicates it is closing the connection, close our side too.
-	if req, req_has := req.headers["connection"]; req_has && req == "close" {
+	if req, req_has := headers_get_unsafe(req.headers, "connection"); req_has && req == "close" {
 		return true
 	}
 
 	// If we are responding with a close connection header, make sure we close.
-	if res, res_has := res.headers["connection"]; res_has && res == "close" {
+	if res, res_has := headers_get_unsafe(res.headers, "connection"); res_has && res == "close" {
 		return true
 	}
 
 	// If the body was tried to be received, but failed, close.
 	if body_ok, got_body := req._body_ok.?; got_body && !body_ok {
-		req.headers["connection"] = "close"
+		headers_set_close(&res.headers)
 		return true
 	}
 
 	// If the connection's state indicates closing, close.
 	if res._conn.state >= .Will_Close {
-		req.headers["connection"] = "close"
+		headers_set_close(&res.headers)
 		return true
 	}
 
