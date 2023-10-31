@@ -13,7 +13,7 @@ import "nbio"
 // Sets the response to one that sends the given HTML.
 respond_html :: proc(r: ^Response, html: string, status: Status = .OK, loc := #caller_location) {
 	r.status = .OK
-	r.headers["content-type"] = mime_to_content_type(Mime_Type.Html)
+	headers_set_content_type(&r.headers, mime_to_content_type(Mime_Type.Html))
 	body_set(r, html, loc)
 	respond(r, loc)
 }
@@ -21,7 +21,7 @@ respond_html :: proc(r: ^Response, html: string, status: Status = .OK, loc := #c
 // Sets the response to one that sends the given plain text.
 respond_plain :: proc(r: ^Response, text: string, status: Status = .OK, loc := #caller_location) {
 	r.status = .OK
-	r.headers["content-type"] = mime_to_content_type(Mime_Type.Plain)
+	headers_set_content_type(&r.headers, mime_to_content_type(Mime_Type.Plain))
 	body_set(r, text, loc)
 	respond(r, loc)
 }
@@ -69,7 +69,7 @@ respond_file :: proc(r: ^Response, path: string, content_type: Maybe(Mime_Type) 
 
 	mime := mime_from_extension(path)
 	content_type := mime_to_content_type(mime)
-	r.headers["content-type"] = content_type
+	headers_set_content_type(&r.headers, content_type)
 
 	_response_write_heading(r, size)
 
@@ -109,7 +109,7 @@ respond_file_content :: proc(r: ^Response, path: string, content: []byte, status
 	content_type := mime_to_content_type(mime)
 
 	r.status = status
-	r.headers["content-type"] = content_type
+	headers_set_content_type(&r.headers, content_type)
 	body_set(r, content, loc)
 	respond(r, loc)
 }
@@ -146,7 +146,7 @@ respond_json :: proc(r: ^Response, v: any, status: Status = .OK, opt: json.Marsh
 	opt := opt
 
 	r.status = status
-	r.headers["content-type"] = mime_to_content_type(Mime_Type.Json)
+	headers_set_content_type(&r.headers, mime_to_content_type(Mime_Type.Json))
 
 	// Going to write a MINIMUM of 128 bytes at a time.
 	rw:  Response_Writer
@@ -157,7 +157,7 @@ respond_json :: proc(r: ^Response, v: any, status: Status = .OK, opt: json.Marsh
 	defer io.close(rw.w)
 
 	if err = json.marshal_to_writer(rw.w, v, &opt); err != nil {
-		r.headers["connection"] = "close"
+		headers_set_close(&r.headers)
 		response_status(r, .Internal_Server_Error)
 	}
 

@@ -141,17 +141,6 @@ method_parse :: proc(m: string) -> (method: Method, ok: bool) #no_bounds_check {
 	return nil, false
 }
 
-// Headers are request or response headers.
-//
-// They are always parsed to lowercase because they are case-insensitive,
-// This allows you to just check the lowercase variant for existence/value.
-//
-// Thus, you should always add keys in lowercase.
-//
-// TODO: for usability make this a case-insensitive lookup and store, so users can pass whatever
-// casing they want, it will cost some performance but forcing lowercase is not expected.
-Headers :: map[string]string
-
 header_parse :: proc(headers: ^Headers, line: string, allocator := context.temp_allocator) -> (key: string, ok: bool) {
 	// Preceding spaces should not be allowed.
 	(len(line) > 0 && line[0] != ' ') or_return
@@ -162,16 +151,16 @@ header_parse :: proc(headers: ^Headers, line: string, allocator := context.temp_
 	// There must not be a space before the colon.
 	(line[colon - 1] != ' ') or_return
 
-	// Header field names are case-insensitive, so lets represent them all in lowercase.
-	// TODO: do a to_lower based on the bytes and mutate the original string to safe an allocation.
-	key = strings.to_lower(line[:colon], allocator)
-	defer if !ok do delete(key)
+	// TODO/PERF: only actually relevant/needed if the key is one of these.
+	has_host   := headers_has_unsafe(headers^, "host")
+	cl, has_cl := headers_get_unsafe(headers^, "content-length")
 
 	value := strings.trim_space(line[colon + 1:])
+	key = headers_set(headers, line[:colon], value)
 
 	// RFC 7230 5.4: Server MUST respond with 400 to any request
 	// with multiple "Host" header fields.
-	if key == "host" && key in headers {
+	if key == "host" && has_host {
 		return
 	}
 
@@ -180,13 +169,10 @@ header_parse :: proc(headers: ^Headers, line: string, allocator := context.temp_
 	// field-values or a single Content-Length header field having an
 	// invalid value, then the message framing is invalid and the
 	// recipient MUST treat it as an unrecoverable error.
-	if key == "content-length" {
-		if curr_length, has_length_header := headers[key]; has_length_header {
-			(curr_length == value) or_return
-		}
+	if key == "content-length" && has_cl && cl != value {
+		return
 	}
 
-	headers[key] = value
 	ok = true
 	return
 }

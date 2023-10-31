@@ -31,7 +31,7 @@ parse_endpoint :: proc(target: string) -> (url: http.URL, endpoint: net.Endpoint
 		}
 		return
 	case:
-		panic("unreachable")
+		unreachable()
 	}
 }
 
@@ -44,7 +44,7 @@ format_request :: proc(target: http.URL, request: ^Request, allocator := context
 		{method = request.method, target = target, version = http.Version{1, 1}},
 	)
 
-	if "content-length" not_in request.headers {
+	if !http.headers_has_unsafe(request.headers, "content-length") {
 		buf_len := bytes.buffer_length(&request.body)
 		if buf_len == 0 {
 			bytes.buffer_write_string(&buf, "content-length: 0\r\n")
@@ -64,21 +64,21 @@ format_request :: proc(target: http.URL, request: ^Request, allocator := context
 		}
 	}
 
-	if "accept" not_in request.headers {
+	if !http.headers_has_unsafe(request.headers, "accept") {
 		bytes.buffer_write_string(&buf, "accept: */*\r\n")
 	}
 
-	if "user-agent" not_in request.headers {
+	if !http.headers_has_unsafe(request.headers, "user-agent") {
 		bytes.buffer_write_string(&buf, "user-agent: odin-http\r\n")
 	}
 
-	if "host" not_in request.headers {
+	if !http.headers_has_unsafe(request.headers, "host") {
 		bytes.buffer_write_string(&buf, "host: ")
 		bytes.buffer_write_string(&buf, target.host)
 		bytes.buffer_write_string(&buf, "\r\n")
 	}
 
-	for header, value in request.headers {
+	for header, value in request.headers._kv {
 		bytes.buffer_write_string(&buf, header)
 		bytes.buffer_write_string(&buf, ": ")
 
@@ -140,7 +140,7 @@ parse_response :: proc(socket: Communication, allocator := context.allocator) ->
 	scanner: bufio.Scanner
 	bufio.scanner_init(&scanner, stream_reader, allocator)
 
-	res.headers = make(http.Headers, 3, allocator)
+	http.headers_init(&res.headers, allocator)
 
 	if !bufio.scanner_scan(&scanner) {
 		err = bufio.scanner_error(&scanner)
@@ -185,8 +185,8 @@ parse_response :: proc(socket: Communication, allocator := context.allocator) ->
 		}
 
 		if key == "set-cookie" {
-			cookie_str := res.headers["set-cookie"]
-			delete_key(&res.headers, key)
+			cookie_str := http.headers_get_unsafe(res.headers, "set-cookie")
+			http.headers_delete_unsafe(&res.headers, "set-cookie")
 			delete(key)
 
 			cookie, ok := http.cookie_parse(cookie_str, allocator)
@@ -203,6 +203,8 @@ parse_response :: proc(socket: Communication, allocator := context.allocator) ->
 		err = Request_Error.Invalid_Response_Header
 		return
 	}
+
+	res.headers.readonly = true
 
 	res._body = scanner
 	return res, nil

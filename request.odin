@@ -25,14 +25,18 @@ Request :: struct {
 }
 
 request_init :: proc(r: ^Request, allocator := context.allocator) {
-	r.headers = make(Headers, 3, allocator)
+	headers_init(&r.headers, allocator)
 }
+
+// TODO: call it headers_sanitize because it modifies the headers.
 
 // Validates the headers of a request, from the pov of the server.
 headers_validate_for_server :: proc(headers: ^Headers) -> bool {
 	// RFC 7230 5.4: A server MUST respond with a 400 (Bad Request) status code to any
 	// HTTP/1.1 request message that lacks a Host header field.
-	("host" in headers) or_return
+	if !headers_has_unsafe(headers^, "host") {
+		return false
+	}
 
 	return headers_validate(headers)
 }
@@ -45,7 +49,7 @@ headers_validate :: proc(headers: ^Headers) -> bool {
 	// the final encoding, the message body length cannot be determined
 	// reliably; the server MUST respond with the 400 (Bad Request)
 	// status code and then close the connection.
-	if enc_header, ok := headers["transfer-encoding"]; ok {
+	if enc_header, ok := headers_get_unsafe(headers^, "transfer-encoding"); ok {
 		strings.has_suffix(enc_header, "chunked") or_return
 	}
 
@@ -54,9 +58,8 @@ headers_validate :: proc(headers: ^Headers) -> bool {
 	// Content-Length.  Such a message might indicate an attempt to
 	// perform request smuggling (Section 9.5) or response splitting
 	// (Section 9.4) and ought to be handled as an error.
-	if "transfer-encoding" in headers && "content-length" in headers {
-		delete(headers["content-length"])
-		delete_key(headers, "content-length")
+	if headers_has_unsafe(headers^, "transfer-encoding") && headers_has_unsafe(headers^, "content-length") {
+		headers_delete_unsafe(headers, "content-length")
 	}
 
 	return true

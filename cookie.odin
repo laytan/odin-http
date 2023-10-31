@@ -147,15 +147,12 @@ cookie_parse :: proc(value: string, allocator := context.allocator) -> (cookie: 
 			case "path":
 				cookie.path = value
 			case "samesite":
-				val := strings.to_lower(value, allocator)
-				defer delete(val)
-
 				switch value {
-				case "lax":
+				case "lax", "Lax", "LAX":
 					cookie.same_site = .Lax
-				case "none":
+				case "none", "None", "NONE":
 					cookie.same_site = .None
-				case "strict":
+				case "strict", "Strict", "STRICT":
 					cookie.same_site = .Strict
 				case:
 					return
@@ -190,7 +187,7 @@ Retrieves the cookie with the given `key` out of the requests `Cookie` header.
 If the same key is in the header multiple times the last one is returned.
 */
 request_cookie_get :: proc(r: ^Request, key: string) -> (value: string, ok: bool) {
-	cookies := r.headers["cookie"] or_return
+	cookies := headers_get_unsafe(r.headers, "cookie") or_return
 
 	for k, v in request_cookies_iter(&cookies) {
 		if key == k do return v, true
@@ -207,7 +204,7 @@ If the same key is in the header multiple times the last one is returned.
 request_cookies :: proc(r: ^Request, allocator := context.temp_allocator) -> (res: map[string]string) {
 	res.allocator = allocator
 
-	cookies := r.headers["cookie"] or_else ""
+	cookies := headers_get_unsafe(r.headers, "cookie") or_else ""
 	for k, v in request_cookies_iter(&cookies) {
 		// Don't overwrite, the iterator goes from right to left and we want the last.
 		if k in res do continue

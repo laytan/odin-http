@@ -55,7 +55,6 @@ _destroy :: proc(io: ^IO) {
 	pool_destroy(&io.completion_pool)
 }
 
-// TODO: should this be the entries parameter?
 MAX_EVENTS :: 256
 
 _tick :: proc(io: ^IO) -> os.Errno {

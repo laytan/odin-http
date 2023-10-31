@@ -461,7 +461,7 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.temp_allocator) {
 		switch err {
 		case .Method_Not_Implemented:
 			log.infof("request-line %q invalid method", string(token))
-			l.res.headers["connection"] = "close"
+			headers_set_close(&l.res.headers)
 			l.res.status = .Not_Implemented
 			respond(&l.res)
 			return
@@ -476,7 +476,7 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.temp_allocator) {
 		// Might need to support more versions later.
 		if rline.version.major != 1 || rline.version.minor < 1 {
 			log.infof("request http version not supported %v", rline.version)
-			l.res.headers["connection"] = "close"
+			headers_set_close(&l.res.headers)
 			l.res.status = .HTTP_Version_Not_Supported
 			respond(&l.res)
 			return
@@ -506,7 +506,7 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.temp_allocator) {
 
 		if _, ok := header_parse(&l.req.headers, string(token)); !ok {
 			log.warnf("header-line %s is invalid", string(token))
-			l.res.headers["connection"] = "close"
+			headers_set_close(&l.res.headers)
 			l.res.status = .Bad_Request
 			respond(&l.res)
 			return
@@ -515,7 +515,7 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.temp_allocator) {
 		l.conn.scanner.max_token_size -= len(token)
 		if l.conn.scanner.max_token_size <= 0 {
 			log.warn("request headers too large")
-			l.res.headers["connection"] = "close"
+			headers_set_close(&l.res.headers)
 			l.res.status = .Request_Header_Fields_Too_Large
 			respond(&l.res)
 			return
@@ -527,16 +527,18 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.temp_allocator) {
 	on_headers_end :: proc(l: ^Loop) {
 		if !headers_validate_for_server(&l.req.headers) {
 			log.warn("request headers are invalid")
-			l.res.headers["connection"] = "close"
+			headers_set_close(&l.res.headers)
 			l.res.status = .Bad_Request
 			respond(&l.res)
 			return
 		}
 
+		l.req.headers.readonly = true
+
 		l.conn.scanner.max_token_size = bufio.DEFAULT_MAX_SCAN_TOKEN_SIZE
 
 		// Automatically respond with a continue status when the client has the Expect: 100-continue header.
-		if expect, ok := l.req.headers["expect"];
+		if expect, ok := headers_get_unsafe(l.req.headers, "expect");
 		   ok && expect == "100-continue" && l.conn.server.opts.auto_expect_continue {
 
 			l.res.status = .Continue

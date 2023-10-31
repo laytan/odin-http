@@ -24,7 +24,7 @@ Request :: struct {
 // Initializes the request with sane defaults using the given allocator.
 request_init :: proc(r: ^Request, method := http.Method.Get, allocator := context.allocator) {
 	r.method = method
-	r.headers = make(http.Headers, 3, allocator)
+	http.headers_init(&r.headers)
 	r.cookies = make([dynamic]http.Cookie, allocator)
 	bytes.buffer_init_allocator(&r.body, 0, 0, allocator)
 }
@@ -33,14 +33,14 @@ request_init :: proc(r: ^Request, method := http.Method.Get, allocator := contex
 // Header keys and values that the user added will have to be deleted by the user.
 // Same with any strings inside the cookies.
 request_destroy :: proc(r: ^Request) {
-	delete(r.headers)
+	delete(r.headers._kv)
 	delete(r.cookies)
 	bytes.buffer_destroy(&r.body)
 }
 
 with_json :: proc(r: ^Request, v: any, opt: json.Marshal_Options = {}) -> json.Marshal_Error {
 	r.method = .Post
-	r.headers["content-type"] = http.mime_to_content_type(.Json)
+	http.headers_set_content_type(&r.headers, http.mime_to_content_type(.Json))
 
 	stream := bytes.buffer_to_stream(&r.body)
 	opt := opt
@@ -83,7 +83,7 @@ request :: proc(target: string, request: ^Request, allocator := context.allocato
 	defer delete(url.queries)
 
 	// NOTE: we don't support persistent connections yet.
-	request.headers["connection"] = "close"
+	http.headers_set_close(&request.headers)
 
 	req_buf := format_request(url, request, allocator)
 	defer bytes.buffer_destroy(&req_buf)
@@ -145,10 +145,14 @@ Response :: struct {
 // Optionally pass the response_body returned 'body' and 'was_allocation' to destroy it too.
 response_destroy :: proc(res: ^Response, body: Maybe(Body_Type) = nil, was_allocation := false) {
 	// Header keys are allocated, values are slices into the body.
-	for k in res.headers {
+	// NOTE: this is fine because we don't add any headers with `headers_set_unsafe()`.
+	// If we did, we wouldn't know if the key was allocated or a literal.
+	// We also set the headers to readonly before giving them to the user so they can't add any either.
+	for k in res.headers._kv {
 		delete(k)
 	}
-	delete(res.headers)
+
+	delete(res.headers._kv)
 
 	bufio.scanner_destroy(&res._body)
 
@@ -243,8 +247,8 @@ _parse_body :: proc(
 	// See [RFC 7230 3.3.3](https://www.rfc-editor.org/rfc/rfc7230#section-3.3.3) for the rules.
 	// Point 3 paragraph 3 and point 4 are handled before we get here.
 
-	enc, has_enc       := headers["transfer-encoding"]
-	length, has_length := headers["content-length"]
+	enc, has_enc       := http.headers_get_unsafe(headers^, "transfer-encoding")
+	length, has_length := http.headers_get_unsafe(headers^, "content-length")
 	switch {
 	case has_enc && strings.has_suffix(enc, "chunked"):
 		was_allocation = true
@@ -258,7 +262,7 @@ _parse_body :: proc(
 	}
 
 	// Automatically decode url encoded bodies.
-	if typ, ok := headers["content-type"]; ok && typ == "application/x-www-form-urlencoded" {
+	if typ, ok := http.headers_get_unsafe(headers^, "content-type"); ok && typ == "application/x-www-form-urlencoded" {
 		plain := body.(Body_Plain)
 		defer if was_allocation do delete(plain)
 
@@ -461,17 +465,16 @@ _response_body_chunked :: proc(
 
 		// A recipient MUST ignore (or consider as an error) any fields that are forbidden to be sent in a trailer.
 		if !http.header_allowed_trailer(key) {
-			delete(headers[key])
-			delete_key(headers, key)
+			http.headers_delete(headers, key)
 		}
 	}
 
-	if "trailer" in headers {
-		delete(headers["trailer"])
-		delete_key(headers, "trailer")
+	if http.headers_has(headers^, "trailer") {
+		http.headers_delete_unsafe(headers, "trailer")
 	}
 
-	headers["transfer-encoding"] = strings.trim_suffix(headers["transfer-encoding"], "chunked")
+	te := strings.trim_suffix(http.headers_get_unsafe(headers^, "transfer-encoding"), "chunked")
+	http.headers_set_unsafe(headers, "transfer-encoding", te)
 
 	return bytes.buffer_to_string(&body_buff), .None
 }
