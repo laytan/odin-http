@@ -4,6 +4,7 @@ import "core:bytes"
 import "core:encoding/json"
 import "core:fmt"
 import "core:log"
+import "core:strings"
 
 import http "../.."
 
@@ -40,37 +41,38 @@ main :: proc() {
 	// They are very similar to regex patterns but a bit more limited, which makes them much easier to implement since Odin does not have a regex implementation.
 
 	http.route_get(&router, "/hello/(%w+)", http.handler(proc(req: ^http.Request, res: ^http.Response) {
-			http.respond_plain(res, "Hello, ")
-			bytes.buffer_write_string(&res.body, req.url_params[0])
-			http.respond(res)
-		}))
+		http.respond_plain(res, strings.concatenate({ "Hello, ", req.url_params[0] }))
+		http.respond(res)
+	}))
 
 	// JSON/body example.
 	http.route_post(&router, "/ping", http.handler(proc(req: ^http.Request, res: ^http.Response) {
-			http.request_body(req, proc(body: http.Body_Type, was_alloc: bool, res: rawptr) {
-					res := cast(^http.Response)res
+		http.body(
+			req,
+			user_data = res,
+			cb = proc(res: rawptr, body: http.Body, err: http.Body_Error) {
+				res := cast(^http.Response)res
 
-					if err, is_err := body.(http.Body_Error); is_err {
-						res.status = http.body_error_status(err)
-						http.respond(res)
-						return
-					}
+				if err != nil {
+					http.respond(res, http.body_error_status(err))
+					return
+				}
 
-					p: Hello_Req_Payload
-					if err := json.unmarshal_string(body.(http.Body_Plain) or_else "", &p); err != nil {
-						log.infof("invalid ping payload %q: %s", body, err)
-						res.status = http.Status.Unprocessable_Content
-						return
-					}
+				p: Hello_Req_Payload
+				if err := json.unmarshal_string(body, &p); err != nil {
+					log.infof("invalid ping payload %q: %s", body, err)
+					http.respond(res, http.Status.Unprocessable_Content)
+					return
+				}
 
-					http.respond_json(res, Hello_Res_Payload{message = fmt.tprintf("Hello %s!", p.name)})
-				}, user_data = res)
-		}))
+				http.respond_json(res, Hello_Res_Payload{message = fmt.tprintf("Hello %s!", p.name)})
+			},
+		)
+	}))
 
 	// Custom 404 page.
 	http.route_all(&router, "(.*)", http.handler(proc(req: ^http.Request, res: ^http.Response) {
-			http.respond_plain(res, fmt.tprintf("Welcome, could not find the path %q", req.url_params[0]))
-			res.status = .Not_Found
+			http.respond_plain(res, fmt.tprintf("Welcome, could not find the path %q", req.url_params[0]), .Not_Found)
 		}))
 
 	handler := http.router_handler(&router)
