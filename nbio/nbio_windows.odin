@@ -105,7 +105,7 @@ _tick :: proc(io: ^IO) -> (err: os.Errno) {
 		}
 	}
 
-	// Prevent infinte loop when callback adds to completed by storing length.
+	// Prevent infinite loop when callback adds to completed by storing length.
 	n := queue.len(io.completed)
 	for _ in 0 ..< n {
 		completion := queue.pop_front(&io.completed)

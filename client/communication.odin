@@ -31,7 +31,7 @@ parse_endpoint :: proc(target: string) -> (url: http.URL, endpoint: net.Endpoint
 		}
 		return
 	case:
-		panic("unreachable")
+		unreachable()
 	}
 }
 

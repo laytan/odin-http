@@ -31,9 +31,10 @@ Response :: struct {
 
 response_init :: proc(r: ^Response, allocator := context.allocator) {
 	r.status             = .Not_Found
-	r.headers.allocator  = allocator
 	r.cookies.allocator  = allocator
 	r._buf.buf.allocator = allocator
+
+	headers_init(&r.headers, allocator)
 }
 
 /*
@@ -220,7 +221,7 @@ _response_write_heading :: proc(r: ^Response, content_length: int) {
 
 	MIN             :: len("HTTP/1.1 200 \r\ndate: \r\ncontent-length: 1000\r\n") + DATE_LENGTH
 	AVG_HEADER_SIZE :: 20
-	reserve_size    := MIN + content_length + (AVG_HEADER_SIZE * len(r.headers))
+	reserve_size    := MIN + content_length + (AVG_HEADER_SIZE * headers_count(r.headers))
 	bytes.buffer_grow(&r._buf, reserve_size)
 
 	// According to RFC 7230 3.1.2 the reason phrase is insignificant,
@@ -238,13 +239,17 @@ _response_write_heading :: proc(r: ^Response, content_length: int) {
 	ws(b, "\r\n")
 
 	// Per RFC 9910 6.6.1 a Date header must be added in 2xx, 3xx, 4xx responses.
-	if r.status >= .OK && r.status <= .Internal_Server_Error && "date" not_in r.headers {
+	if r.status >= .OK && r.status <= .Internal_Server_Error && !headers_has_unsafe(r.headers, "date") {
 		ws(b, "date: ")
 		ws(b, server_date(conn.server))
 		ws(b, "\r\n")
 	}
 
-	if content_length > -1 && "content-length" not_in r.headers && response_needs_content_length(r, conn) {
+	if (
+		content_length > -1                              &&
+		!headers_has_unsafe(r.headers, "content-length") &&
+		response_needs_content_length(r, conn)
+	) {
 		if content_length == 0 {
 			ws(b, "content-length: 0\r\n")
 		} else {
@@ -257,13 +262,13 @@ _response_write_heading :: proc(r: ^Response, content_length: int) {
 		}
 	}
 
-	for header, value in r.headers {
+	for header, value in r.headers._kv {
 		ws(b, header)
 		ws(b, ": ")
 
 		// Escape newlines in headers, if we don't, an attacker can find an endpoint
 		// that returns a header with user input, and inject headers into the response.
-		// PERF: probably slow.
+		// PERF: probably slow, TODO: loop and write, if see \n write escaped.
 		esc_value, _ := strings.replace_all(value, "\n", "\\n", b.buf.allocator)
 
 		ws(b, esc_value)

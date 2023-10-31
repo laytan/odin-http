@@ -29,7 +29,7 @@ Do not call this more than once.
 body :: proc(req: ^Request, max_length: int = 0, user_data: rawptr, cb: Body_Callback) {
 	assert(req._body_ok == nil, "you can only call body once per request")
 
-	if enc_header, ok := req.headers["transfer-encoding"]; ok && strings.has_suffix(enc_header, "chunked") {
+	if enc_header, ok := headers_get_unsafe(&req.headers, "transfer-encoding"); ok && strings.has_suffix(enc_header, "chunked") {
 		_body_chunked(req, max_length, user_data, cb)
 	} else {
 		_body_length(req, max_length, user_data, cb)
@@ -117,7 +117,7 @@ body_error_status :: proc(e: Body_Error) -> Status {
 _body_length :: proc(req: ^Request, max_length: int = -1, user_data: rawptr, cb: Body_Callback) {
 	req._body_ok = false
 
-	len, ok := req.headers["content-length"]
+	len, ok := headers_get_unsafe(&req.headers, "content-length")
 	if !ok {
 		cb(user_data, "", nil)
 		return
@@ -255,11 +255,10 @@ _body_chunked :: proc(req: ^Request, max_length: int = -1, user_data: rawptr, cb
 
 		// Headers are done, success.
 		if err != nil || len(line) == 0 {
-			if "trailer" in s.req.headers {
-				delete_key(&s.req.headers, "trailer")
-			}
+			headers_delete_unsafe(&s.req.headers, "trailer")
 
-			s.req.headers["transfer-encoding"] = strings.trim_suffix(s.req.headers["transfer-encoding"], "chunked")
+			new_te_header := strings.trim_suffix(headers_get_unsafe(&s.req.headers, "transfer-encoding"), "chunked")
+			headers_set_unsafe(&s.req.headers, new_te_header)
 
 			s.req._body_ok = true
 			s.cb(s.user_data, strings.to_string(s.buf), nil)
@@ -291,7 +290,6 @@ _body_chunked :: proc(req: ^Request, max_length: int = -1, user_data: rawptr, cb
 		buf:        strings.Builder,
 	}
 
-	// Would this break in any way if this was a global with @thread_local that is reused?
 	s := new(Chunked_State, context.temp_allocator)
 
 	s.buf.buf.allocator = context.temp_allocator
