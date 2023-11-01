@@ -45,8 +45,8 @@ _open_socket :: proc(
 
 _prepare_socket :: proc(socket: net.Any_Socket) -> net.Network_Error {
 	// TODO: set LINGER option?
-	net.set_option(socket, .Reuse_Address, true) or_return
-	net.set_option(socket, .TCP_Nodelay, true) or_return
-	net.set_blocking(socket, false) or_return
+	net.set_option(socket, .Reuse_Address, true)
+	net.set_option(socket, .TCP_Nodelay, true)
+	net.set_blocking(socket, false)
 	return nil
 }

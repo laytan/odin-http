@@ -435,6 +435,7 @@ Seeks the given handle according to the given offset and whence, so that subsequ
 Inputs:
 - io:     The IO instance to seek on
 - fd:     The file handle to seek
+- offset: The offset to seek
 - whence: The seek mode/where to seek from (default: Whence.Set)
 
 Returns:
@@ -519,6 +520,38 @@ Inputs:
 */
 read_at_all :: proc(io: ^IO, fd: os.Handle, offset: int, buf: []byte, user: rawptr, callback: On_Read) {
 	_read(io, fd, offset, buf, user, callback, all = true)
+}
+
+/*
+Reads the entire file (size found by seeking to the end) into a singly allocated buffer that is returned.
+The callback is called once the file is read into the returned buf.
+
+*Due to platform limitations, you must pass a `os.Handle` that was opened/returned using/by this package*
+
+Inputs:
+- io:       The IO instance to use
+- fd:       The file handle (created using/by this package) to read from
+- user:     A pointer that will be passed through to the callback, free to use by you and untouched by us
+- callback: The callback that is called when the operation completes, see docs for `On_Read` for its arguments
+
+Returns:
+- buf:      The buffer allocated to the size retrieved by seeking to the end of the file that is filled before calling the callback
+*/
+read_entire_file :: proc(io: ^IO, fd: os.Handle, user: rawptr, callback: On_Read, allocator := context.allocator) -> []byte {
+	size, err := seek(io, fd, 0, .End)
+	if err != os.ERROR_NONE {
+		callback(user, 0, err)
+		return nil
+	}
+
+	if size <= 0 {
+		callback(user, 0, os.ERROR_NONE)
+		return nil
+	}
+
+	buf := make([]byte, size, allocator)
+	read_at_all(io, fd, 0, buf, user, callback)
+	return buf
 }
 
 /*
