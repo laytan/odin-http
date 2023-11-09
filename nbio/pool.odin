@@ -11,6 +11,7 @@ Pool :: struct($T: typeid) {
 	arena:             virtual.Arena,
 	objects_allocator: mem.Allocator,
 	objects:           queue.Queue(^T),
+	num_waiting:       int,
 }
 
 DEFAULT_STARTING_CAP :: 8
@@ -34,6 +35,8 @@ pool_destroy :: proc(p: ^Pool($T)) {
 }
 
 pool_get :: proc(p: ^Pool($T)) -> (^T, mem.Allocator_Error) #optional_allocator_error {
+	p.num_waiting += 1
+
 	elem, ok := queue.pop_front_safe(&p.objects)
 	if !ok {
 		return new(T, p.objects_allocator)
@@ -44,6 +47,8 @@ pool_get :: proc(p: ^Pool($T)) -> (^T, mem.Allocator_Error) #optional_allocator_
 }
 
 pool_put :: proc(p: ^Pool($T), elem: ^T) -> mem.Allocator_Error {
+	p.num_waiting -= 1
+
 	_, err := queue.push_back(&p.objects, elem)
 	return err
 }
