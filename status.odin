@@ -1,7 +1,6 @@
 package http
 
 import "core:fmt"
-import "core:reflect"
 import "core:strings"
 
 Status :: enum {
@@ -9,6 +8,7 @@ Status :: enum {
 	Switching_Protocols             = 101,
 	Processing                      = 102,
 	Early_Hints                     = 103,
+
 	OK                              = 200,
 	Created                         = 201,
 	Accepted                        = 202,
@@ -19,13 +19,17 @@ Status :: enum {
 	Multi_Status                    = 207,
 	Already_Reported                = 208,
 	IM_Used                         = 226,
+
 	Multiple_Choices                = 300,
 	Moved_Permanently               = 301,
 	Found                           = 302,
 	See_Other                       = 303,
 	Not_Modified                    = 304,
+	Use_Proxy                       = 305, // Deprecated.
+	Unused                          = 306, // Deprecated.
 	Temporary_Redirect              = 307,
 	Permanent_Redirect              = 308,
+
 	Bad_Request                     = 400,
 	Unauthorized                    = 401,
 	Payment_Required                = 402,
@@ -55,6 +59,7 @@ Status :: enum {
 	Too_Many_Requests               = 429,
 	Request_Header_Fields_Too_Large = 431,
 	Unavailable_For_Legal_Reasons   = 451,
+
 	Internal_Server_Error           = 500,
 	Not_Implemented                 = 501,
 	Bad_Gateway                     = 502,
@@ -74,34 +79,37 @@ _status_strings: [max(Status) + Status(1)]string
 // Where an empty string means an invalid code.
 @(init, private)
 status_strings_init :: proc() {
-	// Some edge cases aside, replaces underscores in the enum name with spaces.
-	status_name_fmt :: proc(val: Status, orig: string) -> (new: string, allocated: bool) {
-		#partial switch val {
-		case .Non_Authoritative_Information:
-			return "Non-Authoritative Information", false
-		case .Multi_Status:
-			return "Multi-Status", false
-		case .Im_A_Teapot:
-			return "I'm a teapot", false
+	for field in Status {
+		name, ok := fmt.enum_value_to_string(field)
+		assert(ok)
+
+		b: strings.Builder
+		strings.write_int(&b, int(field))
+		strings.write_byte(&b, ' ')
+
+		// Some edge cases aside, replaces underscores in the enum name with spaces.
+		#partial switch field {
+		case .Non_Authoritative_Information: strings.write_string(&b, "Non-Authoritative Information")
+		case .Multi_Status:                  strings.write_string(&b, "Multi-Status")
+		case .Im_A_Teapot:                   strings.write_string(&b, "I'm a teapot")
 		case:
-			return strings.replace_all(orig, "_", " ")
+			for c in name {
+				switch c {
+				case '_': strings.write_rune(&b, ' ')
+				case:     strings.write_rune(&b, c)
+				}
+			}
 		}
-	}
 
-	fields := reflect.enum_fields_zipped(Status)
-	for field in fields {
-		fmted, allocated := status_name_fmt(Status(field.value), field.name)
-		defer if allocated do delete(fmted)
-
-		_status_strings[field.value] = fmt.aprintf("%i %s", field.value, fmted)
+		_status_strings[field] = strings.to_string(b)
 	}
 }
 
-status_string :: #force_inline proc(s: Status) -> string {
+status_string :: proc(s: Status) -> string {
 	return _status_strings[s] if s <= .Network_Authentication_Required else ""
 }
 
-status_valid :: #force_inline proc(s: Status) -> bool {
+status_valid :: proc(s: Status) -> bool {
 	return s >= Status(0) && s <= .Network_Authentication_Required && _status_strings[s] != ""
 }
 
