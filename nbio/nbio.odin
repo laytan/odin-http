@@ -40,6 +40,13 @@ tick :: proc(io: ^IO) -> os.Errno {
 }
 
 /*
+Returns the number of in-progress IO to be completed.
+*/
+num_waiting :: #force_inline proc(io: ^IO) -> int {
+	return _num_waiting(io)
+}
+
+/*
 Deallocates anything that was allocated when calling init()
 
 Inputs:
@@ -522,6 +529,40 @@ read_at_all :: proc(io: ^IO, fd: os.Handle, offset: int, buf: []byte, user: rawp
 	_read(io, fd, offset, buf, user, callback, all = true)
 }
 
+read_entire_file :: read_full
+
+/*
+Reads the entire file (size found by seeking to the end) into a singly allocated buffer that is returned.
+The callback is called once the file is read into the returned buf.
+
+*Due to platform limitations, you must pass a `os.Handle` that was opened/returned using/by this package*
+
+Inputs:
+- io:       The IO instance to use
+- fd:       The file handle (created using/by this package) to read from
+- user:     A pointer that will be passed through to the callback, free to use by you and untouched by us
+- callback: The callback that is called when the operation completes, see docs for `On_Read` for its arguments
+
+Returns:
+- buf:      The buffer allocated to the size retrieved by seeking to the end of the file that is filled before calling the callback
+*/
+read_full :: proc(io: ^IO, fd: os.Handle, user: rawptr, callback: On_Read, allocator := context.allocator) -> []byte {
+	size, err := seek(io, fd, 0, .End)
+	if err != os.ERROR_NONE {
+		callback(user, 0, err)
+		return nil
+	}
+
+	if size <= 0 {
+		callback(user, 0, os.ERROR_NONE)
+		return nil
+	}
+
+	buf := make([]byte, size, allocator)
+	read_at_all(io, fd, 0, buf, user, callback)
+	return buf
+}
+
 /*
 The callback for non blocking `write`, `write_all`, `write_at` and `write_at_all` requests
 
@@ -600,6 +641,18 @@ Inputs:
 */
 write_at_all :: proc(io: ^IO, fd: os.Handle, offset: int, buf: []byte, user: rawptr, callback: On_Write) {
 	_write(io, fd, offset, buf, user, callback, true)
+}
+
+MAX_USER_ARGUMENTS :: size_of(rawptr) * 5
+
+Completion :: struct {
+	user_data: rawptr,
+
+	// Callback pointer and user args passed in poly variants.
+	user_args: [MAX_USER_ARGUMENTS + size_of(rawptr)]byte,
+
+	// Implementation specifics, don't use outside of implementation/os.
+	using _:   _Completion,
 }
 
 @(private)
