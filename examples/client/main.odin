@@ -1,10 +1,12 @@
 package client_example
 
 import "core:fmt"
+import "core:log"
 
 import "../../client"
 
 main :: proc() {
+	context.logger = log.create_console_logger(.Info)
 	get()
 	post()
 }
