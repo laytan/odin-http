@@ -40,6 +40,13 @@ tick :: proc(io: ^IO) -> os.Errno {
 }
 
 /*
+Returns the number of in-progress IO to be completed.
+*/
+num_waiting :: #force_inline proc(io: ^IO) -> int {
+	return _num_waiting(io)
+}
+
+/*
 Deallocates anything that was allocated when calling init()
 
 Inputs:
@@ -522,6 +529,8 @@ read_at_all :: proc(io: ^IO, fd: os.Handle, offset: int, buf: []byte, user: rawp
 	_read(io, fd, offset, buf, user, callback, all = true)
 }
 
+read_entire_file :: read_full
+
 /*
 Reads the entire file (size found by seeking to the end) into a singly allocated buffer that is returned.
 The callback is called once the file is read into the returned buf.
@@ -537,7 +546,7 @@ Inputs:
 Returns:
 - buf:      The buffer allocated to the size retrieved by seeking to the end of the file that is filled before calling the callback
 */
-read_entire_file :: proc(io: ^IO, fd: os.Handle, user: rawptr, callback: On_Read, allocator := context.allocator) -> []byte {
+read_full :: proc(io: ^IO, fd: os.Handle, user: rawptr, callback: On_Read, allocator := context.allocator) -> []byte {
 	size, err := seek(io, fd, 0, .End)
 	if err != os.ERROR_NONE {
 		callback(user, 0, err)
@@ -632,6 +641,18 @@ Inputs:
 */
 write_at_all :: proc(io: ^IO, fd: os.Handle, offset: int, buf: []byte, user: rawptr, callback: On_Write) {
 	_write(io, fd, offset, buf, user, callback, true)
+}
+
+MAX_USER_ARGUMENTS :: size_of(rawptr) * 5
+
+Completion :: struct {
+	user_data: rawptr,
+
+	// Callback pointer and user args passed in poly variants.
+	user_args: [MAX_USER_ARGUMENTS + size_of(rawptr)]byte,
+
+	// Implementation specifics, don't use outside of implementation/os.
+	using _:   _Completion,
 }
 
 @(private)
