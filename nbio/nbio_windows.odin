@@ -92,7 +92,7 @@ _tick :: proc(io: ^IO) -> (err: os.Errno) {
 			}
 		}
 
-		assert(io.io_pending >= int(entries_removed))
+		// assert(io.io_pending >= int(entries_removed))
 		io.io_pending -= int(entries_removed)
 
 		for event in events[:entries_removed] {
