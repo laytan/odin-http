@@ -193,7 +193,7 @@ routes_try :: proc(routes: [dynamic]Route, req: ^Request, res: ^Response) -> boo
 		}
 
 		if n > 0 {
-			captures := make([]string, n - 1)
+			captures := make([]string, n - 1, context.temp_allocator)
 			for cap, i in routes_try_captures[1:n] {
 				captures[i] = req.url.path[cap.byte_start:cap.byte_end]
 			}
