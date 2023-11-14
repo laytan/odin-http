@@ -96,7 +96,11 @@ _tick :: proc(io: ^IO) -> (err: os.Errno) {
 		io.io_pending -= int(entries_removed)
 
 		for event in events[:entries_removed] {
-			assert(event.lpOverlapped != nil)
+			if event.lpOverlapped == nil {
+				log.warn("You have ran into a strange error some users have ran into on Windows 10 but I can't reproduce, I try to recover from the error but please chime in at https://github.com/laytan/odin-http/issues/34")
+				io.io_pending += 1
+				continue
+			}
 
 			// This is actually pointing at the Completion.over field, but because it is the first field
 			// It is also a valid pointer to the Completion struct.
