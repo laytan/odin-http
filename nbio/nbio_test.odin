@@ -187,8 +187,8 @@ test_client_and_server_send_recv :: proc(t: ^testing.T) {
 		connect(&io, tctx.ep, &tctx, connect_callback)
 
 		for !tctx.done {
-			terr := tick(&io)
-			expect(t, terr == os.ERROR_NONE, fmt.tprintf("tick error: %v", terr))
+			tlerr := tick(&io)
+			expect(t, tlerr == os.ERROR_NONE, fmt.tprintf("tick error: %v", tlerr))
 		}
 
 		expect(
@@ -297,8 +297,8 @@ test_send_all :: proc(t: ^testing.T) {
 	connect(&io, tctx.ep, &tctx, connect_callback)
 
 	for !tctx.done {
-		terr := tick(&io)
-		expect(t, terr == os.ERROR_NONE, fmt.tprintf("tick error: %v", terr))
+		tlerr := tick(&io)
+		expect(t, tlerr == os.ERROR_NONE, fmt.tprintf("tick error: %v", tlerr))
 	}
 
 	expect(t, slice.simple_equal(tctx.send_buf, tctx.recv_buf[:mem.Megabyte * 50]), "expected the sent bytes to be the same as the received")

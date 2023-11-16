@@ -7,22 +7,23 @@ import "core:fmt"
 import "core:log"
 
 import nbio "../nbio/poly"
+import job "../job"
 
 // TODO: errors.
-load_resolv_conv_job :: proc(j: ^Job, m: Handle_Mode, c: ^Client) {
+load_resolv_conv_job :: proc(j: ^job.Job, m: job.Handle_Mode, c: ^Client) {
 	switch m {
 	case .Cancel:
 		nbio.close(&c.io, c.resolv_fd)
-		done(j)
+		job.done(j)
 
 	case .Run:
 		err: os.Errno
 		c.resolv_fd, err = nbio.open(&c.io, c.resolv_file_path)
 		if err != os.ERROR_NONE do fmt.panicf("error code opening resolv.conf: %i", err)
 
-		nbio.read_entire_file(&c.io, c.resolv_fd, c, j, proc(c: ^Client, j: ^Job, buf: []byte, read: int, err: os.Errno) {
+		nbio.read_entire_file(&c.io, c.resolv_fd, c, j, proc(c: ^Client, j: ^job.Job, buf: []byte, read: int, err: os.Errno) {
 			if j.cancelled do return
-			defer done(j)
+			defer job.done(j)
 			defer log.debug("calling done for load_resolv_conv_job")
 
 			nbio.close(&c.io, c.resolv_fd)
@@ -67,21 +68,21 @@ load_resolv_conv_job :: proc(j: ^Job, m: Handle_Mode, c: ^Client) {
 }
 
 // TODO: errors.
-load_hosts_job :: proc(j: ^Job, m: Handle_Mode, c: ^Client) {
+load_hosts_job :: proc(j: ^job.Job, m: job.Handle_Mode, c: ^Client) {
 	switch m {
 	case .Cancel:
 		nbio.close(&c.io, c.hosts_fd)
-		done(j)
+		job.done(j)
 
 	case .Run:
 		err: os.Errno
 		c.hosts_fd, err = nbio.open(&c.io, c.hosts_file_path)
 		if err != os.ERROR_NONE do fmt.panicf("error code opening hosts file: %i", err)
 
-		nbio.read_entire_file(&c.io, c.hosts_fd, c, j, proc(c: ^Client, j: ^Job, buf: []byte, read: int, err: os.Errno) {
+		nbio.read_entire_file(&c.io, c.hosts_fd, c, j, proc(c: ^Client, j: ^job.Job, buf: []byte, read: int, err: os.Errno) {
 			if j.cancelled do return
 
-			defer done(j)
+			defer job.done(j)
 			defer log.debug("calling done for load_hosts_job")
 
 			nbio.close(&c.io, c.hosts_fd)
@@ -124,4 +125,3 @@ load_hosts_job :: proc(j: ^Job, m: Handle_Mode, c: ^Client) {
 		})
 	}
 }
-

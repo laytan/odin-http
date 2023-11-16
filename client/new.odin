@@ -6,13 +6,15 @@ import "core:strings"
 import "core:mem"
 import "core:log"
 import "core:time"
+import "core:fmt"
 
 import nbio "../nbio/poly"
+import job "../job"
 
 
 DNS :: union {
-	// ^DNS_Req,          // Inflight dns resolve.
-	^Job,
+	// ^DNS_Req,       // Inflight dns resolve.
+	^job.Job,
 	net.Network_Error, // Dns could not be resolved.
 	net.Address,       // Resolved endpoint.
 }
@@ -34,6 +36,8 @@ DNS_Req :: struct {
 		records: []net.DNS_Record,
 		err:     net.Network_Error,
 	},
+
+	name_server_id: int,
 }
 
 DNS_Req_Queue_Entry :: struct {
@@ -49,13 +53,13 @@ DNS_Req_Queue_Entry :: struct {
 // TODO: invalidate cache based on time to live on dns record.
 
 Client :: struct {
-	io:                nbio.IO,
+	io: nbio.IO,
 
 	// DNS specific fields.
 	using _dns: struct {
 		dns:               map[string]DNS,
 
-		config_job:        ^Job,
+		config_job:        ^job.Job,
 
 		hosts_file_path:   string,
 		hosts_fd:          os.Handle,
@@ -74,46 +78,43 @@ client_init :: proc(c: ^Client) {
 	c.resolv_file_path = net.dns_configuration.resolv_conf
 	c.hosts_file_path  = net.dns_configuration.hosts_file
 
-	nbio.init(&c.io)
+	assert(nbio.init(&c.io) == os.ERROR_NONE)
 
-	timeout_job := job2(c, LOAD_CONFIG_TIMEOUT, timeout_job, "load config timeout")
-
-	c.config_job = batch(
-		chain(
-			batch(
-				job1(c, load_hosts_job, "load hosts"),
-				job1(c, load_resolv_conv_job, "load resolv"),
-			),
-			job_cancel(timeout_job),
-		),
-		timeout_job,
+	c.config_job = job.batch(
+		job.new1(c, load_hosts_job, "load hosts"),
+		job.new1(c, load_resolv_conv_job, "load resolv"),
+		job.new2(c, LOAD_CONFIG_TIMEOUT, timeout_job, "load config timeout"),
 	)
 	defer {
-		destroy_job(c.config_job)
+		job.destroy(c.config_job, .Down)
 		c.config_job = nil
 	}
 
-	run(c.config_job)
+	job.run(c.config_job)
 
-	// TODO: don't block here.
-	for #force_inline nbio.num_waiting(&c.io) > 0 {
+	fmt.println("config job")
+	fmt.println(c.config_job)
+	fmt.println()
+
+	// Everything we do with the client requires the config to be loaded, so it seems ok to block
+	// here.
+	for nbio.num_waiting(&c.io) > 0 {
 		errno := nbio.tick(&c.io)
 		assert(errno == 0)
 	}
 }
 
-timeout_job :: proc(j: ^Job, m: Handle_Mode, c: ^Client, dur: time.Duration) {
-	log.debug("timeout job")
+timeout_job :: proc(j: ^job.Job, m: job.Handle_Mode, c: ^Client, dur: time.Duration) {
 	switch m {
 	case .Cancel:
-		done(j)
+		job.done(j)
 		// PERF: timeout will still run in nbio, can we remove it somehow?
 
 	case .Run:
-		nbio.timeout(&c.io, dur, j, proc(j: ^Job, _: Maybe(time.Time)) {
+		nbio.timeout(&c.io, dur, j, proc(j: ^job.Job, _: Maybe(time.Time)) {
 			if j.cancelled do return
-			done(j)
-			cancel_rest(j)
+			job.done(j)
+			job.cancel_others_in_batch(j)
 		})
 	}
 }
@@ -154,11 +155,11 @@ resolve :: proc(c: ^Client, hostname_and_maybe_port: string, user: rawptr, callb
 				log.infof("already got result for %s: %v", t.hostname, d)
 				callback(c, user, net.Endpoint{d, t.port}, nil)
 				return
-			case ^Job:
+			case ^job.Job:
 				log.infof("already resolving %s, queuing", t.hostname)
-				chain(
+				job.chain(
 					d,
-					job2(c, DNS_Req_Queue_Entry{cb = callback, user = user, target = t}, callback_job),
+					job.new2(c, DNS_Req_Queue_Entry{cb = callback, user = user, target = t}, callback_job, "queued callback"),
 				)
 			}
 			return
@@ -175,17 +176,16 @@ resolve :: proc(c: ^Client, hostname_and_maybe_port: string, user: rawptr, callb
 			return
 		}
 
-		c.dns[t.hostname] = chain(
+		c.dns[t.hostname] = job.chain(
 			resolve_job,
-			job2(req, callback, proc(j: ^Job, m: Handle_Mode, req: ^DNS_Req, callback: On_Resolve) {
+			job.new2(req, callback, proc(j: ^job.Job, m: job.Handle_Mode, req: ^DNS_Req, callback: On_Resolve) {
 				res := req.result
 				c   := req.client
 
 				defer {
 					net.destroy_dns_records(res.records)
 					free(req)
-					done(j)
-					free(j)
+					job.done(j)
 				}
 
 				if res.err == nil && len(res.records) == 0 {
@@ -197,26 +197,32 @@ resolve :: proc(c: ^Client, hostname_and_maybe_port: string, user: rawptr, callb
 					return
 				}
 
-				root_job := c.dns[req.target.hostname].(^Job)
-				for batch := root_job.batch; batch != nil; batch = batch.batch {
-					destroy_job(batch)
-				}
+				root_job := c.dns[req.target.hostname].(^job.Job)
+
+				// Chain a cleanup job to the end, assuming that between now and all the callback jobs
+				// having ran no new jobs will be chained.
+				job.chain(root_job, job.new1(root_job, proc(j: ^job.Job, mode: job.Handle_Mode, root_job: ^job.Job) {
+					log.debug("cleanup")
+					switch mode {
+					case .Cancel: unreachable()
+					case .Run:    job.destroy(root_job, .Down)
+					}
+				}, "cleanup"))
 
 				// NOTE: only saving the first result now, might want to do more later.
 
 				address: net.Address = res.records[0].(net.DNS_Record_IP4).address
 				c.dns[req.target.hostname] = address
-			}),
-			job2(c, DNS_Req_Queue_Entry{cb = callback, user = user, target = t}, callback_job),
+			}, "resolve done"),
+			job.new2(c, DNS_Req_Queue_Entry{cb = callback, user = user, target = t}, callback_job, "first callback"),
 		)
-		run(c.dns[t.hostname].(^Job))
+		job.run(c.dns[t.hostname].(^job.Job))
+		fmt.println(c.dns[t.hostname])
+	}
 }
 
-callback_job :: proc(j: ^Job, _: Handle_Mode, c: ^Client, e: DNS_Req_Queue_Entry) {
-	defer {
-		done(j)
-		free(j)
-	}
+callback_job :: proc(j: ^job.Job, _: job.Handle_Mode, c: ^Client, e: DNS_Req_Queue_Entry) {
+	defer job.done(j)
 
 	_res := c.dns[e.target.hostname]
 
@@ -228,7 +234,7 @@ callback_job :: proc(j: ^Job, _: Handle_Mode, c: ^Client, e: DNS_Req_Queue_Entry
 	case net.Address:
 		ep.address = res
 		ep.port    = e.target.port
-	case ^Job:
+	case ^job.Job:
 		unreachable()
 	case:
 		unreachable()
@@ -239,7 +245,7 @@ callback_job :: proc(j: ^Job, _: Handle_Mode, c: ^Client, e: DNS_Req_Queue_Entry
 
 On_DNS_Records :: #type proc(c: ^Client, user: rawptr, records: []net.DNS_Record, err: net.Network_Error)
 
-make_resolve_job :: proc(req: ^DNS_Req) -> (^Job, net.Network_Error) {
+make_resolve_job :: proc(req: ^DNS_Req) -> (^job.Job, net.Network_Error) {
 	if !net.validate_hostname(req.target.hostname) {
 		return nil, net.DNS_Error.Invalid_Hostname_Error
 	}
@@ -290,32 +296,68 @@ make_resolve_job :: proc(req: ^DNS_Req) -> (^Job, net.Network_Error) {
 	// TODO: send ip6 reqs too.
 
 
-	job := batch(
-		job2(req, c.name_servers[0], get_dns_records_from_nameserver_job),
-		job2(c, DNS_RESPONSE_TIMEOUT, timeout_job),
+	root_ns := job.batch(
+		job.new1(req, get_dns_records_from_nameserver_job, "get dns from ns"),
+		job.new2(c, DNS_RESPONSE_TIMEOUT, timeout_job, "get dns from ns timeout"),
+		batch_name="nameserver 1",
 	)
 
-	for ns in c.name_servers[1:] {
-		chain(
-			job,
-			batch(
-				job2(req, ns, get_dns_records_from_nameserver_job),
-				job2(c, DNS_RESPONSE_TIMEOUT, timeout_job),
-			),
-		)
-	}
+	// for ns in c.name_servers[1:] {
+	// 	job.chain(
+	// 		root_ns,
+	// 		job.batch(
+	// 			job.new2(req, ns, get_dns_records_from_nameserver_job, "get dns from ns"),
+	// 			job.new2(c, DNS_RESPONSE_TIMEOUT, timeout_job, "get dns from ns timeout"),
+	// 			batch_name="next nameserver",
+	// 		),
+	// 	)
+	// }
 
-	return job, nil
+	return root_ns, nil
 }
 
-get_dns_records_from_nameserver_job :: proc(j: ^Job, m: Handle_Mode, req: ^DNS_Req, name_server: net.Endpoint) {
+get_dns_records_from_nameserver_job :: proc(j: ^job.Job, m: job.Handle_Mode, req: ^DNS_Req) {
+	name_server := req.client.name_servers[req.name_server_id]
+
 	switch m {
 	case .Cancel:
 		log.info("get_dns_records_from_nameserver_job cancelled")
-		nbio.close(&req.client.io, req.sock)
-		done(j)
+
+		defer nbio.close(&req.client.io, req.sock)
+
+		req.name_server_id += 1
+
+		// No more name servers left to check.
+		if req.name_server_id >= len(req.client.name_servers) {
+			job.done(j)
+			return
+		}
+
+		// Cancel the timeout.
+		job.cancel(j.batch)
+
+		// Manually put this new job down to run the next name server, this is very clunky though.
+
+		assert(j.parent.parent == nil, "only works if this is the case, would be leaking otherwise")
+
+		chain := j.parent.chain
+		j.parent = job.batch(
+			job.new1(req, get_dns_records_from_nameserver_job, "get dns from ns cont."),
+			job.new2(req.client, DNS_RESPONSE_TIMEOUT, timeout_job, "get dns from ns cont. timeout"),
+		)
+		j.parent.chain = chain
+
+		// Need to manually clean this job up because we are changing the pointers on our own.
+		job.destroy(j.parent, .Single)
+		job.destroy(j.batch,  .Single)
+		job.destroy(j,        .Single)
+
+		// Because we don't call done on this job, nothing will run anymore, so we have to kick it
+		// off again.
+		job.run(j.parent)
 
 	case .Run:
+		log.info("get_dns_records_from_nameserver_job run")
 		c        := req.client
 		hostname := req.target.hostname
 
@@ -351,27 +393,33 @@ get_dns_records_from_nameserver_job :: proc(j: ^Job, m: Handle_Mode, req: ^DNS_R
 			req.result.err = err
 
 			// TODO: Is cancelling good here?
-			cancel(j)
+			job.cancel(j)
 
 			return
 		}
 		req.sock = sock.(net.UDP_Socket)
 
-		nbio.send_all(&c.io, name_server, req.sock, request_packet, j, req, proc(j: ^Job, req: ^DNS_Req, sent: int, err: net.Network_Error) {
+		nbio.send_all(&c.io, name_server, req.sock, request_packet, j, req, proc(j: ^job.Job, req: ^DNS_Req, sent: int, err: net.Network_Error) {
+			log.info("send_all callback")
 			if j.cancelled do return
 
 			if err != nil {
 				req.result.err = err
-				cancel(j)
+				job.cancel(j)
+			}
+
+			if req.name_server_id == 0 {
+				job.cancel(j)
 			}
 		})
 
-		nbio.recv(&c.io, req.sock, req.response_buf[:], j, req, proc(j: ^Job, req: ^DNS_Req, received: int, udp_client: Maybe(net.Endpoint), err: net.Network_Error) {
+		nbio.recv(&c.io, req.sock, req.response_buf[:], j, req, proc(j: ^job.Job, req: ^DNS_Req, received: int, udp_client: Maybe(net.Endpoint), err: net.Network_Error) {
+			log.info("recv callback")
 			if j.cancelled do return
 
 			if err != nil {
 				req.result.err = err
-				cancel(j)
+				job.cancel(j)
 				return
 			}
 
@@ -379,16 +427,15 @@ get_dns_records_from_nameserver_job :: proc(j: ^Job, m: Handle_Mode, req: ^DNS_R
 			rsp, ok := net.parse_response(dns_response, .IP4)
 			if !ok {
 				req.result.err = net.DNS_Error.Server_Error
-				cancel(j)
+				job.cancel(j)
 				return
 			}
 
 			req.result.records = rsp
 
 			nbio.close(&req.client.io, req.sock)
-			done(j)
-			cancel_full(j.parent.parent, j, nil)
+			job.done(j)
+			job.cancel_others_in_batch(j)
 		})
 	}
-}
 }
