@@ -107,36 +107,36 @@ flush :: proc(io: ^IO, wait_nr: u32, timeouts: ^uint, etime: ^bool) -> os.Errno 
 	// odinfmt: disable
 	for _ in 0..<n {
 		unqueued := queue.pop_front(&io.unqueued)
-		switch op in unqueued.operation {
-		case Op_Accept:  accept_enqueue (io, unqueued)
-		case Op_Close:   close_enqueue  (io, unqueued)
-		case Op_Connect: connect_enqueue(io, unqueued)
-		case Op_Read:    read_enqueue   (io, unqueued)
-		case Op_Recv:    recv_enqueue   (io, unqueued)
-		case Op_Send:    send_enqueue   (io, unqueued)
-		case Op_Write:   write_enqueue  (io, unqueued)
-		case Op_Timeout: timeout_enqueue(io, unqueued)
+		switch &op in &unqueued.operation {
+		case Op_Accept:  accept_enqueue (io, unqueued, &op)
+		case Op_Close:   close_enqueue  (io, unqueued, &op)
+		case Op_Connect: connect_enqueue(io, unqueued, &op)
+		case Op_Read:    read_enqueue   (io, unqueued, &op)
+		case Op_Recv:    recv_enqueue   (io, unqueued, &op)
+		case Op_Send:    send_enqueue   (io, unqueued, &op)
+		case Op_Write:   write_enqueue  (io, unqueued, &op)
+		case Op_Timeout: timeout_enqueue(io, unqueued, &op)
 		}
 	}
-	// odinfmt: enable
 
 	n = queue.len(io.completed)
 	for _ in 0 ..< n {
 		completed := queue.pop_front(&io.completed)
 		context = completed.ctx
 
-		switch _ in &completed.operation {
-		case Op_Accept:   accept_callback (io, completed)
-		case Op_Close:    close_callback  (io, completed)
-		case Op_Connect:  connect_callback(io, completed)
-		case Op_Read:     read_callback   (io, completed)
-		case Op_Recv:     recv_callback   (io, completed)
-		case Op_Send:     send_callback   (io, completed)
-		case Op_Write:    write_callback  (io, completed)
-		case Op_Timeout:  timeout_callback(io, completed)
+		switch &op in &completed.operation {
+		case Op_Accept:   accept_callback (io, completed, &op)
+		case Op_Close:    close_callback  (io, completed, &op)
+		case Op_Connect:  connect_callback(io, completed, &op)
+		case Op_Read:     read_callback   (io, completed, &op)
+		case Op_Recv:     recv_callback   (io, completed, &op)
+		case Op_Send:     send_callback   (io, completed, &op)
+		case Op_Write:    write_callback  (io, completed, &op)
+		case Op_Timeout:  timeout_callback(io, completed, &op)
 		case: unreachable()
 		}
 	}
+	// odinfmt: enable
 
 	return os.ERROR_NONE
 }
@@ -201,9 +201,7 @@ flush_submissions :: proc(io: ^IO, wait_nr: u32, timeouts: ^uint, etime: ^bool) 
 	return os.ERROR_NONE
 }
 
-accept_enqueue :: proc(io: ^IO, completion: ^Completion) {
-	op := &completion.operation.(Op_Accept)
-
+accept_enqueue :: proc(io: ^IO, completion: ^Completion, op: ^Op_Accept) {
 	_, err := io_uring.accept(
 		&io.ring,
 		u64(uintptr(completion)),
@@ -219,13 +217,11 @@ accept_enqueue :: proc(io: ^IO, completion: ^Completion) {
 	io.ios_queued += 1
 }
 
-accept_callback :: proc(io: ^IO, completion: ^Completion) {
-	op := completion.operation.(Op_Accept)
-
+accept_callback :: proc(io: ^IO, completion: ^Completion, op: ^Op_Accept) {
 	if completion.result < 0 {
 		errno := os.Errno(-completion.result)
 		if errno == os.EINTR {
-			accept_enqueue(io, completion)
+			accept_enqueue(io, completion, op)
 			return
 		}
 
@@ -242,9 +238,7 @@ accept_callback :: proc(io: ^IO, completion: ^Completion) {
 	pool_put(&io.completion_pool, completion)
 }
 
-close_enqueue :: proc(io: ^IO, completion: ^Completion) {
-	op := completion.operation.(Op_Close)
-
+close_enqueue :: proc(io: ^IO, completion: ^Completion, op: ^Op_Close) {
 	_, err := io_uring.close(&io.ring, u64(uintptr(completion)), op.fd)
 	if err == .Submission_Queue_Full {
 		queue.push_back(&io.unqueued, completion)
@@ -254,8 +248,7 @@ close_enqueue :: proc(io: ^IO, completion: ^Completion) {
 	io.ios_queued += 1
 }
 
-close_callback :: proc(io: ^IO, completion: ^Completion) {
-	op := completion.operation.(Op_Close)
+close_callback :: proc(io: ^IO, completion: ^Completion, op: ^Op_Close) {
 	errno := os.Errno(-completion.result)
 
 	// In particular close() should not be retried after an EINTR
@@ -264,9 +257,7 @@ close_callback :: proc(io: ^IO, completion: ^Completion) {
 	pool_put(&io.completion_pool, completion)
 }
 
-connect_enqueue :: proc(io: ^IO, completion: ^Completion) {
-	op := completion.operation.(Op_Connect)
-
+connect_enqueue :: proc(io: ^IO, completion: ^Completion, op: ^Op_Connect) {
 	_, err := io_uring.connect(
 		&io.ring,
 		u64(uintptr(completion)),
@@ -282,12 +273,10 @@ connect_enqueue :: proc(io: ^IO, completion: ^Completion) {
 	io.ios_queued += 1
 }
 
-connect_callback :: proc(io: ^IO, completion: ^Completion) {
-	op := &completion.operation.(Op_Connect)
-
+connect_callback :: proc(io: ^IO, completion: ^Completion, op: ^Op_Connect) {
 	errno := os.Errno(-completion.result)
 	if errno == os.EINTR {
-		connect_enqueue(io, completion)
+		connect_enqueue(io, completion, op)
 		return
 	}
 
@@ -301,9 +290,7 @@ connect_callback :: proc(io: ^IO, completion: ^Completion) {
 	pool_put(&io.completion_pool, completion)
 }
 
-read_enqueue :: proc(io: ^IO, completion: ^Completion) {
-	op := completion.operation.(Op_Read)
-
+read_enqueue :: proc(io: ^IO, completion: ^Completion, op: ^Op_Read) {
 	// Max tells linux to use the file cursor as the offset.
 	offset := max(u64) if op.offset < 0 else u64(op.offset)
 
@@ -316,13 +303,11 @@ read_enqueue :: proc(io: ^IO, completion: ^Completion) {
 	io.ios_queued += 1
 }
 
-read_callback :: proc(io: ^IO, completion: ^Completion) {
-	op := &completion.operation.(Op_Read)
-
+read_callback :: proc(io: ^IO, completion: ^Completion, op: ^Op_Read) {
 	if completion.result < 0 {
 		errno := os.Errno(-completion.result)
 		if errno == os.EINTR {
-			read_enqueue(io, completion)
+			read_enqueue(io, completion, op)
 			return
 		}
 
@@ -335,7 +320,7 @@ read_callback :: proc(io: ^IO, completion: ^Completion) {
 
 	if op.all && op.read < op.len {
 		op.buf = op.buf[completion.result:]
-		read_enqueue(io, completion)
+		read_enqueue(io, completion, op)
 		return
 	}
 
@@ -343,9 +328,7 @@ read_callback :: proc(io: ^IO, completion: ^Completion) {
 	pool_put(&io.completion_pool, completion)
 }
 
-recv_enqueue :: proc(io: ^IO, completion: ^Completion) {
-	op := completion.operation.(Op_Recv)
-
+recv_enqueue :: proc(io: ^IO, completion: ^Completion, op: ^Op_Recv) {
 	tcpsock, ok := op.socket.(net.TCP_Socket)
 	if !ok {
 		// TODO: figure out and implement.
@@ -362,13 +345,11 @@ recv_enqueue :: proc(io: ^IO, completion: ^Completion) {
 	io.ios_queued += 1
 }
 
-recv_callback :: proc(io: ^IO, completion: ^Completion) {
-	op := &completion.operation.(Op_Recv)
-
+recv_callback :: proc(io: ^IO, completion: ^Completion, op: ^Op_Recv) {
 	if completion.result < 0 {
 		errno := os.Errno(-completion.result)
 		if errno == os.EINTR {
-			recv_enqueue(io, completion)
+			recv_enqueue(io, completion, op)
 			return
 		}
 
@@ -381,7 +362,7 @@ recv_callback :: proc(io: ^IO, completion: ^Completion) {
 
 	if op.all && op.received < op.len {
 		op.buf = op.buf[completion.result:]
-		recv_enqueue(io, completion)
+		recv_enqueue(io, completion, op)
 		return
 	}
 
@@ -389,9 +370,7 @@ recv_callback :: proc(io: ^IO, completion: ^Completion) {
 	pool_put(&io.completion_pool, completion)
 }
 
-send_enqueue :: proc(io: ^IO, completion: ^Completion) {
-	op := &completion.operation.(Op_Send)
-
+send_enqueue :: proc(io: ^IO, completion: ^Completion, op: ^Op_Send) {
 	tcpsock, ok := op.socket.(net.TCP_Socket)
 	if !ok {
 		// TODO: figure out and implement.
@@ -407,13 +386,11 @@ send_enqueue :: proc(io: ^IO, completion: ^Completion) {
 	io.ios_queued += 1
 }
 
-send_callback :: proc(io: ^IO, completion: ^Completion) {
-	op := &completion.operation.(Op_Send)
-
+send_callback :: proc(io: ^IO, completion: ^Completion, op: ^Op_Send) {
 	if completion.result < 0 {
 		errno := os.Errno(-completion.result)
 		if errno == os.EINTR {
-			send_enqueue(io, completion)
+			send_enqueue(io, completion, op)
 			return
 		}
 
@@ -426,7 +403,7 @@ send_callback :: proc(io: ^IO, completion: ^Completion) {
 
 	if op.all && op.sent < op.len {
 		op.buf = op.buf[completion.result:]
-		send_enqueue(io, completion)
+		send_enqueue(io, completion, op)
 		return
 	}
 
@@ -434,9 +411,7 @@ send_callback :: proc(io: ^IO, completion: ^Completion) {
 	pool_put(&io.completion_pool, completion)
 }
 
-write_enqueue :: proc(io: ^IO, completion: ^Completion) {
-	op := &completion.operation.(Op_Write)
-
+write_enqueue :: proc(io: ^IO, completion: ^Completion, op: ^Op_Write) {
 	// Max tells linux to use the file cursor as the offset.
 	offset := max(u64) if op.offset < 0 else u64(op.offset)
 
@@ -449,13 +424,11 @@ write_enqueue :: proc(io: ^IO, completion: ^Completion) {
 	io.ios_queued += 1
 }
 
-write_callback :: proc(io: ^IO, completion: ^Completion) {
-	op := &completion.operation.(Op_Write)
-
+write_callback :: proc(io: ^IO, completion: ^Completion, op: ^Op_Write) {
 	if completion.result < 0 {
 		errno := os.Errno(-completion.result)
 		if errno == os.EINTR {
-			write_enqueue(io, completion)
+			write_enqueue(io, completion, op)
 			return
 		}
 
@@ -473,7 +446,7 @@ write_callback :: proc(io: ^IO, completion: ^Completion) {
 			op.offset += int(completion.result)
 		}
 
-		write_enqueue(io, completion)
+		write_enqueue(io, completion, op)
 		return
 	}
 
@@ -481,9 +454,7 @@ write_callback :: proc(io: ^IO, completion: ^Completion) {
 	pool_put(&io.completion_pool, completion)
 }
 
-timeout_enqueue :: proc(io: ^IO, completion: ^Completion) {
-	op := &completion.operation.(Op_Timeout)
-
+timeout_enqueue :: proc(io: ^IO, completion: ^Completion, op: ^Op_Timeout) {
 	_, err := io_uring.timeout(&io.ring, u64(uintptr(completion)), &op.expires, 0, 0)
 	if err == .Submission_Queue_Full {
 		queue.push_back(&io.unqueued, completion)
@@ -493,17 +464,17 @@ timeout_enqueue :: proc(io: ^IO, completion: ^Completion) {
 	io.ios_queued += 1
 }
 
-timeout_callback :: proc(io: ^IO, completion: ^Completion) {
+timeout_callback :: proc(io: ^IO, completion: ^Completion, op: ^Op_Timeout) {
 	errno := os.Errno(-completion.result)
 	if errno == os.EINTR {
-		timeout_enqueue(io, completion)
+		timeout_enqueue(io, completion, op)
 		return
 	}
 
 	// TODO: we are swallowing the returned error here.
 	fmt.assertf(errno == os.ERROR_NONE || errno == os.ETIME, "timeout error: %v", errno)
 
-	completion.operation.(Op_Timeout).callback(completion.user_data, nil)
+	op.callback(completion.user_data, nil)
 	pool_put(&io.completion_pool, completion)
 }
 

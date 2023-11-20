@@ -96,7 +96,7 @@ _accept :: proc(io: ^IO, socket: net.TCP_Socket, user: rawptr, callback: On_Acce
 		sockaddrlen = i32(size_of(os.SOCKADDR_STORAGE_LH)),
 	}
 
-	accept_enqueue(io, completion)
+	accept_enqueue(io, completion, &completion.operation.(Op_Accept))
 	return completion
 }
 
@@ -120,7 +120,7 @@ _close :: proc(io: ^IO, fd: Closable, user: rawptr, callback: On_Close) -> ^Comp
 		fd       = handle,
 	}
 
-	close_enqueue(io, completion)
+	close_enqueue(io, completion, &completion.operation.(Op_Close))
 	return completion
 }
 
@@ -150,7 +150,7 @@ _connect :: proc(io: ^IO, endpoint: net.Endpoint, user: rawptr, callback: On_Con
 		sockaddr = endpoint_to_sockaddr(endpoint),
 	}
 
-	connect_enqueue(io, completion)
+	connect_enqueue(io, completion, &completion.operation.(Op_Connect))
 	return completion, nil
 }
 
@@ -176,7 +176,7 @@ _read :: proc(
 		len      = len(buf),
 	}
 
-	read_enqueue(io, completion)
+	read_enqueue(io, completion, &completion.operation.(Op_Read))
 	return completion
 }
 
@@ -193,7 +193,7 @@ _recv :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, callba
 		len      = len(buf),
 	}
 
-	recv_enqueue(io, completion)
+	recv_enqueue(io, completion, &completion.operation.(Op_Recv))
 	return completion
 }
 
@@ -218,7 +218,7 @@ _send :: proc(
 		len      = len(buf),
 	}
 
-	send_enqueue(io, completion)
+	send_enqueue(io, completion, &completion.operation.(Op_Send))
 	return completion
 }
 
@@ -244,7 +244,7 @@ _write :: proc(
 		len      = len(buf),
 	}
 
-	write_enqueue(io, completion)
+	write_enqueue(io, completion, &completion.operation.(Op_Write))
 	return completion
 }
 
@@ -263,7 +263,6 @@ _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout
 		},
 	}
 
-	timeout_enqueue(io, completion)
+	timeout_enqueue(io, completion, &completion.operation.(Op_Timeout))
 	return completion
 }
-

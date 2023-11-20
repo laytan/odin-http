@@ -125,15 +125,15 @@ flush :: proc(io: ^IO) -> os.Errno {
 		completed := queue.pop_front(&io.completed)
 		context = completed.ctx
 
-		switch _ in &completed.operation {
-		case Op_Accept:   do_accept (io, completed)
-		case Op_Close:    do_close  (io, completed)
-		case Op_Connect:  do_connect(io, completed)
-		case Op_Read:     do_read   (io, completed)
-		case Op_Recv:     do_recv   (io, completed)
-		case Op_Send:     do_send   (io, completed)
-		case Op_Write:    do_write  (io, completed)
-		case Op_Timeout:  do_timeout(io, completed)
+		switch &op in &completed.operation {
+		case Op_Accept:   do_accept (io, completed, &op)
+		case Op_Close:    do_close  (io, completed, &op)
+		case Op_Connect:  do_connect(io, completed, &op)
+		case Op_Read:     do_read   (io, completed, &op)
+		case Op_Recv:     do_recv   (io, completed, &op)
+		case Op_Send:     do_send   (io, completed, &op)
+		case Op_Write:    do_write  (io, completed, &op)
+		case Op_Timeout:  do_timeout(io, completed, &op)
 		case: unreachable()
 		}
 	}
@@ -211,9 +211,7 @@ flush_timeouts :: proc(io: ^IO) -> (min_timeout: Maybe(i64)) {
 	return
 }
 
-do_accept :: proc(io: ^IO, completion: ^Completion) {
-	op := completion.operation.(Op_Accept)
-
+do_accept :: proc(io: ^IO, completion: ^Completion, op: ^Op_Accept) {
 	client, source, err := net.accept_tcp(op.sock)
 	if err == net.Accept_Error.Would_Block {
 		append(&io.io_pending, completion)
@@ -234,8 +232,7 @@ do_accept :: proc(io: ^IO, completion: ^Completion) {
 	pool_put(&io.completion_pool, completion)
 }
 
-do_close :: proc(io: ^IO, completion: ^Completion) {
-	op := completion.operation.(Op_Close)
+do_close :: proc(io: ^IO, completion: ^Completion, op: ^Op_Close) {
 	ok := os.close(op.handle)
 
 	op.callback(completion.user_data, ok)
@@ -243,8 +240,7 @@ do_close :: proc(io: ^IO, completion: ^Completion) {
 	pool_put(&io.completion_pool, completion)
 }
 
-do_connect :: proc(io: ^IO, completion: ^Completion) {
-	op := &completion.operation.(Op_Connect)
+do_connect :: proc(io: ^IO, completion: ^Completion, op: ^Op_Connect) {
 	defer op.initiated = true
 
 	err: os.Errno
@@ -269,9 +265,7 @@ do_connect :: proc(io: ^IO, completion: ^Completion) {
 	pool_put(&io.completion_pool, completion)
 }
 
-do_read :: proc(io: ^IO, completion: ^Completion) {
-	op := &completion.operation.(Op_Read)
-
+do_read :: proc(io: ^IO, completion: ^Completion, op: ^Op_Read) {
 	read: int
 	err: os.Errno
 	//odinfmt:disable
@@ -301,7 +295,7 @@ do_read :: proc(io: ^IO, completion: ^Completion) {
 			op.offset += read
 		}
 
-		do_read(io, completion)
+		do_read(io, completion, op)
 		return
 	}
 
@@ -309,9 +303,7 @@ do_read :: proc(io: ^IO, completion: ^Completion) {
 	pool_put(&io.completion_pool, completion)
 }
 
-do_recv :: proc(io: ^IO, completion: ^Completion) {
-	op := &completion.operation.(Op_Recv)
-
+do_recv :: proc(io: ^IO, completion: ^Completion, op: ^Op_Recv) {
 	received: int
 	err: net.Network_Error
 	remote_endpoint: Maybe(net.Endpoint)
@@ -344,7 +336,7 @@ do_recv :: proc(io: ^IO, completion: ^Completion) {
 
 	if op.all && op.received < op.len {
 		op.buf = op.buf[received:]
-		do_recv(io, completion)
+		do_recv(io, completion, op)
 		return
 	}
 
@@ -352,9 +344,7 @@ do_recv :: proc(io: ^IO, completion: ^Completion) {
 	pool_put(&io.completion_pool, completion)
 }
 
-do_send :: proc(io: ^IO, completion: ^Completion) {
-	op := &completion.operation.(Op_Send)
-
+do_send :: proc(io: ^IO, completion: ^Completion, op: ^Op_Send) {
 	sent:  u32
 	errno: os.Errno
 	err:   net.Network_Error
@@ -385,7 +375,7 @@ do_send :: proc(io: ^IO, completion: ^Completion) {
 
 	if op.all && op.sent < op.len {
 		op.buf = op.buf[sent:]
-		do_send(io, completion)
+		do_send(io, completion, op)
 		return
 	}
 
@@ -393,9 +383,7 @@ do_send :: proc(io: ^IO, completion: ^Completion) {
 	pool_put(&io.completion_pool, completion)
 }
 
-do_write :: proc(io: ^IO, completion: ^Completion) {
-	op := &completion.operation.(Op_Write)
-
+do_write :: proc(io: ^IO, completion: ^Completion, op: ^Op_Write) {
 	written: int
 	err: os.Errno
 	//odinfmt:disable
@@ -427,7 +415,7 @@ do_write :: proc(io: ^IO, completion: ^Completion) {
 			op.offset += written
 		}
 
-		do_write(io, completion)
+		do_write(io, completion, op)
 		return
 	}
 
@@ -435,8 +423,7 @@ do_write :: proc(io: ^IO, completion: ^Completion) {
 	pool_put(&io.completion_pool, completion)
 }
 
-do_timeout :: proc(io: ^IO, completion: ^Completion) {
-	op := completion.operation.(Op_Timeout)
+do_timeout :: proc(io: ^IO, completion: ^Completion, op: ^Op_Timeout) {
 	op.callback(completion.user_data, op.completed_time)
 	pool_put(&io.completion_pool, completion)
 }

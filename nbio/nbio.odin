@@ -650,13 +650,13 @@ write_at_all :: proc(io: ^IO, fd: os.Handle, offset: int, buf: []byte, user: raw
 MAX_USER_ARGUMENTS :: size_of(rawptr) * 5
 
 Completion :: struct {
+	// Implementation specifics, don't use outside of implementation/os.
+	using _:   _Completion,
+
 	user_data: rawptr,
 
 	// Callback pointer and user args passed in poly variants.
 	user_args: [MAX_USER_ARGUMENTS + size_of(rawptr)]byte,
-
-	// Implementation specifics, don't use outside of implementation/os.
-	using _:   _Completion,
 }
 
 @(private)
