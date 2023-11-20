@@ -65,8 +65,9 @@ On_Timeout :: #type proc(user: rawptr, completed_time: Maybe(time.Time))
 /*
 Schedules a callback to be called after the given duration elapses.
 
-The accuracy depends on the time between calls to `tick`,
-accuracy is pretty good when you call it in a loop with no sleeps or very expensive calculations in other scheduled event callbacks
+The accuracy depends on the time between calls to `tick`.
+When you call it in a loop with no blocks or very expensive calculations in other scheduled event callbacks
+it is reliable to about a ms of difference (so timeout of 10ms would almost always be ran between 10ms and 11ms).
 
 Inputs:
 - io:       The IO instance to use
