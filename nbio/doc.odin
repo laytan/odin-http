@@ -32,7 +32,7 @@ Example:
 	Echo_Server :: struct {
 		io:          nbio.IO,
 		sock:        net.TCP_Socket,
-		connections: [dynamic]^Echo_Connection
+		connections: [dynamic]^Echo_Connection,
 	}
 
 	Echo_Connection :: struct {
@@ -63,9 +63,8 @@ Example:
 		fmt.assertf(errno == os.ERROR_NONE, "Server stopped with error code: %v", errno)
 	}
 
-	echo_on_accept :: proc(server: rawptr, client: net.TCP_Socket, source: net.Endpoint, err: net.Network_Error) {
+	echo_on_accept :: proc(server: ^Echo_Server, client: net.TCP_Socket, source: net.Endpoint, err: net.Network_Error) {
 		fmt.assertf(err == nil, "Error accepting a connection: %v", err)
-		server := cast(^Echo_Server)server
 
 		// Register a new accept for the next client.
 		nbio.accept(&server.io, server.sock, server, echo_on_accept)
@@ -78,16 +77,14 @@ Example:
 		nbio.recv(&server.io, client, c.buf[:], c, echo_on_recv)
 	}
 
-	echo_on_recv :: proc(c: rawptr, received: int, _: Maybe(net.Endpoint), err: net.Network_Error) {
+	echo_on_recv :: proc(c: ^Echo_Connection, received: int, _: Maybe(net.Endpoint), err: net.Network_Error) {
 		fmt.assertf(err == nil, "Error receiving from client: %v", err)
-		c := cast(^Echo_Connection)c
 
 		nbio.send_all(&c.server.io, c.sock, c.buf[:received], c, echo_on_sent)
 	}
 
-	echo_on_sent :: proc(c: rawptr, sent: int, err: net.Network_Error) {
+	echo_on_sent :: proc(c: ^Echo_Connection, sent: int, err: net.Network_Error) {
 		fmt.assertf(err == nil, "Error sending to client: %v", err)
-		c := cast(^Echo_Connection)c
 
 		// Accept the next message, to then ultimately echo back again.
 		nbio.recv(&c.server.io, c.sock, c.buf[:], c, echo_on_recv)

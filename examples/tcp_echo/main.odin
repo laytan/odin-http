@@ -1,40 +1,10 @@
-# package nbio
-
-Package nbio implements a non blocking IO abstraction layer over several platform specific APIs.
-
-This package implements an event loop based abstraction.
-
-*TODO:*
-
-- Benchmarking
-- Some UDP implementations
-
-*APIs:*
-
-- Windows: [IOCP (IO Completion Ports)](https://en.wikipedia.org/wiki/Input/output_completion_port)
-- Linux:   [io_uring](https://en.wikipedia.org/wiki/Io_uring)
-- Darwin:  [KQueue](https://en.wikipedia.org/wiki/Kqueue)
-
-*How to read the code:*
-
-The file nbio.odin can be read a little bit like a header file,
-it has all the procedures heavily explained and commented and dispatches them to platform specific code.
-
-You can also have a look at the tests for more general usages, the example below or the generated docs even further below.
-
-```odin
-/*
-This example shows a simple TCP server that echos back anything it receives.
-
-Better error handling and closing/freeing connections are left for the reader.
-*/
-package main
+package example_tcp_echo
 
 import "core:fmt"
 import "core:net"
 import "core:os"
 
-import nbio "nbio/poly"
+import nbio "../../nbio/poly"
 
 Echo_Server :: struct {
 	io:          nbio.IO,
@@ -96,4 +66,3 @@ echo_on_sent :: proc(c: ^Echo_Connection, sent: int, err: net.Network_Error) {
 	// Accept the next message, to then ultimately echo back again.
 	nbio.recv(&c.server.io, c.sock, c.buf[:], c, echo_on_recv)
 }
-```
