@@ -106,11 +106,15 @@ status_strings_init :: proc() {
 }
 
 status_string :: proc(s: Status) -> string {
-	return _status_strings[s] if s <= .Network_Authentication_Required else ""
+	if s >= Status(0) && s <= max(Status) {
+		return _status_strings[s]
+	}
+
+	return ""
 }
 
 status_valid :: proc(s: Status) -> bool {
-	return s >= Status(0) && s <= .Network_Authentication_Required && _status_strings[s] != ""
+	return status_string(s) != ""
 }
 
 status_from_string :: proc(s: string) -> (Status, bool) {
@@ -140,21 +144,21 @@ status_from_string :: proc(s: string) -> (Status, bool) {
 }
 
 status_is_informational :: proc(s: Status) -> bool {
-	return s < .OK
+	return s >= Status(100) && s < Status(200)
 }
 
 status_is_success :: proc(s: Status) -> bool {
-	return s >= .OK && s < .Multiple_Choices
+	return s >= Status(200) && s < Status(300)
 }
 
 status_is_redirect :: proc(s: Status) -> bool {
-	return s >= .Multiple_Choices && s < .Bad_Request
+	return s >= Status(300) && s < Status(400)
 }
 
 status_is_client_error :: proc(s: Status) -> bool {
-	return s >= .Bad_Request && s < .Internal_Server_Error
+	return s >= Status(400) && s < Status(500)
 }
 
 status_is_server_error :: proc(s: Status) -> bool {
-	return s >= .Internal_Server_Error
+	return s >= Status(500) && s < Status(600)
 }
