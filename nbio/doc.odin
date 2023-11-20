@@ -27,7 +27,7 @@ Example:
 	import "core:net"
 	import "core:os"
 
-	import "nbio"
+	import nbio "nbio/poly"
 
 	Echo_Server :: struct {
 		io:          nbio.IO,
