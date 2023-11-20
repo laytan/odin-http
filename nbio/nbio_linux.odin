@@ -1,4 +1,3 @@
-//+private
 package nbio
 
 import "core:container/queue"
