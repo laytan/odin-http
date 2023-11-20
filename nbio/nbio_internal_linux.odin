@@ -107,7 +107,7 @@ flush :: proc(io: ^IO, wait_nr: u32, timeouts: ^uint, etime: ^bool) -> os.Errno 
 	// odinfmt: disable
 	for _ in 0..<n {
 		unqueued := queue.pop_front(&io.unqueued)
-		switch &op in &unqueued.operation {
+		switch &op in unqueued.operation {
 		case Op_Accept:  accept_enqueue (io, unqueued, &op)
 		case Op_Close:   close_enqueue  (io, unqueued, &op)
 		case Op_Connect: connect_enqueue(io, unqueued, &op)
@@ -124,7 +124,7 @@ flush :: proc(io: ^IO, wait_nr: u32, timeouts: ^uint, etime: ^bool) -> os.Errno 
 		completed := queue.pop_front(&io.completed)
 		context = completed.ctx
 
-		switch &op in &completed.operation {
+		switch &op in completed.operation {
 		case Op_Accept:   accept_callback (io, completed, &op)
 		case Op_Close:    close_callback  (io, completed, &op)
 		case Op_Connect:  connect_callback(io, completed, &op)

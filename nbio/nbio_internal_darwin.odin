@@ -125,7 +125,7 @@ flush :: proc(io: ^IO) -> os.Errno {
 		completed := queue.pop_front(&io.completed)
 		context = completed.ctx
 
-		switch &op in &completed.operation {
+		switch &op in completed.operation {
 		case Op_Accept:   do_accept (io, completed, &op)
 		case Op_Close:    do_close  (io, completed, &op)
 		case Op_Connect:  do_connect(io, completed, &op)
