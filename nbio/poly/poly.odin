@@ -249,7 +249,7 @@ connect :: proc {
 
 connect1 :: proc(io: ^nbio.IO, endpoint: net.Endpoint, p: $T, callback: $C/proc(p: T, socket: net.TCP_Socket, err: net.Network_Error))
 	where size_of(T) <= nbio.MAX_USER_ARGUMENTS {
-	completion := nbio._connect(io, endpoint, nil, proc(completion: rawptr, socket: net.TCP_Socket, err: net.Network_Error) {
+	completion, err := nbio._connect(io, endpoint, nil, proc(completion: rawptr, socket: net.TCP_Socket, err: net.Network_Error) {
 		completion := (^nbio.Completion)(completion)
 
 		cb := (^C)(&completion.user_args[0])^
@@ -257,6 +257,10 @@ connect1 :: proc(io: ^nbio.IO, endpoint: net.Endpoint, p: $T, callback: $C/proc(
 
 		cb(p, socket, err)
 	})
+    if err != nil {
+        callback(p, {}, err)
+        return
+    }
 
 	callback, p := callback, p
 	n := copy(completion.user_args[:],  mem.ptr_to_bytes(&callback))
@@ -267,7 +271,7 @@ connect1 :: proc(io: ^nbio.IO, endpoint: net.Endpoint, p: $T, callback: $C/proc(
 
 connect2 :: proc(io: ^nbio.IO, endpoint: net.Endpoint, p: $T, p2: $T2, callback: $C/proc(p: T, p2: T2, socket: net.TCP_Socket, err: net.Network_Error))
 	where size_of(T) + size_of(T2) <= nbio.MAX_USER_ARGUMENTS {
-	completion := nbio._connect(io, endpoint, nil, proc(completion: rawptr, socket: net.TCP_Socket, err: net.Network_Error) {
+	completion, err := nbio._connect(io, endpoint, nil, proc(completion: rawptr, socket: net.TCP_Socket, err: net.Network_Error) {
 		completion := (^nbio.Completion)(completion)
 
 		cb := (^C) (&completion.user_args[0])^
@@ -276,6 +280,10 @@ connect2 :: proc(io: ^nbio.IO, endpoint: net.Endpoint, p: $T, p2: $T2, callback:
 
 		cb(p, p2, socket, err)
 	})
+    if err != nil {
+        callback(p, p2, {}, err)
+        return
+    }
 
 	callback, p, p2 := callback, p, p2
 	n := copy(completion.user_args[:],  mem.ptr_to_bytes(&callback))
@@ -287,7 +295,7 @@ connect2 :: proc(io: ^nbio.IO, endpoint: net.Endpoint, p: $T, p2: $T2, callback:
 
 connect3 :: proc(io: ^nbio.IO, endpoint: net.Endpoint, p: $T, p2: $T2, p3: $T3, callback: $C/proc(p: T, p2: T2, p3: T3, socket: net.TCP_Socket, err: net.Network_Error))
 	where size_of(T) + size_of(T2) + size_of(T3) <= nbio.MAX_USER_ARGUMENTS {
-	completion := nbio._connect(io, endpoint, nil, proc(completion: rawptr, socket: net.TCP_Socket, err: net.Network_Error) {
+	completion, err := nbio._connect(io, endpoint, nil, proc(completion: rawptr, socket: net.TCP_Socket, err: net.Network_Error) {
 		completion := (^nbio.Completion)(completion)
 
 		cb := (^C) (&completion.user_args[0])^
@@ -297,6 +305,10 @@ connect3 :: proc(io: ^nbio.IO, endpoint: net.Endpoint, p: $T, p2: $T2, p3: $T3, 
 
 		cb(p, p2, p3, socket, err)
 	})
+    if err != nil {
+        callback(p, p2, p3, {}, err)
+        return
+    }
 
 	callback, p, p2, p3 := callback, p, p2, p3
 	n := copy(completion.user_args[:],  mem.ptr_to_bytes(&callback))

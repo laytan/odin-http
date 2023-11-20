@@ -2,13 +2,92 @@
 package nbio
 
 import "core:container/queue"
+import "core:mem"
 import "core:net"
 import "core:os"
+import "core:runtime"
 import "core:time"
 
 import kqueue "_kqueue"
 
 MAX_EVENTS :: 256
+
+_IO :: struct {
+	kq:              os.Handle,
+	io_inflight:     int,
+	completion_pool: Pool(Completion),
+	timeouts:        [dynamic]^Completion,
+	completed:       queue.Queue(^Completion),
+	io_pending:      [dynamic]^Completion,
+	allocator:       mem.Allocator,
+}
+
+_Completion :: struct {
+	operation: Operation,
+	ctx:       runtime.Context,
+}
+
+Op_Accept :: struct {
+	callback: On_Accept,
+	sock:     net.TCP_Socket,
+}
+
+Op_Close :: struct {
+	callback: On_Close,
+	handle:   os.Handle,
+}
+
+Op_Connect :: struct {
+	callback:  On_Connect,
+	socket:    net.TCP_Socket,
+	sockaddr:  os.SOCKADDR_STORAGE_LH,
+	initiated: bool,
+}
+
+Op_Recv :: struct {
+	callback: On_Recv,
+	socket:   net.Any_Socket,
+	buf:      []byte,
+	all:      bool,
+	received: int,
+	len:      int,
+}
+
+Op_Send :: struct {
+	callback: On_Sent,
+	socket:   net.Any_Socket,
+	buf:      []byte,
+	endpoint: Maybe(net.Endpoint),
+	all:      bool,
+	len:      int,
+	sent:     int,
+}
+
+Op_Read :: struct {
+	callback: On_Read,
+	fd:       os.Handle,
+	buf:      []byte,
+	offset:	  int,
+	all:   	  bool,
+	read:  	  int,
+	len:   	  int,
+}
+
+Op_Write :: struct {
+	callback: On_Write,
+	fd:       os.Handle,
+	buf:      []byte,
+	offset:   int,
+	all:      bool,
+	written:  int,
+	len:      int,
+}
+
+Op_Timeout :: struct {
+	callback:       On_Timeout,
+	expires:        time.Time,
+	completed_time: time.Time,
+}
 
 flush :: proc(io: ^IO) -> os.Errno {
 	events: [MAX_EVENTS]kqueue.KEvent
@@ -191,14 +270,14 @@ do_connect :: proc(io: ^IO, completion: ^Completion) {
 }
 
 do_read :: proc(io: ^IO, completion: ^Completion) {
-	op       := &completion.operation.(Op_Read)
+	op := &completion.operation.(Op_Read)
 
 	read: int
 	err: os.Errno
 	//odinfmt:disable
-	switch off in op.offset {
-	case int: read, err = os.read_at(op.fd, op.buf, i64(off))
-	case:     read, err = os.read(op.fd, op.buf)
+	switch {
+	case op.offset >= 0: read, err = os.read_at(op.fd, op.buf, i64(op.offset))
+	case:                read, err = os.read(op.fd, op.buf)
 	}
 	//odinfmt:enable
 
@@ -217,7 +296,11 @@ do_read :: proc(io: ^IO, completion: ^Completion) {
 
 	if op.all && op.read < op.len {
 		op.buf = op.buf[read:]
-		if off, ok := &op.offset.?; ok do off^ += read
+
+		if op.offset >= 0 {
+			op.offset += read
+		}
+
 		do_read(io, completion)
 		return
 	}
@@ -227,7 +310,7 @@ do_read :: proc(io: ^IO, completion: ^Completion) {
 }
 
 do_recv :: proc(io: ^IO, completion: ^Completion) {
-	op       := &completion.operation.(Op_Recv)
+	op := &completion.operation.(Op_Recv)
 
 	received: int
 	err: net.Network_Error
@@ -270,7 +353,7 @@ do_recv :: proc(io: ^IO, completion: ^Completion) {
 }
 
 do_send :: proc(io: ^IO, completion: ^Completion) {
-	op       := &completion.operation.(Op_Send)
+	op := &completion.operation.(Op_Send)
 
 	sent:  u32
 	errno: os.Errno
@@ -311,14 +394,14 @@ do_send :: proc(io: ^IO, completion: ^Completion) {
 }
 
 do_write :: proc(io: ^IO, completion: ^Completion) {
-	op       := &completion.operation.(Op_Write)
+	op := &completion.operation.(Op_Write)
 
 	written: int
 	err: os.Errno
 	//odinfmt:disable
-	switch off in op.offset {
-	case int: written, err = os.write_at(op.fd, op.buf, i64(off))
-	case:     written, err = os.write(op.fd, op.buf)
+	switch {
+	case op.offset >= 0: written, err = os.write_at(op.fd, op.buf, i64(op.offset))
+	case:                written, err = os.write(op.fd, op.buf)
 	}
 	//odinfmt:enable
 
@@ -340,7 +423,9 @@ do_write :: proc(io: ^IO, completion: ^Completion) {
 		op.buf = op.buf[written:]
 
 		// Increase offset so we don't overwrite what we just wrote.
-		if off, ok := &op.offset.?; ok do off^ += written
+		if op.offset >= 0 {
+			op.offset += written
+		}
 
 		do_write(io, completion)
 		return

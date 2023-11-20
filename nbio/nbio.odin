@@ -168,6 +168,7 @@ A union of types that are `close`'able by this package
 Closable :: union #no_nil {
 	net.TCP_Socket,
 	net.UDP_Socket,
+	net.Socket,
 	os.Handle,
 }
 
@@ -232,7 +233,10 @@ Inputs:
 - callback: The callback that is called when the operation completes, see docs for `On_Connect` for its arguments
 */
 connect :: proc(io: ^IO, endpoint: net.Endpoint, user: rawptr, callback: On_Connect) {
-	_connect(io, endpoint, user, callback)
+	_, err := _connect(io, endpoint, user, callback)
+	if err != nil {
+		callback(user, {}, err)
+	}
 }
 
 /*
