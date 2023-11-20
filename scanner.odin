@@ -32,7 +32,7 @@ scan_num_bytes :: proc(split_data: rawptr, data: []byte, at_eof: bool) -> (advan
 
 // A callback based scanner over the connection based on nbio.
 Scanner :: struct #no_copy {
-	connection:                   ^Connection,
+	connection:                   Connection_Handle,
 	split:                        Split_Proc,
 	split_data:                   rawptr,
 	buf:                          [dynamic]byte,

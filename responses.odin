@@ -8,7 +8,7 @@ import "core:os"
 import "core:path/filepath"
 import "core:strings"
 
-import "nbio"
+import nbio "nbio/poly"
 
 // Sets the response to one that sends the given HTML.
 respond_html :: proc(r: ^Response, html: string, status: Status = .OK, loc := #caller_location) {
@@ -76,10 +76,7 @@ respond_file :: proc(r: ^Response, path: string, content_type: Maybe(Mime_Type) 
 	bytes.buffer_grow(&r._buf, size)
 	buf := _dynamic_unwritten(r._buf.buf)[:size]
 
-	on_read :: proc(user: rawptr, read: int, err: os.Errno) {
-		r      := cast(^Response)user
-		handle := os.Handle(uintptr(context.user_ptr))
-
+	on_read :: proc(r: ^Response, handle: os.Handle, read: int, err: os.Errno) {
 		_dynamic_add_len(&r._buf.buf, read)
 
 		if err != os.ERROR_NONE {
@@ -93,10 +90,7 @@ respond_file :: proc(r: ^Response, path: string, content_type: Maybe(Mime_Type) 
 		nbio.close(&td.io, handle)
 	}
 
-	// Using the context.user_ptr to point to the file handle.
-	context.user_ptr = rawptr(uintptr(handle))
-
-	nbio.read_at_all(io, handle, 0, buf, r, on_read)
+	nbio.read_at_all(io, handle, 0, buf, r, handle, on_read)
 }
 
 /*

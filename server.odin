@@ -16,6 +16,7 @@ import "core:thread"
 import "core:time"
 
 import "nbio"
+import pnbio "nbio/poly"
 
 Server_Opts :: struct {
 	// Whether the server should accept every request that sends a "Expect: 100-continue" header automatically.
@@ -99,7 +100,9 @@ Server :: struct {
 }
 
 Server_Thread :: struct {
-	conns: map[net.TCP_Socket]^Connection,
+	// conns: nbio.Pool(Connection),
+	conns: Pool,
+	// conns: map[net.TCP_Socket]^Connection,
 	state: Server_State,
 	io:    nbio.IO,
 }
@@ -165,7 +168,9 @@ listen_and_serve :: proc(
 }
 
 _server_thread_init :: proc(s: ^Server) {
-	td.conns = make(map[net.TCP_Socket]^Connection)
+	// nbio.pool_init(&td.conns, allocator = s.conn_allocator)
+	// td.conns = make(map[net.TCP_Socket]^Connection)
+	pool_init(&td.conns)
 
 	if sync.current_thread_id() != s.main_thread {
 		errno := nbio.init(&td.io)
@@ -222,6 +227,9 @@ _server_thread_shutdown :: proc(s: ^Server, loc := #caller_location) {
 	defer delete(td.conns)
 
 	for {
+		_state: int
+		for conn in pool_iter_used(&td.conns, &_state) {
+		}
 		for sock, conn in td.conns {
 			#partial switch conn.state {
 			case .Active:
@@ -277,12 +285,6 @@ server_shutdown_on_interrupt :: proc(s: ^Server) {
 	)
 }
 
-@(private)
-server_on_connection_close :: proc(s: ^Server, c: ^Connection) {
-	delete_key(&td.conns, c.socket)
-	free(c, s.conn_allocator)
-}
-
 // Taken from Go's implementation,
 // The maximum amount of bytes we will read (if handler did not)
 // in order to get the connection ready for the next request.
@@ -319,25 +321,29 @@ connection_set_state :: proc(c: ^Connection, s: Connection_State) -> bool {
 }
 
 Connection :: struct {
+	loop:      Loop,
 	server:    ^Server,
 	socket:    net.TCP_Socket,
 	state:     Connection_State,
-	scanner:   Scanner,
+	scanner:   Scanner, // TODO: scanners are heavy, should be pooled, either pool connections or the scanner.
 	arena:     virtual.Arena,
-	loop:      Loop,
 }
 
 // Loop/request cycle state.
-@(private)
 Loop :: struct {
-	conn: ^Connection,
 	req:  Request,
 	res:  Response,
 }
 
+loop_connection :: #force_inline proc(l: ^Loop) -> ^Connection {
+	#assert(offset_of(Connection, loop) == 0)
+	return cast(^Connection)l
+}
+
 @(private)
-connection_close :: proc(c: ^Connection, loc := #caller_location) {
+connection_close :: proc(ch: Connection_Handle, loc := #caller_location) {
 	assert_has_td(loc)
+	c := pool_get(&td.conns, ch)
 
 	if c.state >= .Closing {
 		log.infof("connection %i already closing/closed", c.socket)
@@ -354,20 +360,29 @@ connection_close :: proc(c: ^Connection, loc := #caller_location) {
 	// to process the closing and receive any remaining data.
 	net.shutdown(c.socket, net.Shutdown_Manner.Send)
 
+	// TODO: can probably keep these around.
 	scanner_destroy(&c.scanner)
 	virtual.arena_destroy(&c.arena)
 
-	nbio.timeout(&td.io, Conn_Close_Delay, c, proc(c: rawptr, _: Maybe(time.Time)) {
-		c := cast(^Connection)c
-		nbio.close(&td.io, c.socket, c, proc(c: rawptr, ok: bool) {
-			c := cast(^Connection)c
+	on_timeout :: proc(ch: Connection_Handle, _: Maybe(time.Time)) {
+		c := pool_get(&td.conns, ch)
+		pnbio.close(&td.io, c.socket, ch, on_close)
+	}
 
+	on_close :: proc(ch: Connection_Handle, ok: bool) {
+		c := pool_get(&td.conns, ch)
+
+		if ok {
 			log.debugf("closed connection: %i", c.socket)
+		} else {
+			log.warnf("unable to close connection: %i", c.socket)
+		}
 
-			c.state = .Closed
-			server_on_connection_close(c.server, c)
-		})
-	})
+		c.state = .Closed
+		pool_release(&td.conns, ch)
+	}
+
+	pnbio.timeout(&td.io, Conn_Close_Delay, ch, on_timeout)
 }
 
 @(private)
@@ -394,14 +409,13 @@ on_accept :: proc(server: rawptr, sock: net.TCP_Socket, source: net.Endpoint, er
 	// Accept next connection.
 	nbio.accept(&td.io, server.tcp_sock, server, on_accept)
 
-	c := new(Connection, server.conn_allocator)
+	c_handle, c := pool_get(&td.conns)
+
 	c.state = .New
 	c.server = server
 	c.socket = sock
 
-	td.conns[c.socket] = c
-
-	log.debugf("new connection with thread got %d conns", len(td.conns))
+	// log.debugf("new connection with thread got %d conns", len(td.conns))
 	conn_handle_reqs(c)
 }
 
@@ -422,8 +436,9 @@ conn_handle_reqs :: proc(c: ^Connection) {
 conn_handle_req :: proc(c: ^Connection, allocator := context.temp_allocator) {
 	on_rline1 :: proc(loop: rawptr, token: string, err: bufio.Scanner_Error) {
 		l := cast(^Loop)loop
+		conn := loop_connection(l)
 
-		if !connection_set_state(l.conn, .Active) do return
+		if !connection_set_state(conn, .Active) do return
 
 		if err != nil {
 			if err == .EOF {
@@ -432,7 +447,7 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.temp_allocator) {
 				log.warnf("request scanner error: %v", err)
 			}
 
-			clean_request_loop(l.conn, close = true)
+			clean_request_loop(conn, close = true)
 			return
 		}
 
@@ -441,7 +456,7 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.temp_allocator) {
 		// received prior to the request-line.
 		if len(token) == 0 {
 			log.debug("first request line empty, skipping in interest of robustness")
-			scanner_scan(&l.conn.scanner, loop, on_rline2)
+			scanner_scan(&conn.scanner, loop, on_rline2)
 			return
 		}
 
@@ -450,10 +465,11 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.temp_allocator) {
 
 	on_rline2 :: proc(loop: rawptr, token: string, err: bufio.Scanner_Error) {
 		l := cast(^Loop)loop
+		conn := loop_connection(l)
 
 		if err != nil {
 			log.warnf("request scanning error: %v", err)
-			clean_request_loop(l.conn, close = true)
+			clean_request_loop(conn, close = true)
 			return
 		}
 
@@ -467,7 +483,7 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.temp_allocator) {
 			return
 		case .Invalid_Version_Format, .Not_Enough_Fields:
 			log.warnf("request-line %q invalid: %s", string(token), err)
-			clean_request_loop(l.conn, close = true)
+			clean_request_loop(conn, close = true)
 			return
 		case .None:
 			l.req.line = rline
@@ -485,16 +501,17 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.temp_allocator) {
 		// TODO: don't parse the URL here, user or middleware can always do it if needed.
 		l.req.url = url_parse(rline.target.(string), context.temp_allocator)
 
-		l.conn.scanner.max_token_size = l.conn.server.opts.limit_headers
-		scanner_scan(&l.conn.scanner, loop, on_header_line)
+		conn.scanner.max_token_size = conn.server.opts.limit_headers
+		scanner_scan(&conn.scanner, loop, on_header_line)
 	}
 
 	on_header_line :: proc(loop: rawptr, token: string, err: bufio.Scanner_Error) {
 		l := cast(^Loop)loop
+		conn := loop_connection(l)
 
 		if err != nil {
 			log.warnf("request scanning error: %v", err)
-			clean_request_loop(l.conn, close = true)
+			clean_request_loop(conn, close = true)
 			return
 		}
 
@@ -512,8 +529,8 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.temp_allocator) {
 			return
 		}
 
-		l.conn.scanner.max_token_size -= len(token)
-		if l.conn.scanner.max_token_size <= 0 {
+		conn.scanner.max_token_size -= len(token)
+		if conn.scanner.max_token_size <= 0 {
 			log.warn("request headers too large")
 			headers_set_close(&l.res.headers)
 			l.res.status = .Request_Header_Fields_Too_Large
@@ -521,10 +538,12 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.temp_allocator) {
 			return
 		}
 
-		scanner_scan(&l.conn.scanner, loop, on_header_line)
+		scanner_scan(&conn.scanner, loop, on_header_line)
 	}
 
 	on_headers_end :: proc(l: ^Loop) {
+		conn := loop_connection(l)
+
 		if !headers_validate_for_server(&l.req.headers) {
 			log.warn("request headers are invalid")
 			headers_set_close(&l.res.headers)
@@ -535,11 +554,11 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.temp_allocator) {
 
 		l.req.headers.readonly = true
 
-		l.conn.scanner.max_token_size = bufio.DEFAULT_MAX_SCAN_TOKEN_SIZE
+		conn.scanner.max_token_size = bufio.DEFAULT_MAX_SCAN_TOKEN_SIZE
 
 		// Automatically respond with a continue status when the client has the Expect: 100-continue header.
 		if expect, ok := headers_get_unsafe(l.req.headers, "expect");
-		   ok && expect == "100-continue" && l.conn.server.opts.auto_expect_continue {
+		   ok && expect == "100-continue" && conn.server.opts.auto_expect_continue {
 
 			l.res.status = .Continue
 
@@ -547,7 +566,7 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.temp_allocator) {
 			return
 		}
 
-		l.req._scanner = &l.conn.scanner
+		l.req._scanner = &conn.scanner
 
 		rline := l.req.line.(Requestline)
 		// An options request with the "*" is a no-op/ping request to
@@ -560,16 +579,15 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.temp_allocator) {
 			// says a HEAD is identical to a GET but just without writing the body,
 			// handlers shouldn't have to worry about it.
 			is_head := rline.method == .Head
-			if is_head && l.conn.server.opts.redirect_head_to_get {
+			if is_head && conn.server.opts.redirect_head_to_get {
 				l.req.is_head = true
 				rline.method = .Get
 			}
 
-			l.conn.server.handler.handle(&l.conn.server.handler, &l.req, &l.res)
+			conn.server.handler.handle(&conn.server.handler, &l.req, &l.res)
 		}
 	}
 
-	c.loop.conn = c
 	c.loop.res._conn = c
 	request_init(&c.loop.req, allocator)
 	response_init(&c.loop.res, allocator)

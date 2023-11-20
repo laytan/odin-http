@@ -22,7 +22,7 @@ Response :: struct {
 	status:           Status,
 
 	// Only for internal usage.
-	_conn:            ^Connection,
+	_conn:            Connection_Handle,
 	// TODO/PERF: with some internal refactoring, we should be able to write directly to the
 	// connection (maybe a small buffer in this struct).
 	_buf:             bytes.Buffer,
