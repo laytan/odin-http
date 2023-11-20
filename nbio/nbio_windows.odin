@@ -97,7 +97,12 @@ _tick :: proc(io: ^IO) -> (err: os.Errno) {
 
 		for event in events[:entries_removed] {
 			if event.lpOverlapped == nil {
-				log.warn("You have ran into a strange error some users have ran into on Windows 10 but I can't reproduce, I try to recover from the error but please chime in at https://github.com/laytan/odin-http/issues/34")
+				@static logged: bool
+				if !logged {
+					log.warn("You have ran into a strange error some users have ran into on Windows 10 but I can't reproduce, I try to recover from the error but please chime in at https://github.com/laytan/odin-http/issues/34")
+					logged = true
+				}
+
 				io.io_pending += 1
 				continue
 			}
