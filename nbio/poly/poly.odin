@@ -13,6 +13,9 @@ import "core:time"
 
 import nbio ".."
 
+// Because mem is only used inside the poly procs, the checker thinks we aren't using it.
+_ :: mem
+
 /// Re-export `nbio` stuff that is not wrapped in this package.
 
 IO                  :: nbio.IO
