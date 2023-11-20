@@ -78,7 +78,7 @@ rate_limit :: proc(data: ^Rate_Limit_Data, next: ^Handler, opts: ^Rate_Limit_Opt
 	h.next = next
 
 	data.opts = opts
-	data.hits = make(map[net.Address]int, 0, allocator)
+	data.hits = make(map[net.Address]int, 16, allocator)
 	data.next_sweep = time.time_add(time.now(), opts.window)
 	h.user_data = data
 

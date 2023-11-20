@@ -59,6 +59,7 @@ serve :: proc() {
 	// You can apply a rate limit just like any other middleware,
 	// this one only applies to the /cookies route, but moving it higher up would match others too:
 	rate_limit_data: http.Rate_Limit_Data
+	defer http.rate_limit_destroy(&rate_limit_data)
 	limit_msg := "Only one cookie is allowed per second, slow down!"
 	limited_cookies := http.rate_limit(
 		&rate_limit_data,
