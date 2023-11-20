@@ -12,7 +12,7 @@ import "core:strconv"
 import "core:strings"
 
 import http ".."
-import openssl "../openssl"
+import ossl "../openssl"
 
 Request :: struct {
 	method:  http.Method,
@@ -57,6 +57,7 @@ get :: proc(target: string, allocator := context.allocator) -> (Response, Error)
 }
 
 Request_Error :: enum {
+	None,
 	Invalid_Response_HTTP_Version,
 	Invalid_Response_Method,
 	Invalid_Response_Header,
@@ -64,17 +65,18 @@ Request_Error :: enum {
 }
 
 SSL_Error :: enum {
-	Controlled_Shutdown,
-	Fatal_Shutdown,
-	SSL_Write_Failed,
+	None,
+	Write_Failed,
+	Fd_Invalid,
 }
 
-Error :: union {
+Error :: union #shared_nil {
 	net.Dial_Error,
 	net.Parse_Endpoint_Error,
 	net.Network_Error,
 	bufio.Scanner_Error,
 	Request_Error,
+	ossl.Error,
 	SSL_Error,
 }
 
@@ -92,35 +94,37 @@ request :: proc(target: string, request: ^Request, allocator := context.allocato
 
 	// HTTPS using openssl.
 	if url.scheme == "https" {
-		ctx := openssl.SSL_CTX_new(openssl.TLS_client_method())
-		ssl := openssl.SSL_new(ctx)
-		openssl.SSL_set_fd(ssl, c.int(socket))
+		// Print errors to logger if it is set up.
+		defer if context.logger.procedure != nil {
+			logger := context.logger
+			ossl.errors_print(&logger)
+		}
+
+		ctx := ossl.ctx_new(ossl.method_client_tls())
+		ssl := ossl.new(ctx)
+
+		// bio := ossl.bio_s_nbio()
+		// ossl.ssl_set_rbio(ssl, bio)
+		// ossl.ssl_set_wbio(ssl, bio)
+
+		if !ossl.fd_set(ssl, c.int(socket)) {
+			err = SSL_Error.Fd_Invalid
+			return
+		}
+
+		log.debug("hello")
 
 		// For servers using SNI for SSL certs (like cloudflare), this needs to be set.
 		chostname := strings.clone_to_cstring(url.host, allocator)
 		defer delete(chostname)
-		openssl.SSL_set_tlsext_host_name(ssl, chostname)
+		_ = ossl.tlsext_hostname_set(ssl, chostname)
 
-		switch openssl.SSL_connect(ssl) {
-		case 2:
-			err = SSL_Error.Controlled_Shutdown
-			return
-		case 1: // success
-		case:
-			err = SSL_Error.Fatal_Shutdown
-			return
-		}
+		_ = ossl.connect(ssl) or_return
 
 		buf := bytes.buffer_to_bytes(&req_buf)
-		to_write := len(buf)
-		for to_write > 0 {
-			ret := openssl.SSL_write(ssl, raw_data(buf), c.int(to_write))
-			if ret <= 0 {
-				err = SSL_Error.SSL_Write_Failed
-				return
-			}
-
-			to_write -= int(ret)
+		if _, ok := ossl.write_full(ssl, buf); !ok {
+			err = SSL_Error.Write_Failed
+			return
 		}
 
 		return parse_response(SSL_Communication{ssl = ssl, ctx = ctx, socket = socket}, allocator)
@@ -170,8 +174,8 @@ response_destroy :: proc(res: ^Response, body: Maybe(Body_Type) = nil, was_alloc
 	case net.TCP_Socket:
 		net.close(comm)
 	case SSL_Communication:
-		openssl.SSL_free(comm.ssl)
-		openssl.SSL_CTX_free(comm.ctx)
+		ossl.free(comm.ssl)
+		ossl.ctx_free(comm.ctx)
 		net.close(comm.socket)
 	}
 }

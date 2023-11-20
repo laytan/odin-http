@@ -3,7 +3,6 @@ package client
 
 import "core:bufio"
 import "core:bytes"
-import "core:c"
 import "core:io"
 import "core:log"
 import "core:net"
@@ -11,7 +10,7 @@ import "core:strconv"
 import "core:strings"
 
 import http ".."
-import openssl "../openssl"
+import ossl "../openssl"
 
 parse_endpoint :: proc(target: string) -> (url: http.URL, endpoint: net.Endpoint, err: net.Network_Error) {
 	url = http.url_parse(target)
@@ -116,8 +115,8 @@ format_request :: proc(target: http.URL, request: ^Request, allocator := context
 
 SSL_Communication :: struct {
 	socket: net.TCP_Socket,
-	ssl:    ^openssl.SSL,
-	ctx:    ^openssl.SSL_CTX,
+	ssl:    ^ossl.Ssl,
+	ctx:    ^ossl.Ctx,
 }
 
 Communication :: union {
@@ -210,7 +209,7 @@ parse_response :: proc(socket: Communication, allocator := context.allocator) ->
 	return res, nil
 }
 
-ssl_tcp_stream :: proc(sock: ^openssl.SSL) -> (s: io.Stream) {
+ssl_tcp_stream :: proc(sock: ^ossl.Ssl) -> (s: io.Stream) {
 	s.data = sock
 	s.procedure = _ssl_stream_proc
 	return s
@@ -231,13 +230,13 @@ _ssl_stream_proc :: proc(
 	case .Query:
 		return io.query_utility(io.Stream_Mode_Set{.Query, .Read})
 	case .Read:
-		ssl := cast(^openssl.SSL)stream_data
-		ret := openssl.SSL_read(ssl, raw_data(p), c.int(len(p)))
-		if ret <= 0 {
+		ssl := cast(^ossl.Ssl)stream_data
+		_n, ok := ossl.read(ssl, p)
+		if !ok {
 			return 0, .Unexpected_EOF
 		}
 
-		return i64(ret), nil
+		return i64(_n), nil
 	case:
 		err = .Empty
 	}
