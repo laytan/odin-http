@@ -146,6 +146,7 @@ response_writer_init :: proc(rw: ^Response_Writer, r: ^Response, buffer: []byte)
 
 				write_chunk(b, rw.buf[:])
 				clear(&rw.buf)
+				return 0, nil
 
 			case .Destroy:
 				assert(!rw.ended)
@@ -157,6 +158,7 @@ response_writer_init :: proc(rw: ^Response_Writer, r: ^Response, buffer: []byte)
 				ws(b, "0\r\n\r\n")
 
 				rw.ended = true
+				return 0, nil
 
 			case .Close:
 				// Write what is left.
@@ -170,6 +172,7 @@ response_writer_init :: proc(rw: ^Response_Writer, r: ^Response, buffer: []byte)
 
 				// Send the response.
 				respond(rw.r)
+				return 0, nil
 
 			case .Write:
 				assert(!rw.ended)

@@ -45,6 +45,7 @@ headers_set :: proc(h: ^Headers, k: string, v: string, loc := #caller_location) 
 Unsafely set header, given key is assumed to be a lowercase string.
 */
 headers_set_unsafe :: #force_inline proc(h: ^Headers, k: string, v: string) {
+	assert(!h.readonly)
 	h._kv[k] = v
 }
 

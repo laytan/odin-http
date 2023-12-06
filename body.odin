@@ -26,7 +26,7 @@ Do not call this more than once.
 
 **Tip** If an error is returned, easily respond with an appropriate error code like this, `http.respond(res, http.body_error_status(err))`.
 */
-body :: proc(req: ^Request, max_length: int = 0, user_data: rawptr, cb: Body_Callback) {
+body :: proc(req: ^Request, max_length: int = -1, user_data: rawptr, cb: Body_Callback) {
 	assert(req._body_ok == nil, "you can only call body once per request")
 
 	enc_header, ok := headers_get_unsafe(req.headers, "transfer-encoding")
