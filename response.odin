@@ -251,7 +251,7 @@ _response_write_heading :: proc(r: ^Response, content_length: int) {
 	if (
 		content_length > -1                              &&
 		!headers_has_unsafe(r.headers, "content-length") &&
-		response_needs_content_length(r, conn)
+		response_needs_content_length(r, conn) \
 	) {
 		if content_length == 0 {
 			ws(b, "content-length: 0\r\n")
