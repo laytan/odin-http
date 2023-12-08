@@ -260,7 +260,10 @@ _body_chunked :: proc(req: ^Request, max_length: int = -1, user_data: rawptr, cb
 
 			te_header := headers_get_unsafe(s.req.headers, "transfer-encoding")
 			new_te_header := strings.trim_suffix(te_header, "chunked")
+
+			s.req.headers.readonly = false
 			headers_set_unsafe(&s.req.headers, "transfer-encoding", new_te_header)
+			s.req.headers.readonly = true
 
 			s.req._body_ok = true
 			s.cb(s.user_data, strings.to_string(s.buf), nil)

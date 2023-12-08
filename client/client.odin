@@ -474,7 +474,10 @@ _response_body_chunked :: proc(
 	}
 
 	te := strings.trim_suffix(http.headers_get_unsafe(headers^, "transfer-encoding"), "chunked")
+
+	headers.readonly = false
 	http.headers_set_unsafe(headers, "transfer-encoding", te)
+	headers.readonly = true
 
 	return bytes.buffer_to_string(&body_buff), .None
 }
