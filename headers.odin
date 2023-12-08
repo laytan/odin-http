@@ -111,8 +111,17 @@ headers_delete_unsafe :: #force_inline proc(h: ^Headers, k: string) {
 
 /* Common Helpers */
 
-headers_set_content_type :: #force_inline proc(h: ^Headers, ct: string) {
+headers_set_content_type :: proc {
+	headers_set_content_type_mime,
+	headers_set_content_type_string,
+}
+
+headers_set_content_type_string :: #force_inline proc(h: ^Headers, ct: string) {
 	headers_set_unsafe(h, "content-type", ct)
+}
+
+headers_set_content_type_mime :: #force_inline proc(h: ^Headers, ct: Mime_Type) {
+	headers_set_unsafe(h, "content-type", mime_to_content_type(ct))
 }
 
 headers_set_close :: #force_inline proc(h: ^Headers) {
