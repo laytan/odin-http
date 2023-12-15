@@ -120,21 +120,7 @@ status_valid :: proc(s: Status) -> bool {
 status_from_string :: proc(s: string) -> (Status, bool) {
 	if len(s) < 3 do return {}, false
 
-	// Turns the string of length 3 into an int.
-	// It goes from right to left, increasing a multiplier (for base 10).
-	// Say we got status "123"
-	// i == 0, b == "3", (b - '0') == 3, code_int += 3 * 1
-	// i == 1, b == "2", (b - '0') == 2, code_int += 2 * 10
-	// i == 2, b == "1", (b - '0') == 1, code_int += 1 * 100
-
-	code := s[:3]
-	code_int: int
-	multiplier := 1
-	for i in 0 ..< len(code) {
-		b := code[2 - i]
-		code_int += int(b - '0') * multiplier
-		multiplier *= 10
-	}
+	code_int := int(s[0]-'0')*100 + (int(s[1]-'0')*10) + int(s[2]-'0')
 
 	if !status_valid(Status(code_int)) {
 		return {}, false
