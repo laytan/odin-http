@@ -6,7 +6,6 @@ import "core:c/libc"
 import "core:fmt"
 import "core:log"
 import "core:mem"
-import "core:mem/virtual"
 import "core:net"
 import "core:os"
 import "core:runtime"
@@ -37,16 +36,13 @@ Server_Opts :: struct {
 	// The HTTP spec does not specify any limits but in practice it is safer.
 	// defaults to 8000.
 	limit_headers:           int,
-	// The size of the growing arena's blocks, each connection has its own arena.
-	// defaults to 256KB (quarter of a megabyte).
-	connection_arena_size:   uint,
-	// The amount of memory a connection can use before it is freed.
-	// Freeing memory is costly in instructions, but not doing it is costly in RAM.
-	// A delicate balance, default is 3MB.
-	// TODO: can we make the default automatically scale based on available memory and amount of connections?
-	connection_allowed_size: uint,
 	// The thread count to use, defaults to your core count - 1.
 	thread_count:            int,
+	// The initial size of the temp_allocator for each connection, defaults to 256KiB and doubles
+	// each time it needs to grow.
+	// NOTE: this value is assigned globally, running multiple servers with a different value will
+	// not work.
+	initial_temp_block_cap:  uint,
 }
 
 Default_Server_Opts := Server_Opts {
@@ -54,8 +50,7 @@ Default_Server_Opts := Server_Opts {
 	redirect_head_to_get    = true,
 	limit_request_line      = 8000,
 	limit_headers           = 8000,
-	connection_arena_size   = 256 * mem.Kilobyte,
-	connection_allowed_size = 3   * mem.Megabyte,
+	initial_temp_block_cap  = 256 * mem.Kilobyte,
 }
 
 @(init, private)
@@ -129,6 +124,7 @@ listen_and_serve :: proc(
 	s.opts = opts
 	s.conn_allocator = context.allocator
 	s.main_thread = sync.current_thread_id()
+	initial_block_cap = int(s.opts.initial_temp_block_cap)
 
 	errno := nbio.init(&td.io)
 	// TODO: error handling.
@@ -319,12 +315,12 @@ connection_set_state :: proc(c: ^Connection, s: Connection_State) -> bool {
 }
 
 Connection :: struct {
-	server:    ^Server,
-	socket:    net.TCP_Socket,
-	state:     Connection_State,
-	scanner:   Scanner,
-	arena:     virtual.Arena,
-	loop:      Loop,
+	server:         ^Server,
+	socket:         net.TCP_Socket,
+	state:          Connection_State,
+	scanner:        Scanner,
+	temp_allocator: Allocator,
+	loop:           Loop,
 }
 
 // Loop/request cycle state.
@@ -355,7 +351,7 @@ connection_close :: proc(c: ^Connection, loc := #caller_location) {
 	net.shutdown(c.socket, net.Shutdown_Manner.Send)
 
 	scanner_destroy(&c.scanner)
-	virtual.arena_destroy(&c.arena)
+	allocator_destroy(&c.temp_allocator)
 
 	nbio.timeout(&td.io, Conn_Close_Delay, c, proc(c: rawptr, _: Maybe(time.Time)) {
 		c := cast(^Connection)c
@@ -401,20 +397,15 @@ on_accept :: proc(server: rawptr, sock: net.TCP_Socket, source: net.Endpoint, er
 
 	td.conns[c.socket] = c
 
-	log.debugf("new connection with thread got %d conns", len(td.conns))
+	log.debugf("new connection with thread, got %d conns", len(td.conns))
 	conn_handle_reqs(c)
 }
 
 @(private)
 conn_handle_reqs :: proc(c: ^Connection) {
 	scanner_init(&c.scanner, c, c.server.conn_allocator)
-
-	if err := virtual.arena_init_growing(&c.arena, c.server.opts.connection_arena_size); err != nil {
-		panic("could not create memory arena")
-	}
-
-	allocator := virtual.arena_allocator(&c.arena)
-	context.temp_allocator = allocator
+	allocator_init(&c.temp_allocator, c.server.conn_allocator)
+	context.temp_allocator = allocator(&c.temp_allocator)
 	conn_handle_req(c, context.temp_allocator)
 }
 
