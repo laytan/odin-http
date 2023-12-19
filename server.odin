@@ -55,7 +55,7 @@ Default_Server_Opts := Server_Opts {
 
 @(init, private)
 server_opts_init :: proc() {
-	when ODIN_OS == .Linux {
+	when ODIN_OS == .Linux || ODIN_OS == .Darwin {
 		Default_Server_Opts.thread_count = os.processor_core_count() - 1
 	} else {
 		Default_Server_Opts.thread_count = 1
@@ -182,6 +182,11 @@ _server_thread_init :: proc(s: ^Server) {
 
 		errno := nbio.tick(&td.io)
 		if errno != os.ERROR_NONE {
+			if errno == os.EINTR {
+				server_shutdown(s)
+				continue
+			}
+
 			log.errorf("non-blocking io tick error: %v", errno)
 			break
 		}
@@ -217,7 +222,7 @@ _server_thread_shutdown :: proc(s: ^Server, loc := #caller_location) {
 	td.state = .Closing
 	defer delete(td.conns)
 
-	for {
+	for i := 0; ; i += 1 {
 		for sock, conn in td.conns {
 			#partial switch conn.state {
 			case .Active:
@@ -226,7 +231,8 @@ _server_thread_shutdown :: proc(s: ^Server, loc := #caller_location) {
 				log.infof("shutdown: closing connection %i", sock)
 				connection_close(conn)
 			case .Closing:
-				log.debugf("shutdown: connection %i is closing", sock)
+				// Only logging this every 10_000 calls to avoid spam.
+				if i % 10_000 == 0 do log.debugf("shutdown: connection %i is closing", sock)
 			case .Closed:
 				log.warn("closed connection in connections map, maybe a race or logic error")
 			}
@@ -275,8 +281,6 @@ server_shutdown_on_interrupt :: proc(s: ^Server) {
 
 @(private)
 server_on_connection_close :: proc(s: ^Server, c: ^Connection) {
-	delete_key(&td.conns, c.socket)
-	free(c, s.conn_allocator)
 }
 
 // Taken from Go's implementation,
@@ -351,7 +355,6 @@ connection_close :: proc(c: ^Connection, loc := #caller_location) {
 	net.shutdown(c.socket, net.Shutdown_Manner.Send)
 
 	scanner_destroy(&c.scanner)
-	allocator_destroy(&c.temp_allocator)
 
 	nbio.timeout(&td.io, Conn_Close_Delay, c, proc(c: rawptr, _: Maybe(time.Time)) {
 		c := cast(^Connection)c
@@ -361,7 +364,10 @@ connection_close :: proc(c: ^Connection, loc := #caller_location) {
 			log.debugf("closed connection: %i", c.socket)
 
 			c.state = .Closed
-			server_on_connection_close(c.server, c)
+
+			allocator_destroy(&c.temp_allocator)
+			delete_key(&td.conns, c.socket)
+			free(c, c.server.conn_allocator)
 		})
 	})
 }

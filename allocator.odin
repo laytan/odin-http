@@ -21,6 +21,8 @@ Allocator :: struct {
 	last_alloc: rawptr,
 }
 
+// TODO: put freed blocks in some kind of list and reuse them when a new block is needed.
+
 Block :: struct {
 	prev:   Maybe(^Block),
 	size:   int,
@@ -38,7 +40,7 @@ allocator :: proc(a: ^Allocator) -> mem.Allocator {
 allocator_init :: proc(a: ^Allocator, parent := context.allocator, loc := #caller_location) -> mem.Allocator_Error {
 	a.parent = parent
 	a.cap = initial_block_cap
-	a.curr = allocator_new_block(a, 0, loc) or_return
+	a.curr = allocator_new_block(a, 0, 0, loc) or_return
 	return nil
 }
 
@@ -109,14 +111,16 @@ allocator_proc :: proc(allocator_data: rawptr, mode: mem.Allocator_Mode,
 	}
 }
 
-allocator_new_block :: proc(a: ^Allocator, min_size: int, loc := #caller_location) -> (b: ^Block, err: mem.Allocator_Error) {
-	total := max(a.cap, min_size + size_of(Block))
+allocator_new_block :: proc(a: ^Allocator, min_size: int, alignment: int, loc := #caller_location) -> (b: ^Block, err: mem.Allocator_Error) {
+	base_offset := max(alignment, size_of(Block))
+	total := max(a.cap, min_size + base_offset)
 	a.cap *= 2
 
-	data := mem.alloc(initial_block_cap, max(16, align_of(Block)), a.parent, loc) or_return
+	data := mem.alloc(total, max(16, align_of(Block)), a.parent, loc) or_return
 
 	b = (^Block)(data)
-	b.size = total - size_of(Block)
+	b.size = total - base_offset
+	b.offset = base_offset
 	b.prev = a.curr
 
 	a.curr = b
@@ -140,22 +144,22 @@ allocator_alloc_non_zerod :: proc(a: ^Allocator, size: int, alignment: int, loc 
 
 	// TODO: handle int overflows.
 
-	size := size
-	if block.offset + size > block.size {
-		size  = int(mem.align_forward_uint(uint(size), uint(alignment)))
-		block = allocator_new_block(a, size, loc) or_return
+	needed := int(mem.align_forward_uint(uint(size), uint(alignment)))
+	if block.offset + needed > block.size {
+		block = allocator_new_block(a, needed, alignment, loc) or_return
 		data  = ([^]byte)(&block.data)
 	}
 
-	alignment_offset := 0
-	ptr  := uintptr(data[block.offset:])
-	mask := uintptr(alignment-1)
-	if ptr & mask != 0 {
-		alignment_offset = int(uintptr(alignment) - (ptr & mask))
+	alignment_offset := 0; {
+		ptr  := uintptr(data[block.offset:])
+		mask := uintptr(alignment-1)
+		if ptr & mask != 0 {
+			alignment_offset = int(uintptr(alignment) - (ptr & mask))
+		}
 	}
 
 	block.offset += alignment_offset
-	bytes = data[block.offset:block.offset+size]
+	bytes = data[block.offset:][:size]
 	block.offset += size
 	a.last_alloc = raw_data(bytes)
 	return
@@ -183,4 +187,39 @@ allocator_free_all :: proc(a: ^Allocator, loc := #caller_location) -> (blocks: i
 allocator_destroy :: proc(a: ^Allocator, loc := #caller_location) {
 	allocator_free_all(a, loc)
 	free(a.curr, a.parent, loc)
+}
+
+import "core:testing"
+
+@(test)
+test_allocator_alignment_boundary :: proc(t: ^testing.T) {
+	arena: Allocator
+	allocator_init(&arena)
+	context.allocator = allocator(&arena)
+
+	_, _ = mem.alloc(int(arena.cap)-120)
+	_, err := mem.alloc(112, 32)
+	testing.expect_value(t, err, nil)
+}
+
+@(test)
+test_temp_allocator_big_alloc_and_alignment :: proc(t: ^testing.T) {
+	arena: Allocator
+	allocator_init(&arena)
+	context.allocator = allocator(&arena)
+
+	mappy: map[[8]int]int
+	err := reserve(&mappy, 50000)
+	testing.expect_value(t, err, nil)
+}
+
+@(test)
+test_temp_allocator_returns_correct_size :: proc(t: ^testing.T) {
+	arena: Allocator
+	allocator_init(&arena)
+	context.allocator = allocator(&arena)
+
+	bytes, err := mem.alloc_bytes(10, 16)
+	testing.expect_value(t, err, nil)
+	testing.expect_value(t, len(bytes), 10)
 }
