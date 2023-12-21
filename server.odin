@@ -94,9 +94,10 @@ Server :: struct {
 }
 
 Server_Thread :: struct {
-	conns: map[net.TCP_Socket]^Connection,
-	state: Server_State,
-	io:    nbio.IO,
+	conns:            map[net.TCP_Socket]^Connection,
+	state:            Server_State,
+	io:               nbio.IO,
+	free_temp_blocks: map[int]queue.Queue(^Block),
 }
 
 @(private, disabled = ODIN_DISABLE_ASSERT)
@@ -161,7 +162,8 @@ listen_and_serve :: proc(
 }
 
 _server_thread_init :: proc(s: ^Server) {
-	td.conns = make(map[net.TCP_Socket]^Connection)
+	td.conns            = make(map[net.TCP_Socket]^Connection)
+	td.free_temp_blocks = make(map[int]queue.Queue(^Block))
 
 	if sync.current_thread_id() != s.main_thread {
 		errno := nbio.init(&td.io)
@@ -221,6 +223,18 @@ _server_thread_shutdown :: proc(s: ^Server, loc := #caller_location) {
 
 	td.state = .Closing
 	defer delete(td.conns)
+	defer {
+		blocks: int
+		for _, &bucket in td.free_temp_blocks {
+			for block in queue.pop_front_safe(&bucket) {
+				blocks += 1
+				free(block)
+			}
+			queue.destroy(&bucket)
+		}
+		delete(td.free_temp_blocks)
+		log.infof("had %i temp blocks to spare", blocks)
+	}
 
 	for i := 0; ; i += 1 {
 		for sock, conn in td.conns {
@@ -277,10 +291,6 @@ server_shutdown_on_interrupt :: proc(s: ^Server) {
 			server_shutdown(on_interrupt_server)
 		},
 	)
-}
-
-@(private)
-server_on_connection_close :: proc(s: ^Server, c: ^Connection) {
 }
 
 // Taken from Go's implementation,

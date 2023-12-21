@@ -2,6 +2,7 @@
 package http
 
 import "core:mem"
+import "core:container/queue"
 
 initial_block_cap := mem.Kilobyte * 256
 
@@ -21,13 +22,12 @@ Allocator :: struct {
 	last_alloc: rawptr,
 }
 
-// TODO: put freed blocks in some kind of list and reuse them when a new block is needed.
-
 Block :: struct {
-	prev:   Maybe(^Block),
-	size:   int,
-	offset: int,
-	data:   [0]byte,
+	prev:       Maybe(^Block),
+	size:       int,
+	total_size: int,
+	offset:     int,
+	data:       [0]byte,
 }
 
 allocator :: proc(a: ^Allocator) -> mem.Allocator {
@@ -113,17 +113,26 @@ allocator_proc :: proc(allocator_data: rawptr, mode: mem.Allocator_Mode,
 
 allocator_new_block :: proc(a: ^Allocator, min_size: int, alignment: int, loc := #caller_location) -> (b: ^Block, err: mem.Allocator_Error) {
 	base_offset := max(alignment, size_of(Block))
-	total := max(a.cap, min_size + base_offset)
-	a.cap *= 2
+	total       := max(a.cap, min_size + base_offset)
+	a.cap       *= 2
 
-	data := mem.alloc(total, max(16, align_of(Block)), a.parent, loc) or_return
+	assert_has_td(loc)
+	if bucket, has_bucket := &td.free_temp_blocks[total]; has_bucket {
+		if block, has_block := queue.pop_back_safe(bucket); has_block {
+			b = block
+		}
+	}
 
-	b = (^Block)(data)
-	b.size = total - base_offset
-	b.offset = base_offset
-	b.prev = a.curr
+	if b == nil {
+		data := mem.alloc(total, max(16, align_of(Block)), a.parent, loc) or_return
+		b     = (^Block)(data)
+	}
 
-	a.curr = b
+	b.total_size = total
+	b.size       = total - base_offset
+	b.offset     = base_offset
+	b.prev       = a.curr
+	a.curr       = b
 	return
 }
 
@@ -171,12 +180,12 @@ allocator_free_all :: proc(a: ^Allocator, loc := #caller_location) -> (blocks: i
 	total_used += a.curr.offset
 
 	for a.curr.prev != nil {
-		block := a.curr
+		block      := a.curr
 		blocks     += 1
-		total_size += block.size + size_of(Block)
+		total_size += block.total_size
 		total_used += block.offset
-		a.curr = block.prev.?
-		free(block, a.parent, loc)
+		a.curr      = block.prev.?
+		allocator_free_block(block, loc)
 	}
 
 	a.curr.offset = 0
@@ -186,7 +195,21 @@ allocator_free_all :: proc(a: ^Allocator, loc := #caller_location) -> (blocks: i
 
 allocator_destroy :: proc(a: ^Allocator, loc := #caller_location) {
 	allocator_free_all(a, loc)
-	free(a.curr, a.parent, loc)
+	allocator_free_block(a.curr, loc)
+}
+
+allocator_free_block :: proc(b: ^Block, loc := #caller_location) {
+	assert_has_td(loc)
+
+	bucket, is_initialized := &td.free_temp_blocks[b.total_size]
+	if !is_initialized {
+		td.free_temp_blocks[b.total_size] = {}
+		bucket = &td.free_temp_blocks[b.total_size]
+		queue.init(bucket, allocator=td.free_temp_blocks.allocator)
+	}
+
+	b.prev = nil
+	queue.push(bucket, b)
 }
 
 import "core:testing"
