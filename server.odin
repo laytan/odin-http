@@ -192,7 +192,8 @@ _server_thread_init :: proc(s: ^Server) {
 
 		errno := nbio.tick(&td.io)
 		if errno != os.ERROR_NONE {
-			if errno == os.EINTR {
+			// TODO: check how this behaves on Windows.
+			when ODIN_OS != .Windows do if errno == os.EINTR {
 				server_shutdown(s)
 				continue
 			}
