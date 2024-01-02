@@ -180,13 +180,11 @@ route_add :: proc(router: ^Router, method: Method, route: Route) {
 	append(&router.routes[method], route)
 }
 
-@(private, thread_local)
-routes_try_captures: [match.MAX_CAPTURES]match.Match
-
 @(private)
 routes_try :: proc(routes: [dynamic]Route, req: ^Request, res: ^Response) -> bool {
+	try_captures: [match.MAX_CAPTURES]match.Match = ---
 	for route in routes {
-		n, err := match.find_aux(req.url.path, route.pattern, 0, true, &routes_try_captures)
+		n, err := match.find_aux(req.url.path, route.pattern, 0, true, &try_captures)
 		if err != .OK {
 			log.errorf("Error matching route: %v", err)
 			continue
@@ -194,7 +192,7 @@ routes_try :: proc(routes: [dynamic]Route, req: ^Request, res: ^Response) -> boo
 
 		if n > 0 {
 			captures := make([]string, n - 1, context.temp_allocator)
-			for cap, i in routes_try_captures[1:n] {
+			for cap, i in try_captures[1:n] {
 				captures[i] = req.url.path[cap.byte_start:cap.byte_end]
 			}
 
