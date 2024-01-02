@@ -3,10 +3,10 @@ package http
 import "core:bufio"
 import "core:bytes"
 import "core:c/libc"
+import "core:container/queue"
 import "core:fmt"
 import "core:log"
 import "core:mem"
-import "core:mem/virtual"
 import "core:net"
 import "core:os"
 import "core:runtime"
@@ -37,16 +37,16 @@ Server_Opts :: struct {
 	// The HTTP spec does not specify any limits but in practice it is safer.
 	// defaults to 8000.
 	limit_headers:           int,
-	// The size of the growing arena's blocks, each connection has its own arena.
-	// defaults to 256KB (quarter of a megabyte).
-	connection_arena_size:   uint,
-	// The amount of memory a connection can use before it is freed.
-	// Freeing memory is costly in instructions, but not doing it is costly in RAM.
-	// A delicate balance, default is 3MB.
-	// TODO: can we make the default automatically scale based on available memory and amount of connections?
-	connection_allowed_size: uint,
 	// The thread count to use, defaults to your core count - 1.
 	thread_count:            int,
+	// The initial size of the temp_allocator for each connection, defaults to 256KiB and doubles
+	// each time it needs to grow.
+	// NOTE: this value is assigned globally, running multiple servers with a different value will
+	// not work.
+	initial_temp_block_cap:  uint,
+	// The amount of free blocks each thread is allowed to hold on to before deallocating excess.
+	// Defaults to 64.
+	max_free_blocks_queued:  uint,
 }
 
 Default_Server_Opts := Server_Opts {
@@ -54,13 +54,13 @@ Default_Server_Opts := Server_Opts {
 	redirect_head_to_get    = true,
 	limit_request_line      = 8000,
 	limit_headers           = 8000,
-	connection_arena_size   = 256 * mem.Kilobyte,
-	connection_allowed_size = 3   * mem.Megabyte,
+	initial_temp_block_cap  = 256 * mem.Kilobyte,
+	max_free_blocks_queued  = 64,
 }
 
 @(init, private)
 server_opts_init :: proc() {
-	when ODIN_OS == .Linux {
+	when ODIN_OS == .Linux || ODIN_OS == .Darwin {
 		Default_Server_Opts.thread_count = os.processor_core_count() - 1
 	} else {
 		Default_Server_Opts.thread_count = 1
@@ -102,6 +102,9 @@ Server_Thread :: struct {
 	conns: map[net.TCP_Socket]^Connection,
 	state: Server_State,
 	io:    nbio.IO,
+
+	free_temp_blocks:       map[int]queue.Queue(^Block),
+	free_temp_blocks_count: int,
 }
 
 @(private, disabled = ODIN_DISABLE_ASSERT)
@@ -129,6 +132,8 @@ listen_and_serve :: proc(
 	s.opts = opts
 	s.conn_allocator = context.allocator
 	s.main_thread = sync.current_thread_id()
+	initial_block_cap = int(s.opts.initial_temp_block_cap)
+	max_free_blocks_queued = int(s.opts.max_free_blocks_queued)
 
 	errno := nbio.init(&td.io)
 	// TODO: error handling.
@@ -165,7 +170,8 @@ listen_and_serve :: proc(
 }
 
 _server_thread_init :: proc(s: ^Server) {
-	td.conns = make(map[net.TCP_Socket]^Connection)
+	td.conns            = make(map[net.TCP_Socket]^Connection)
+	td.free_temp_blocks = make(map[int]queue.Queue(^Block))
 
 	if sync.current_thread_id() != s.main_thread {
 		errno := nbio.init(&td.io)
@@ -186,6 +192,12 @@ _server_thread_init :: proc(s: ^Server) {
 
 		errno := nbio.tick(&td.io)
 		if errno != os.ERROR_NONE {
+			// TODO: check how this behaves on Windows.
+			when ODIN_OS != .Windows do if errno == os.EINTR {
+				server_shutdown(s)
+				continue
+			}
+
 			log.errorf("non-blocking io tick error: %v", errno)
 			break
 		}
@@ -220,8 +232,20 @@ _server_thread_shutdown :: proc(s: ^Server, loc := #caller_location) {
 
 	td.state = .Closing
 	defer delete(td.conns)
+	defer {
+		blocks: int
+		for _, &bucket in td.free_temp_blocks {
+			for block in queue.pop_front_safe(&bucket) {
+				blocks += 1
+				free(block)
+			}
+			queue.destroy(&bucket)
+		}
+		delete(td.free_temp_blocks)
+		log.infof("had %i temp blocks to spare", blocks)
+	}
 
-	for {
+	for i := 0; ; i += 1 {
 		for sock, conn in td.conns {
 			#partial switch conn.state {
 			case .Active:
@@ -230,7 +254,8 @@ _server_thread_shutdown :: proc(s: ^Server, loc := #caller_location) {
 				log.infof("shutdown: closing connection %i", sock)
 				connection_close(conn)
 			case .Closing:
-				log.debugf("shutdown: connection %i is closing", sock)
+				// Only logging this every 10_000 calls to avoid spam.
+				if i % 10_000 == 0 do log.debugf("shutdown: connection %i is closing", sock)
 			case .Closed:
 				log.warn("closed connection in connections map, maybe a race or logic error")
 			}
@@ -277,12 +302,6 @@ server_shutdown_on_interrupt :: proc(s: ^Server) {
 	)
 }
 
-@(private)
-server_on_connection_close :: proc(s: ^Server, c: ^Connection) {
-	delete_key(&td.conns, c.socket)
-	free(c, s.conn_allocator)
-}
-
 // Taken from Go's implementation,
 // The maximum amount of bytes we will read (if handler did not)
 // in order to get the connection ready for the next request.
@@ -319,12 +338,12 @@ connection_set_state :: proc(c: ^Connection, s: Connection_State) -> bool {
 }
 
 Connection :: struct {
-	server:    ^Server,
-	socket:    net.TCP_Socket,
-	state:     Connection_State,
-	scanner:   Scanner,
-	arena:     virtual.Arena,
-	loop:      Loop,
+	server:         ^Server,
+	socket:         net.TCP_Socket,
+	state:          Connection_State,
+	scanner:        Scanner,
+	temp_allocator: Allocator,
+	loop:           Loop,
 }
 
 // Loop/request cycle state.
@@ -355,7 +374,6 @@ connection_close :: proc(c: ^Connection, loc := #caller_location) {
 	net.shutdown(c.socket, net.Shutdown_Manner.Send)
 
 	scanner_destroy(&c.scanner)
-	virtual.arena_destroy(&c.arena)
 
 	nbio.timeout(&td.io, Conn_Close_Delay, c, proc(c: rawptr, _: Maybe(time.Time)) {
 		c := cast(^Connection)c
@@ -365,7 +383,10 @@ connection_close :: proc(c: ^Connection, loc := #caller_location) {
 			log.debugf("closed connection: %i", c.socket)
 
 			c.state = .Closed
-			server_on_connection_close(c.server, c)
+
+			allocator_destroy(&c.temp_allocator)
+			delete_key(&td.conns, c.socket)
+			free(c, c.server.conn_allocator)
 		})
 	})
 }
@@ -401,20 +422,15 @@ on_accept :: proc(server: rawptr, sock: net.TCP_Socket, source: net.Endpoint, er
 
 	td.conns[c.socket] = c
 
-	log.debugf("new connection with thread got %d conns", len(td.conns))
+	log.debugf("new connection with thread, got %d conns", len(td.conns))
 	conn_handle_reqs(c)
 }
 
 @(private)
 conn_handle_reqs :: proc(c: ^Connection) {
 	scanner_init(&c.scanner, c, c.server.conn_allocator)
-
-	if err := virtual.arena_init_growing(&c.arena, c.server.opts.connection_arena_size); err != nil {
-		panic("could not create memory arena")
-	}
-
-	allocator := virtual.arena_allocator(&c.arena)
-	context.temp_allocator = allocator
+	allocator_init(&c.temp_allocator, c.server.conn_allocator)
+	context.temp_allocator = allocator(&c.temp_allocator)
 	conn_handle_req(c, context.temp_allocator)
 }
 

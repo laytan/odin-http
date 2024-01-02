@@ -359,10 +359,8 @@ on_response_sent :: proc(conn_: rawptr, sent: int, err: net.Network_Error) {
 // Response has been sent, clean up and close/handle next.
 @(private)
 clean_request_loop :: proc(conn: ^Connection, close: Maybe(bool) = nil) {
-	// log.debugf("%i: %v", conn.socket, conn.arena.total_used)
-	if conn.arena.total_used >= conn.server.opts.connection_allowed_size {
-		free_all(context.temp_allocator)
-	}
+	blocks, size, used := allocator_free_all(&conn.temp_allocator)
+	log.debugf("temp_allocator had %d blocks of a total size of %m of which %m was used", blocks, size, used)
 
 	scanner_reset(&conn.scanner)
 
