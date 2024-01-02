@@ -3,6 +3,7 @@ package http
 import "core:bufio"
 import "core:bytes"
 import "core:c/libc"
+import "core:container/queue"
 import "core:fmt"
 import "core:log"
 import "core:mem"
