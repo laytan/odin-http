@@ -44,6 +44,9 @@ Server_Opts :: struct {
 	// NOTE: this value is assigned globally, running multiple servers with a different value will
 	// not work.
 	initial_temp_block_cap:  uint,
+	// The amount of free blocks each thread is allowed to hold on to before deallocating excess.
+	// Defaults to 64.
+	max_free_blocks_queued:  uint,
 }
 
 Default_Server_Opts := Server_Opts {
@@ -52,6 +55,7 @@ Default_Server_Opts := Server_Opts {
 	limit_request_line      = 8000,
 	limit_headers           = 8000,
 	initial_temp_block_cap  = 256 * mem.Kilobyte,
+	max_free_blocks_queued  = 64,
 }
 
 @(init, private)
@@ -95,10 +99,12 @@ Server :: struct {
 }
 
 Server_Thread :: struct {
-	conns:            map[net.TCP_Socket]^Connection,
-	state:            Server_State,
-	io:               nbio.IO,
-	free_temp_blocks: map[int]queue.Queue(^Block),
+	conns: map[net.TCP_Socket]^Connection,
+	state: Server_State,
+	io:    nbio.IO,
+
+	free_temp_blocks:       map[int]queue.Queue(^Block),
+	free_temp_blocks_count: int,
 }
 
 @(private, disabled = ODIN_DISABLE_ASSERT)
@@ -127,6 +133,7 @@ listen_and_serve :: proc(
 	s.conn_allocator = context.allocator
 	s.main_thread = sync.current_thread_id()
 	initial_block_cap = int(s.opts.initial_temp_block_cap)
+	max_free_blocks_queued = int(s.opts.max_free_blocks_queued)
 
 	errno := nbio.init(&td.io)
 	// TODO: error handling.

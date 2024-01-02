@@ -1,10 +1,13 @@
 //+private
 package http
 
-import "core:mem"
 import "core:container/queue"
+import "core:log"
+import "core:mem"
 
-initial_block_cap := mem.Kilobyte * 256
+// Defaults, reassigned when server is set up.
+initial_block_cap      := mem.Kilobyte * 256
+max_free_blocks_queued := 64
 
 // A lean, growing, block based allocator.
 //
@@ -120,6 +123,7 @@ allocator_new_block :: proc(a: ^Allocator, min_size: int, alignment: int, loc :=
 	if bucket, has_bucket := &td.free_temp_blocks[total]; has_bucket {
 		if block, has_block := queue.pop_back_safe(bucket); has_block {
 			b = block
+			td.free_temp_blocks_count -= 1
 		}
 	}
 
@@ -185,7 +189,7 @@ allocator_free_all :: proc(a: ^Allocator, loc := #caller_location) -> (blocks: i
 		total_size += block.total_size
 		total_used += block.offset
 		a.curr      = block.prev.?
-		allocator_free_block(block, loc)
+		allocator_free_block(a, block, loc)
 	}
 
 	a.curr.offset = 0
@@ -195,21 +199,28 @@ allocator_free_all :: proc(a: ^Allocator, loc := #caller_location) -> (blocks: i
 
 allocator_destroy :: proc(a: ^Allocator, loc := #caller_location) {
 	allocator_free_all(a, loc)
-	allocator_free_block(a.curr, loc)
+	allocator_free_block(a, a.curr, loc)
 }
 
-allocator_free_block :: proc(b: ^Block, loc := #caller_location) {
+allocator_free_block :: proc(a: ^Allocator, b: ^Block, loc := #caller_location) {
 	assert_has_td(loc)
+
+	if td.free_temp_blocks_count > max_free_blocks_queued {
+		free(b, a.parent)
+		log.debug("max temp blocks reached, freeing the block")
+		return
+	}
 
 	bucket, is_initialized := &td.free_temp_blocks[b.total_size]
 	if !is_initialized {
 		td.free_temp_blocks[b.total_size] = {}
 		bucket = &td.free_temp_blocks[b.total_size]
-		queue.init(bucket, allocator=td.free_temp_blocks.allocator)
+		queue.init(bucket, max_free_blocks_queued, allocator=td.free_temp_blocks.allocator)
 	}
 
 	b.prev = nil
 	queue.push(bucket, b)
+	td.free_temp_blocks_count += 1
 }
 
 import "core:testing"
