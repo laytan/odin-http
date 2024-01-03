@@ -1,6 +1,6 @@
 package http
 
-import "core:intrinsics"
+import "core:strings"
 
 // A case-insensitive ASCII map for storing headers.
 Headers :: struct {
@@ -17,49 +17,28 @@ headers_count :: #force_inline proc(h: Headers) -> int {
 }
 
 /*
-Sets a header, given key is copied and turned into lowercase.
+Sets a header, given key is first sanitized, final (sanitized) key is returned.
 */
 headers_set :: proc(h: ^Headers, k: string, v: string, loc := #caller_location) -> string {
 	if h.readonly {
 		panic("these headers are readonly, did you accidentally try to set a header on the request?", loc)
 	}
 
-	// TODO/PERF: only allocate if the key contains uppercase.
-
-	allocator := h._kv.allocator if h._kv.allocator.procedure != nil else context.allocator
-	l := make([]byte, len(k), allocator)
-
-	for b, i in transmute([]byte)k {
-		if b >= 'A' && b <= 'Z' {
-			l[i] = b + 32
-		} else {
-			l[i] = b
-		}
-	}
-
-	h._kv[string(l)] = v
-	return string(l)
+    l := sanitize_key(h^, k)
+    h._kv[l] = v
+	return l
 }
 
 /*
-Unsafely set header, given key is assumed to be a lowercase string.
+Unsafely set header, given key is assumed to be a lowercase string and to be without newlines.
 */
-headers_set_unsafe :: #force_inline proc(h: ^Headers, k: string, v: string) {
-	assert(!h.readonly, "these headers are readonly, did you accidentally try to set a header on the request?")
+headers_set_unsafe :: #force_inline proc(h: ^Headers, k: string, v: string, loc := #caller_location) {
+	assert(!h.readonly, "these headers are readonly, did you accidentally try to set a header on the request?", loc)
 	h._kv[k] = v
 }
 
 headers_get :: proc(h: Headers, k: string) -> (string, bool) #optional_ok {
-	l := intrinsics.alloca(len(k), 1)[:len(k)]
-	for b, i in transmute([]byte)k {
-		if b >= 'A' && b <= 'Z' {
-			l[i] = b + 32
-		} else {
-			l[i] = b
-		}
-	}
-
-	return h._kv[string(l)]
+	return h._kv[sanitize_key(h, k)]
 }
 
 /*
@@ -70,16 +49,7 @@ headers_get_unsafe :: #force_inline proc(h: Headers, k: string) -> (string, bool
 }
 
 headers_has :: proc(h: Headers, k: string) -> bool {
-	l := intrinsics.alloca(len(k), 1)[:len(k)]
-	for b, i in transmute([]byte)k {
-		if b >= 'A' && b <= 'Z' {
-			l[i] = b + 32
-		} else {
-			l[i] = b
-		}
-	}
-
-	return string(l) in h._kv
+	return sanitize_key(h, k) in h._kv
 }
 
 /*
@@ -89,17 +59,8 @@ headers_has_unsafe :: #force_inline proc(h: Headers, k: string) -> bool {
 	return k in h._kv
 }
 
-headers_delete :: proc(h: ^Headers, k: string) {
-	l := intrinsics.alloca(len(k), 1)[:len(k)]
-	for b, i in transmute([]byte)k {
-		if b >= 'A' && b <= 'Z' {
-			l[i] = b + 32
-		} else {
-			l[i] = b
-		}
-	}
-
-	delete_key(&h._kv, string(l))
+headers_delete :: proc(h: ^Headers, k: string) -> (deleted_key: string, deleted_value: string) {
+	return delete_key(&h._kv, sanitize_key(h^, k))
 }
 
 /*
@@ -126,4 +87,52 @@ headers_set_content_type_mime :: #force_inline proc(h: ^Headers, ct: Mime_Type) 
 
 headers_set_close :: #force_inline proc(h: ^Headers) {
 	headers_set_unsafe(h, "connection", "close")
+}
+
+/*
+Escapes any newlines and converts ASCII to lowercase.
+*/
+@(private="file")
+sanitize_key :: proc(h: Headers, k: string) -> string {
+    allocator := h._kv.allocator if h._kv.allocator.procedure != nil else context.temp_allocator
+
+	// general +4 in rare case of newlines, so we might not need to reallocate.
+	b := strings.builder_make(0, len(k)+4, allocator)
+	for c in k {
+		switch c {
+		case 'A'..='Z': strings.write_rune(&b, c + 32)
+		case '\n':      strings.write_string(&b, "\\n")
+		case:           strings.write_rune(&b, c)
+		}
+	}
+	return strings.to_string(b)
+
+    // NOTE: implementation that only allocates if needed, but we use arena's anyway so just allocating
+    // some space should be about as fast?
+    //
+	// b: strings.Builder = ---
+	// i: int
+	// for c in v {
+	// 	if c == '\n' || (c >= 'A' && c <= 'Z') {
+	// 		b = strings.builder_make(0, len(v)+4, allocator)
+	// 		strings.write_string(&b, v[:i])
+	// 		alloc = true
+	// 		break
+	// 	}
+	// 	i+=1
+	// }
+	//
+	// if !alloc {
+	// 	return v, false
+	// }
+	//
+	// for c in v[i:] {
+	//  switch c {
+	//  case 'A'..='Z': strings.write_rune(&b, c + 32)
+	//  case '\n':      strings.write_string(&b, "\\n")
+	//  case:           strings.write_rune(&b, c)
+	//  }
+	// }
+	//
+	// return strings.to_string(b), true
 }

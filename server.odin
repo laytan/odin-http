@@ -61,7 +61,7 @@ Default_Server_Opts := Server_Opts {
 @(init, private)
 server_opts_init :: proc() {
 	when ODIN_OS == .Linux || ODIN_OS == .Darwin {
-		Default_Server_Opts.thread_count = os.processor_core_count() - 1
+		Default_Server_Opts.thread_count = os.processor_core_count()
 	} else {
 		Default_Server_Opts.thread_count = 1
 	}
