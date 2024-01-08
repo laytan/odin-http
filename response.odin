@@ -6,7 +6,6 @@ import "core:log"
 import "core:net"
 import "core:slice"
 import "core:strconv"
-import "core:strings"
 
 import "nbio"
 
