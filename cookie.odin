@@ -30,12 +30,13 @@ cookie_write :: proc(w: io.Writer, c: Cookie) -> io.Error {
 	// odinfmt:disable
 	io.write_string(w, "set-cookie: ") or_return
 	io.write_string(w, c.name)         or_return
+	write_escaped_newlines(w, c.name)  or_return
 	io.write_byte(w, '=')              or_return
-	io.write_string(w, c.value)        or_return
+	write_escaped_newlines(w, c.value) or_return
 
 	if d, ok := c.domain.(string); ok {
 		io.write_string(w, "; Domain=") or_return
-		io.write_string(w, d)           or_return
+		write_escaped_newlines(w, d)    or_return
 	}
 
 	if e, ok := c.expires_gmt.(time.Time); ok {
@@ -50,7 +51,7 @@ cookie_write :: proc(w: io.Writer, c: Cookie) -> io.Error {
 
 	if p, ok := c.path.(string); ok {
 		io.write_string(w, "; Path=") or_return
-		io.write_string(w, p)         or_return
+		write_escaped_newlines(w, p)  or_return
 	}
 
 	switch c.same_site {

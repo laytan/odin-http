@@ -6,7 +6,6 @@ import "core:log"
 import "core:net"
 import "core:slice"
 import "core:strconv"
-import "core:strings"
 
 import "nbio"
 
@@ -265,21 +264,17 @@ _response_write_heading :: proc(r: ^Response, content_length: int) {
 		}
 	}
 
+	bstream := bytes.buffer_to_stream(b)
+
 	for header, value in r.headers._kv {
-		ws(b, header)
+		ws(b, header) // already has newlines escaped.
 		ws(b, ": ")
-
-		// Escape newlines in headers, if we don't, an attacker can find an endpoint
-		// that returns a header with user input, and inject headers into the response.
-		// PERF: probably slow, TODO: loop and write, if see \n write escaped.
-		esc_value, _ := strings.replace_all(value, "\n", "\\n", b.buf.allocator)
-
-		ws(b, esc_value)
+		write_escaped_newlines(bstream, value)
 		ws(b, "\r\n")
 	}
 
 	for cookie in r.cookies {
-		cookie_write(bytes.buffer_to_stream(b), cookie)
+		cookie_write(bstream, cookie)
 		ws(b, "\r\n")
 	}
 
