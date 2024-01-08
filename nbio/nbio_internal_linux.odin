@@ -220,13 +220,13 @@ accept_enqueue :: proc(io: ^IO, completion: ^Completion, op: ^Op_Accept) {
 accept_callback :: proc(io: ^IO, completion: ^Completion, op: ^Op_Accept) {
 	if completion.result < 0 {
 		errno := os.Errno(-completion.result)
-		if errno == os.EINTR {
+		switch errno {
+		case os.EINTR, os.EWOULDBLOCK:
 			accept_enqueue(io, completion, op)
-			return
+		case:
+			op.callback(completion.user_data, 0, {}, net.Accept_Error(errno))
+			pool_put(&io.completion_pool, completion)
 		}
-
-		op.callback(completion.user_data, 0, {}, net.Accept_Error(errno))
-		pool_put(&io.completion_pool, completion)
 		return
 	}
 
@@ -275,18 +275,16 @@ connect_enqueue :: proc(io: ^IO, completion: ^Completion, op: ^Op_Connect) {
 
 connect_callback :: proc(io: ^IO, completion: ^Completion, op: ^Op_Connect) {
 	errno := os.Errno(-completion.result)
-	if errno == os.EINTR {
+	switch errno {
+	case os.EINTR, os.EWOULDBLOCK:
 		connect_enqueue(io, completion, op)
 		return
-	}
-
-	if errno != os.ERROR_NONE {
+	case os.ERROR_NONE:
+		op.callback(completion.user_data, op.socket, nil)
+	case:
 		net.close(op.socket)
 		op.callback(completion.user_data, {}, net.Dial_Error(errno))
-	} else {
-		op.callback(completion.user_data, op.socket, nil)
 	}
-
 	pool_put(&io.completion_pool, completion)
 }
 
@@ -306,13 +304,13 @@ read_enqueue :: proc(io: ^IO, completion: ^Completion, op: ^Op_Read) {
 read_callback :: proc(io: ^IO, completion: ^Completion, op: ^Op_Read) {
 	if completion.result < 0 {
 		errno := os.Errno(-completion.result)
-		if errno == os.EINTR {
+		switch errno {
+		case os.EINTR, os.EWOULDBLOCK:
 			read_enqueue(io, completion, op)
-			return
+		case:
+			op.callback(completion.user_data, op.read, errno)
+			pool_put(&io.completion_pool, completion)
 		}
-
-		op.callback(completion.user_data, op.read, errno)
-		pool_put(&io.completion_pool, completion)
 		return
 	}
 
@@ -348,13 +346,13 @@ recv_enqueue :: proc(io: ^IO, completion: ^Completion, op: ^Op_Recv) {
 recv_callback :: proc(io: ^IO, completion: ^Completion, op: ^Op_Recv) {
 	if completion.result < 0 {
 		errno := os.Errno(-completion.result)
-		if errno == os.EINTR {
+		switch errno {
+		case os.EINTR, os.EWOULDBLOCK:
 			recv_enqueue(io, completion, op)
-			return
+		case:
+			op.callback(completion.user_data, op.received, {}, net.TCP_Recv_Error(errno))
+			pool_put(&io.completion_pool, completion)
 		}
-
-		op.callback(completion.user_data, op.received, {}, net.TCP_Recv_Error(errno))
-		pool_put(&io.completion_pool, completion)
 		return
 	}
 
@@ -389,13 +387,13 @@ send_enqueue :: proc(io: ^IO, completion: ^Completion, op: ^Op_Send) {
 send_callback :: proc(io: ^IO, completion: ^Completion, op: ^Op_Send) {
 	if completion.result < 0 {
 		errno := os.Errno(-completion.result)
-		if errno == os.EINTR {
+		switch errno {
+		case os.EINTR, os.EWOULDBLOCK:
 			send_enqueue(io, completion, op)
-			return
+		case:
+			op.callback(completion.user_data, op.sent, net.TCP_Send_Error(errno))
+			pool_put(&io.completion_pool, completion)
 		}
-
-		op.callback(completion.user_data, op.sent, net.TCP_Send_Error(errno))
-		pool_put(&io.completion_pool, completion)
 		return
 	}
 
@@ -427,13 +425,13 @@ write_enqueue :: proc(io: ^IO, completion: ^Completion, op: ^Op_Write) {
 write_callback :: proc(io: ^IO, completion: ^Completion, op: ^Op_Write) {
 	if completion.result < 0 {
 		errno := os.Errno(-completion.result)
-		if errno == os.EINTR {
+		switch errno {
+		case os.EINTR, os.EWOULDBLOCK:
 			write_enqueue(io, completion, op)
-			return
+		case:
+			op.callback(completion.user_data, op.written, errno)
+			pool_put(&io.completion_pool, completion)
 		}
-
-		op.callback(completion.user_data, op.written, errno)
-		pool_put(&io.completion_pool, completion)
 		return
 	}
 
@@ -466,16 +464,16 @@ timeout_enqueue :: proc(io: ^IO, completion: ^Completion, op: ^Op_Timeout) {
 
 timeout_callback :: proc(io: ^IO, completion: ^Completion, op: ^Op_Timeout) {
 	errno := os.Errno(-completion.result)
-	if errno == os.EINTR {
+	switch errno {
+	case os.EINTR, os.EWOULDBLOCK:
 		timeout_enqueue(io, completion, op)
-		return
+	case:
+		// TODO: we are swallowing the returned error here.
+		fmt.assertf(errno == os.ERROR_NONE || errno == os.ETIME, "timeout error: %v", errno)
+
+		op.callback(completion.user_data, nil)
+		pool_put(&io.completion_pool, completion)
 	}
-
-	// TODO: we are swallowing the returned error here.
-	fmt.assertf(errno == os.ERROR_NONE || errno == os.ETIME, "timeout error: %v", errno)
-
-	op.callback(completion.user_data, nil)
-	pool_put(&io.completion_pool, completion)
 }
 
 ring_err_to_os_err :: proc(err: io_uring.IO_Uring_Error) -> os.Errno {
