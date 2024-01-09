@@ -47,6 +47,13 @@ Server_Opts :: struct {
 	// The amount of free blocks each thread is allowed to hold on to before deallocating excess.
 	// Defaults to 64.
 	max_free_blocks_queued:  uint,
+	// Called when we initialize a new thread that is going to handle requests.
+	on_thread_init: proc(^Server, ^Server_Thread),
+	// Called just before the thread is destroyed.
+	on_thread_destroy: proc(^Server, ^Server_Thread),
+	// Called just before the event loop is ticked for this thread.
+	// Return false to stop the server.
+	on_tick: proc(^Server, ^Server_Thread) -> bool,
 }
 
 Default_Server_Opts := Server_Opts {
@@ -179,6 +186,10 @@ _server_thread_init :: proc(s: ^Server) {
 		assert(errno == os.ERROR_NONE)
 	}
 
+	if s.opts.on_thread_init != nil {
+		s.opts.on_thread_init(s, &td)
+	}
+
 	log.debug("accepting connections")
 
 	nbio.accept(&td.io, s.tcp_sock, s, on_accept)
@@ -189,6 +200,12 @@ _server_thread_init :: proc(s: ^Server) {
 		if s.closing do _server_thread_shutdown(s)
 		if td.state == .Closed do break
 		if td.state == .Cleaning do continue
+
+		if s.opts.on_tick != nil {
+			if !s.opts.on_tick(s, &td) {
+				server_shutdown(s)
+			}
+		}
 
 		errno := nbio.tick(&td.io)
 		if errno != os.ERROR_NONE {
@@ -270,8 +287,10 @@ _server_thread_shutdown :: proc(s: ^Server, loc := #caller_location) {
 	}
 
 	td.state = .Cleaning
+	if s.opts.on_thread_destroy != nil do s.opts.on_thread_destroy(s, &td)
 	nbio.destroy(&td.io)
 	td.state = .Closed
+
 
 	log.info("shutdown: done")
 }
