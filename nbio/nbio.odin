@@ -58,6 +58,12 @@ destroy :: proc(io: ^IO) {
 	_destroy(io)
 }
 
+On_Next_Tick :: #type proc(user: rawptr)
+
+next_tick :: proc(io: ^IO, user: rawptr, callback: On_Next_Tick) {
+	_next_tick(io, user, callback)
+}
+
 /*
 The callback for non blocking `timeout` calls
 
@@ -647,7 +653,70 @@ write_at_all :: proc(io: ^IO, fd: os.Handle, offset: int, buf: []byte, user: raw
 	_write(io, fd, offset, buf, user, callback, true)
 }
 
-MAX_USER_ARGUMENTS :: size_of(rawptr) * 5
+Poll_Event :: enum {
+	// Calls the callback when it is ready to be read from.
+	Read,
+	// Calls the callback when it is ready to be written to.
+	Write,
+}
+
+/*
+The callback for poll calls
+
+Inputs:
+- user:  A passed through pointer from initiation to its callback
+- event: For convenience; the event that `poll` was called with
+*/
+On_Poll :: #type proc(user: rawptr, event: Poll_Event)
+
+/*
+The callback for poll removal calls
+
+Inputs:
+- user:  A passed through pointer from initiation to its callback
+*/
+On_Poll_Remove :: #type proc(user: rawptr)
+
+/*
+Polls for the given event or an error, calling the callback.
+
+Inputs:
+- io:       The IO instance to use
+- fd:       The file descriptor to poll
+- event:    Whether to call the callback when `fd` is ready to be read from, or be written to
+- multi:    Keeps the poll after an event happens, calling the callback again for further events, remove poll with `poll_remove`
+- user:     An optional pointer that will be passed through to the callback, free to use by you and untouched by us
+- callback: An optional callback that is called when the operation completes, see docs for `On_Poll` for its arguments
+*/
+poll :: proc(io: ^IO, fd: os.Handle, event: Poll_Event, multi: bool, user: rawptr, callback: On_Poll) {
+	_poll(io, fd, event, multi, user, callback)
+}
+
+/*
+Removes the polling for this `fd`/`event` pairing. This is only needed when `poll` was called with `multi` set to `true`.
+
+Inputs:
+- io:       The IO instance to use
+- fd:       The file descriptor to remove the poll of
+- event:    The event to remove the poll of
+- user:     An optional pointer that will be passed through to the callback, free to use by you and untouched by us
+- callback: An optional callback that is called when the operation completes, see docs for `On_Poll_Remove` for its arguments
+*/
+poll_remove :: proc(io: ^IO, fd: os.Handle, event: Poll_Event, user: rawptr, callback: On_Poll_Remove) {
+	_poll_remove(io, fd, event, user, callback)
+}
+
+POLY_API_ENABLED :: #config(NBIO_ENABLE_POLY_API, false)
+
+when POLY_API_ENABLED {
+	// The max amount of register sizes to allow in the poly package user args.
+	MAX_USER_ARGUMENTS :: size_of(rawptr) * #config(NBIO_POLY_MAX_USER_ARGS, 5)
+	// Extra space for the internal callback.
+	USER_ARGS_SIZE     :: MAX_USER_ARGUMENTS + size_of(rawptr)
+} else {
+	MAX_USER_ARGUMENTS :: 0
+	USER_ARGS_SIZE     :: 0
+}
 
 Completion :: struct {
 	// Implementation specifics, don't use outside of implementation/os.
@@ -656,7 +725,7 @@ Completion :: struct {
 	user_data: rawptr,
 
 	// Callback pointer and user args passed in poly variants.
-	user_args: [MAX_USER_ARGUMENTS + size_of(rawptr)]byte,
+	user_args: [USER_ARGS_SIZE]byte,
 }
 
 @(private)
@@ -669,4 +738,7 @@ Operation :: union #no_nil {
 	Op_Send,
 	Op_Write,
 	Op_Timeout,
+	Op_Next_Tick,
+	Op_Poll,
+	Op_Poll_Remove,
 }

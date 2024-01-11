@@ -4,6 +4,7 @@ package io_uring
 import "core:math"
 import "core:os"
 import "core:sync"
+import "core:sys/linux"
 import "core:sys/unix"
 
 DEFAULT_THREAD_IDLE_MS :: 1000
@@ -592,6 +593,42 @@ link_timeout :: proc(
 	sqe.len = 1
 	sqe.rw_flags = i32(flags)
 	sqe.user_data = user_data
+	return
+}
+
+poll_add :: proc(
+	ring:      ^IO_Uring,
+	user_data: u64,
+	fd:        os.Handle,
+	events:    linux.Fd_Poll_Events,
+	flags:     IORing_Poll_Flags,
+) -> (
+	sqe: ^io_uring_sqe,
+	err: IO_Uring_Error,
+) {
+	sqe             = get_sqe(ring) or_return
+	sqe.opcode      = IORING_OP.POLL_ADD
+	sqe.fd          = i32(fd)
+	sqe.poll_events = transmute(u16)events
+	sqe.len         = transmute(u32)flags
+	sqe.user_data   = user_data
+	return
+}
+
+poll_remove :: proc(
+	ring:      ^IO_Uring,
+	user_data: u64,
+	fd:        os.Handle,
+	events:    linux.Fd_Poll_Events,
+) -> (
+	sqe: ^io_uring_sqe,
+	err: IO_Uring_Error,
+) {
+	sqe             = get_sqe(ring) or_return
+	sqe.opcode      = IORING_OP.POLL_REMOVE
+	sqe.fd          = i32(fd)
+	sqe.poll_events = transmute(u16)events
+	sqe.user_data   = user_data
 	return
 }
 

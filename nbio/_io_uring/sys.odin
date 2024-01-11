@@ -237,6 +237,15 @@ IORING_POLL_UPDATE_EVENTS: u32 : (1 << 1)
 IORING_POLL_UPDATE_USER_DATA: u32 : (1 << 2)
 IORING_POLL_ADD_LEVEL: u32 : (1 << 3)
 
+IORing_Poll_Bits :: enum {
+	ADD_MULTI,
+	UPDATE_EVENTS,
+	UPDATE_USER_DATA,
+	ADD_LEVEL,
+}
+
+IORing_Poll_Flags :: bit_set[IORing_Poll_Bits; u32]
+
 /*
   * send/sendmsg and recv/recvmsg flags (sq.ioprio)
   *
