@@ -366,6 +366,18 @@ write_padded_int :: proc(w: io.Writer, i: int) -> io.Error {
 }
 
 @(private)
+write_escaped_newlines :: proc(w: io.Writer, v: string) -> io.Error {
+	for c in v {
+		if c == '\n' {
+			io.write_string(w, "\\n") or_return
+		} else {
+			io.write_rune(w, c) or_return
+		}
+	}
+	return nil
+}
+
+@(private)
 PADDED_NUMS := [10]string{"00", "01", "02", "03", "04", "05", "06", "07", "08", "09"}
 
 @(private)
