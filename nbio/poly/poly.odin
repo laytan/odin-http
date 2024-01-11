@@ -30,6 +30,7 @@ Closable            :: nbio.Closable
 open                :: nbio.open
 Whence              :: nbio.Whence
 seek                :: nbio.seek
+Poll_Event          :: nbio.Poll_Event
 
 /// Timeout
 
@@ -1000,4 +1001,136 @@ write_at_all2 :: proc(io: ^nbio.IO, fd: os.Handle, offset: int, buf: []byte, p: 
 write_at_all3 :: proc(io: ^nbio.IO, fd: os.Handle, offset: int, buf: []byte, p: $T, p2: $T2, p3: $T3, callback: $C/proc(p: T, p2: T2, p3: T3, written: int, err: os.Errno))
 	where size_of(T) + size_of(T2) + size_of(T3) <= nbio.MAX_USER_ARGUMENTS {
 	_write3(io, fd, offset, buf, p, p2, p3, callback, all = true)
+}
+
+next_tick1 :: proc(io: ^nbio.IO, p: $T, callback: $C/proc(p: T))
+	where size_of(T) <= nbio.MAX_USER_ARGUMENTS {
+	completion := nbio._next_tick(io, nil, proc(completion: rawptr) {
+		completion := (^nbio.Completion)(completion)
+
+		cb := (^C)(&completion.user_args[0])^
+		p  := (^T)(raw_data(completion.user_args[size_of(C):]))^
+
+		cb(p)
+	})
+
+	callback, p := callback, p
+	n := copy(completion.user_args[:],  mem.ptr_to_bytes(&callback))
+	_  = copy(completion.user_args[n:], mem.ptr_to_bytes(&p))
+
+	completion.user_data = completion
+}
+
+next_tick2 :: proc(io: ^nbio.IO, p: $T, p2: $T2, callback: $C/proc(p: T, p2: T2))
+	where size_of(T) + size_of(T2) <= nbio.MAX_USER_ARGUMENTS {
+	completion := nbio._next_tick(io, nil, proc(completion: rawptr) {
+		completion := (^nbio.Completion)(completion)
+
+		cb := (^C) (&completion.user_args[0])^
+		p  := (^T) (raw_data(completion.user_args[size_of(C):]))^
+		p2 := (^T2)(raw_data(completion.user_args[size_of(C) + size_of(T):]))^
+
+		cb(p, p2)
+	})
+
+	callback, p, p2 := callback, p, p2
+	n := copy(completion.user_args[:],  mem.ptr_to_bytes(&callback))
+	n += copy(completion.user_args[n:], mem.ptr_to_bytes(&p))
+	_  = copy(completion.user_args[n:], mem.ptr_to_bytes(&p2))
+
+	completion.user_data = completion
+}
+
+next_tick3 :: proc(io: ^nbio.IO, p: $T, p2: $T2, p3: $T3, callback: $C/proc(p: T, p2: T2, p3: T3))
+	where size_of(T) + size_of(T2) + size_of(T3) <= nbio.MAX_USER_ARGUMENTS {
+	completion := nbio._next_tick(io, nil, proc(completion: rawptr) {
+		completion := (^nbio.Completion)(completion)
+
+		cb := (^C) (&completion.user_args[0])^
+		p  := (^T) (raw_data(completion.user_args[size_of(C):]))^
+		p2 := (^T2)(raw_data(completion.user_args[size_of(C) + size_of(T):]))^
+		p3 := (^T3)(raw_data(completion.user_args[size_of(C) + size_of(T) + size_of(T2):]))^
+
+		cb(p, p2, p3)
+	})
+
+	callback, p, p2, p3 := callback, p, p2, p3
+	n := copy(completion.user_args[:],  mem.ptr_to_bytes(&callback))
+	n += copy(completion.user_args[n:], mem.ptr_to_bytes(&p))
+	n += copy(completion.user_args[n:], mem.ptr_to_bytes(&p2))
+	_  = copy(completion.user_args[n:], mem.ptr_to_bytes(&p3))
+
+	completion.user_data = completion
+}
+
+next_tick :: proc {
+	next_tick1,
+	next_tick2,
+	next_tick3,
+}
+
+poll1 :: proc(io: ^nbio.IO, fd: os.Handle, event: Poll_Event, multi: bool, p: $T, callback: $C/proc(p: T, event: Poll_Event))
+	where size_of(T) <= nbio.MAX_USER_ARGUMENTS {
+	completion := nbio._poll(io, fd, event, multi, nil, proc(completion: rawptr, event: Poll_Event) {
+		completion := (^nbio.Completion)(completion)
+
+		cb := (^C)(&completion.user_args[0])^
+		p  := (^T)(raw_data(completion.user_args[size_of(C):]))^
+
+		cb(p, event)
+	})
+
+	callback, p := callback, p
+	n := copy(completion.user_args[:],  mem.ptr_to_bytes(&callback))
+	_  = copy(completion.user_args[n:], mem.ptr_to_bytes(&p))
+
+	completion.user_data = completion
+}
+
+poll2 :: proc(io: ^nbio.IO, fd: os.Handle, event: Poll_Event, multi: bool, p: $T, p2: $T2, callback: $C/proc(p: T, p2: T2, event: Poll_Event))
+	where size_of(T) + size_of(T2) <= nbio.MAX_USER_ARGUMENTS {
+	completion := nbio._poll(io, fd, event, multi, nil, proc(completion: rawptr, event: Poll_Event) {
+		completion := (^nbio.Completion)(completion)
+
+		cb := (^C)(&completion.user_args[0])^
+		p  := (^T)(raw_data(completion.user_args[size_of(C):]))^
+		p2 := (^T2)(raw_data(completion.user_args[size_of(C) + size_of(T):]))^
+
+		cb(p, p2, event)
+	})
+
+	callback, p, p2 := callback, p, p2
+	n := copy(completion.user_args[:],  mem.ptr_to_bytes(&callback))
+	n += copy(completion.user_args[n:], mem.ptr_to_bytes(&p))
+	_  = copy(completion.user_args[n:], mem.ptr_to_bytes(&p2))
+
+	completion.user_data = completion
+}
+
+poll3 :: proc(io: ^nbio.IO, fd: os.Handle, event: Poll_Event, multi: bool, p: $T, p2: $T2, p3: $T3, callback: $C/proc(p: T, p2: T2, p3: T3, event: Poll_Event))
+	where size_of(T) + size_of(T2) + size_of(T3) <= nbio.MAX_USER_ARGUMENTS {
+	completion := nbio._poll(io, fd, event, multi, nil, proc(completion: rawptr, event: Poll_Event) {
+		completion := (^nbio.Completion)(completion)
+
+		cb := (^C) (&completion.user_args[0])^
+		p  := (^T) (raw_data(completion.user_args[size_of(C):]))^
+		p2 := (^T2)(raw_data(completion.user_args[size_of(C) + size_of(T):]))^
+		p3 := (^T3)(raw_data(completion.user_args[size_of(C) + size_of(T) + size_of(T2):]))^
+
+		cb(p, p2, p3, event)
+	})
+
+	callback, p, p2, p3 := callback, p, p2, p3
+	n := copy(completion.user_args[:],  mem.ptr_to_bytes(&callback))
+	n += copy(completion.user_args[n:], mem.ptr_to_bytes(&p))
+	n += copy(completion.user_args[n:], mem.ptr_to_bytes(&p2))
+	_  = copy(completion.user_args[n:], mem.ptr_to_bytes(&p3))
+
+	completion.user_data = completion
+}
+
+poll :: proc {
+	poll1,
+	poll2,
+	poll3,
 }
