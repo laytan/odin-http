@@ -24,7 +24,9 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
-      - uses: laytan/setup-odin@v1
+      - uses: laytan/setup-odin@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
       - name: Get commonmark
         run: sudo apt-fast install libcmark-dev
       - name: Get and build Odin docs generator

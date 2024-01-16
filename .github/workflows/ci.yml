@@ -17,7 +17,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v1
-      - uses: laytan/setup-odin@v1
+      - uses: laytan/setup-odin@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
       - name: Non-blocking IO test
         run: odin test nbio
         timeout-minutes: 1
