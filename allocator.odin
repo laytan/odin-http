@@ -74,7 +74,7 @@ allocator_proc :: proc(allocator_data: rawptr, mode: mem.Allocator_Mode,
 		allocator_free_all(a, loc)
 		return
 
-	case .Resize:
+	case .Resize, .Resize_Non_Zeroed:
 		// Shrink, if it was the last alloc also decrease from block offset.
 		if old_size >= size {
 			if a.last_alloc == old_memory {
