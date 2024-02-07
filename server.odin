@@ -498,8 +498,7 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.temp_allocator) {
 			return
 		}
 
-		// TODO: don't parse the URL here, user or middleware can always do it if needed.
-		l.req.url = url_parse(rline.target.(string), context.temp_allocator)
+		l.req.url = url_parse(rline.target.(string))
 
 		l.conn.scanner.max_token_size = l.conn.server.opts.limit_headers
 		scanner_scan(&l.conn.scanner, loop, on_header_line)

@@ -318,23 +318,9 @@ request_path_write :: proc(w: io.Writer, target: URL) -> io.Error {
 		io.write_string(w, target.path) or_return
 	}
 
-	if len(target.queries) > 0 {
+	if len(target.query) > 0 {
 		io.write_byte(w, '?') or_return
-
-		i := 0
-		for key, value in target.queries {
-			io.write_string(w, key) or_return
-			if value != "" {
-				io.write_byte(w, '=') or_return
-				io.write_string(w, value) or_return
-			}
-
-			if i != len(target.queries) - 1 {
-				io.write_byte(w, '&') or_return
-			}
-
-			i += 1
-		}
+		io.write_string(w, target.query) or_return
 	}
 
 	return nil

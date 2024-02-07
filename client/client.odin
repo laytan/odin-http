@@ -80,7 +80,6 @@ Error :: union {
 
 request :: proc(target: string, request: ^Request, allocator := context.allocator) -> (res: Response, err: Error) {
 	url, endpoint := parse_endpoint(target) or_return
-	defer delete(url.queries)
 
 	// NOTE: we don't support persistent connections yet.
 	http.headers_set_close(&request.headers)
