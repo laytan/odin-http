@@ -32,7 +32,7 @@ jobs:
       - name: Get and build Odin docs generator
         run: |
           cd /home/runner
-          git clone https://github.com/laytan/pkg.odin-lang.org --branch=configurable-for-third-party odin-doc
+          git clone https://github.com/odin-lang/pkg.odin-lang.org odin-doc
           cd odin-doc
           # The /home/runner/odin directory is in the PATH so output it there.
           odin build . -out:/home/runner/odin/odin-doc
