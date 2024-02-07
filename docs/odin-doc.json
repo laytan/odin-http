@@ -1,5 +1,6 @@
 {
     "hide_core": true,
+	"hide_base": true,
     "collections": {
         "odin-http": {
             "name": "http",
