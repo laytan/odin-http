@@ -1,7 +1,8 @@
 package http
 
+import "base:runtime"
+
 import "core:log"
-import "core:runtime"
 import "core:strconv"
 import "core:strings"
 import "core:text/match"

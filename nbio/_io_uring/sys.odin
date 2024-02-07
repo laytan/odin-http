@@ -1,7 +1,7 @@
 //+build linux
 package io_uring
 
-import "core:intrinsics"
+import "base:intrinsics"
 
 //odinfmt:disable
 SYS_io_uring_setup:    uintptr : 425

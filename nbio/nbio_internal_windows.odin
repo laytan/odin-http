@@ -1,12 +1,13 @@
 //+private
 package nbio
 
+import "base:runtime"
+
 import "core:container/queue"
 import "core:log"
 import "core:mem"
 import "core:net"
 import "core:os"
-import "core:runtime"
 import "core:time"
 
 import win "core:sys/windows"

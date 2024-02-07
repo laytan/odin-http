@@ -1,8 +1,9 @@
 //+private
 package http
 
+import "base:intrinsics"
+
 import "core:bufio"
-import "core:intrinsics"
 import "core:net"
 
 import "nbio"

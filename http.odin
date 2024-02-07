@@ -1,7 +1,8 @@
 package http
 
+import "base:runtime"
+
 import "core:io"
-import "core:runtime"
 import "core:slice"
 import "core:strconv"
 import "core:strings"

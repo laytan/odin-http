@@ -1,5 +1,7 @@
 package http
 
+import "base:runtime"
+
 import "core:bufio"
 import "core:bytes"
 import "core:c/libc"
@@ -9,7 +11,6 @@ import "core:log"
 import "core:mem"
 import "core:net"
 import "core:os"
-import "core:runtime"
 import "core:slice"
 import "core:sync"
 import "core:thread"

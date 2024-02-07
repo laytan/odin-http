@@ -1,13 +1,14 @@
 //+private
 package nbio
 
+import "base:runtime"
+
 import "core:c"
 import "core:container/queue"
 import "core:fmt"
 import "core:mem"
 import "core:net"
 import "core:os"
-import "core:runtime"
 import "core:sys/unix"
 
 import io_uring "_io_uring"

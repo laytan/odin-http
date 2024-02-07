@@ -1,11 +1,12 @@
 //+private
 package nbio
 
+import "base:runtime"
+
 import "core:container/queue"
 import "core:mem"
 import "core:net"
 import "core:os"
-import "core:runtime"
 import "core:time"
 
 import kqueue "_kqueue"
