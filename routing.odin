@@ -3,6 +3,7 @@ package http
 import "base:runtime"
 
 import "core:log"
+import "core:net"
 import "core:strconv"
 import "core:strings"
 import "core:text/match"
@@ -81,6 +82,11 @@ query_get :: proc(url: URL, key: string) -> (val: string, ok: bool) {
 		}
 	}
 	return
+}
+
+query_get_percent_decoded :: proc(url: URL, key: string, allocator := context.temp_allocator) -> (val: string, ok: bool) {
+	str := query_get(url, key) or_return
+	return net.percent_decode(str, allocator)
 }
 
 query_get_bool :: proc(url: URL, key: string) -> (result, set: bool) {
