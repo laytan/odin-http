@@ -124,15 +124,11 @@ Default_Endpoint := net.Endpoint {
 	port    = 8080,
 }
 
-listen_and_serve :: proc(
+listen :: proc(
 	s: ^Server,
-	h: Handler,
 	endpoint: net.Endpoint = Default_Endpoint,
 	opts: Server_Opts = Default_Server_Opts,
-) -> (
-	err: net.Network_Error,
-) {
-	s.handler = h
+) -> (err: net.Network_Error) {
 	s.opts = opts
 	s.conn_allocator = context.allocator
 	s.main_thread = sync.current_thread_id()
@@ -144,10 +140,12 @@ listen_and_serve :: proc(
 	assert(errno == os.ERROR_NONE)
 
 	s.tcp_sock, err = nbio.open_and_listen_tcp(&td.io, endpoint)
-	if err != nil {
-		server_shutdown(s)
-		return
-	}
+	if err != nil { server_shutdown(s) }
+	return
+}
+
+serve :: proc(s: ^Server, h: Handler) -> (err: net.Network_Error) {
+	s.handler = h
 
 	thread_count := max(0, s.opts.thread_count - 1)
 	sync.wait_group_add(&s.threads_closed, thread_count)
@@ -171,6 +169,16 @@ listen_and_serve :: proc(
 	delete(s.threads)
 
 	return nil
+}
+
+listen_and_serve :: proc(
+	s: ^Server,
+	h: Handler,
+	endpoint: net.Endpoint = Default_Endpoint,
+	opts: Server_Opts = Default_Server_Opts,
+) -> (err: net.Network_Error) {
+	listen(s, endpoint, opts) or_return
+	return serve(s, h)
 }
 
 _server_thread_init :: proc(s: ^Server) {
