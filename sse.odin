@@ -84,7 +84,9 @@ sse_init :: proc(
 
 	// Set the status and content type if they haven't been changed by the user.
 	if r.status == .Not_Found do r.status = .OK
-	if "content-type" not_in r.headers do r.headers["content-type"] = "text/event-stream"
+	if !headers_has_unsafe(r.headers, "content-type") {
+		headers_set_unsafe(&r.headers, "content-type", "text/event-stream")
+	}
 }
 
 /*
@@ -117,6 +119,8 @@ Queues an event to be sent over the connection.
 You must call `sse_start` first, this is a no-op when end has been called or an error has occurred.
 */
 sse_event :: proc(sse: ^Sse, ev: Sse_Event, loc := #caller_location) {
+	assert_has_td(loc)
+
 	switch sse.state {
 	case .Starting, .Sending, .Ending, .Idle:
 		queue.push_back(&sse._events, ev)
