@@ -6,6 +6,7 @@ import "core:io"
 import "core:slice"
 import "core:strconv"
 import "core:strings"
+import "core:sync"
 import "core:time"
 
 Requestline_Error :: enum {
@@ -385,6 +386,21 @@ MONTHS := [13]string {
 	" Oct ",
 	" Nov ",
 	" Dec ",
+}
+
+@(private)
+Atomic :: struct($T: typeid) {
+	raw: T,
+}
+
+@(private)
+atomic_store :: #force_inline proc(a: ^Atomic($T), val: T) {
+	sync.atomic_store(&a.raw, val)
+}
+
+@(private)
+atomic_load :: #force_inline proc(a: ^Atomic($T)) -> T {
+	return sync.atomic_load(&a.raw)
 }
 
 import "core:testing"

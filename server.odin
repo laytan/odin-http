@@ -89,7 +89,10 @@ Server :: struct {
 	threads:        []^thread.Thread,
 	// Once the server starts closing/shutdown this is set to true, all threads will check it
 	// and start their thread local shutdown procedure.
-	closing:        bool,
+	//
+	// NOTE: This is only ever set from false to true, and checked repeatedly,
+	// so it doesn't have to be atomic, this is purely to keep the thread sanitizer happy.
+	closing:        Atomic(bool),
 	// Threads will decrement the wait group when they have fully closed/shutdown.
 	// The main thread waits on this to clean up global data and return.
 	threads_closed: sync.Wait_Group,
@@ -161,10 +164,10 @@ listen_and_serve :: proc(
 
 	sync.wait(&s.threads_closed)
 
-	log.debug("threads are shut down, shutting down main thread")
+	log.debug("server threads are done, shutting down")
 
 	net.close(s.tcp_sock)
-	for t in s.threads do free(t, s.conn_allocator)
+	for t in s.threads do thread.destroy(t)
 	delete(s.threads)
 
 	return nil
@@ -187,7 +190,7 @@ _server_thread_init :: proc(s: ^Server) {
 	log.debug("starting event loop")
 	td.state = .Serving
 	for {
-		if s.closing do _server_thread_shutdown(s)
+		if atomic_load(&s.closing) do _server_thread_shutdown(s)
 		if td.state == .Closed do break
 		if td.state == .Cleaning do continue
 
@@ -225,7 +228,7 @@ SHUTDOWN_INTERVAL :: time.Millisecond * 100
 // 4. Close the main socket.
 // 5. Signal 'server_start' it can return.
 server_shutdown :: proc(s: ^Server) {
-	s.closing = true
+	atomic_store(&s.closing, true)
 }
 
 _server_thread_shutdown :: proc(s: ^Server, loc := #caller_location) {
