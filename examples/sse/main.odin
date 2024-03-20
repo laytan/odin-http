@@ -21,7 +21,7 @@ main :: proc() {
 	s: http.Server
 
 	handler := http.handler( proc(_: ^http.Request, res: ^http.Response) {
-		res.headers["access-control-allow-origin"] = "*"
+		http.headers_set_unsafe(&res.headers, "access-control-allow-origin", "*")
 
 		sse: http.Sse
 		http.sse_init(&sse, res)
