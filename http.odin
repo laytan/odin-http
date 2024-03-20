@@ -79,12 +79,16 @@ Version :: struct {
 
 // Parses an HTTP version string according to RFC 7230, section 2.6.
 version_parse :: proc(s: string) -> (version: Version, ok: bool) {
-	(len(s) > 5) or_return
-	(s[:5] == "HTTP/") or_return
-	version.major = u8(int(rune(s[5])) - '0')
-	if len(s) > 6 {
+	switch len(s) {
+	case 8:
 		(s[6] == '.') or_return
-		version.minor = u8(int(rune(s[7])) - '0')
+		version.minor = u8(int(s[7]) - '0')
+		fallthrough
+	case 6:
+		(s[:5] == "HTTP/") or_return
+		version.major = u8(int(s[5]) - '0')
+	case:
+		return
 	}
 	ok = true
 	return
