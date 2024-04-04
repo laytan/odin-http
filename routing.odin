@@ -131,6 +131,8 @@ router_init :: proc(router: ^Router, allocator := context.allocator) {
 }
 
 router_destroy :: proc(router: ^Router) {
+	context.allocator = router.allocator
+
 	for route in router.all {
 		delete(route.pattern)
 	}
