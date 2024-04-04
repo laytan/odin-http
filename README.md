@@ -2,6 +2,8 @@
 
 A HTTP/1.1 implementation for Odin purely written in Odin (besides SSL).
 
+See generated package documentation at [odin-http.laytan.dev](https://odin-http.laytan.dev).
+
 See below examples or the examples directory.
 
 ## Compatibility
@@ -9,17 +11,20 @@ See below examples or the examples directory.
 This is beta software, confirmed to work in my own use cases but can certainly contain edge cases and bugs that I did not catch.
 Please file issues for any bug or suggestion you encounter/have.
 
+I am usually on a recent master version of Odin and commits will be made with new features if applicable, backwards compatibility or even
+stable version compatibility is not currently a thing.
+
 Because this is still heavily in development, I do not hesitate to push API changes at the moment, so beware.
 
-The has been tested to work with Ubuntu Linux (other "normal" distros should work), MacOS (m1 and intel), and Windows 64 bit.
+The package has been tested to work with Ubuntu Linux (other "normal" distros should work), MacOS (m1 and intel), and Windows 64 bit.
 Any other distributions or versions have not been tested and might not work.
 
 ## Dependencies
 
-`odin-http` depends on OpenSSL for making HTTPS requests in the client package.
+The *client* package depends on OpenSSL for making HTTPS requests.
 This repository contains a copy of these libraries for ease of use on Windows and Darwin.
 
-For Linux, most distros come with OpenSSL, if not you can install it by using something like this:
+For Linux, most distros come with OpenSSL, if not you can install it by doing something like this:
 - `sudo apt-get install openssl libssl-dev`
 - `apk add openssl openssl-libs-static`
 
@@ -27,9 +32,9 @@ For Linux, most distros come with OpenSSL, if not you can install it by using so
 
 Some small benchmarks have been done in the comparisons directory.
 
-Best performance is currently on Linux because it is the only multithreaded platform, still, the other platforms
-are faster than a lot of other single-threaded implementations.
-Once I know the API is good on Linux and how I want the multithreading to work I will add it to the other platforms.
+My main priority in terms of performance is currently Linux (because most servers end up there in production).
+
+Other targets are still made to be performant, but benchmarking etc. is mostly done on Linux.
 
 ## IO implementations
 
