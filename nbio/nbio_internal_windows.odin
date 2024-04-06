@@ -514,7 +514,7 @@ LPFN_ACCEPTEX :: #type proc "stdcall" (
 ) -> win.BOOL
 
 wsa_err_incomplete :: proc(err: win.c_int) -> bool {
-	switch win.System_Error(err) {
+	#partial switch win.System_Error(err) {
 	case .WSAEWOULDBLOCK, .IO_PENDING, .IO_INCOMPLETE, .WSAEALREADY:
 		return true
 	case:
