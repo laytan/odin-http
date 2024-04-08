@@ -178,8 +178,8 @@ parse_response :: proc(socket: Communication, allocator := context.allocator) ->
 		// Empty line means end of headers.
 		if line == "" do break
 
-		key, ok := http.header_parse(&res.headers, line, allocator)
-		if !ok {
+		key, hok := http.header_parse(&res.headers, line, allocator)
+		if !hok {
 			err = Request_Error.Invalid_Response_Header
 			return
 		}
@@ -189,8 +189,8 @@ parse_response :: proc(socket: Communication, allocator := context.allocator) ->
 			http.headers_delete_unsafe(&res.headers, "set-cookie")
 			delete(key)
 
-			cookie, ok := http.cookie_parse(cookie_str, allocator)
-			if !ok {
+			cookie, cok := http.cookie_parse(cookie_str, allocator)
+			if !cok {
 				err = Request_Error.Invalid_Response_Cookie
 				return
 			}

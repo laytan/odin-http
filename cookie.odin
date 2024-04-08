@@ -164,7 +164,7 @@ cookie_parse :: proc(value: string, allocator := context.allocator) -> (cookie: 
 		return true
 	}
 
-	for semi := strings.index_byte(value, ';'); semi != -1; semi = strings.index_byte(value, ';') {
+	for semi = strings.index_byte(value, ';'); semi != -1; semi = strings.index_byte(value, ';') {
 		part := strings.trim_left_space(value[:semi])
 		value = value[semi + 1:]
 		parse_part(&cookie, part, allocator) or_return
@@ -235,12 +235,12 @@ request_cookies_iter :: proc(cookies: ^string) -> (key: string, value: string, o
 
 			off := 0 if start else 1
 
-			key := cookies[i+off:eq]
-			val := cookies[eq+1:end]
+			key   = cookies[i+off:eq]
+			value = cookies[eq+1:end]
 
 			cookies^ = cookies[:i-off]
 
-			return key, val, true
+			return key, value, true
 		} else if b == '=' {
 			eq = i
 		}

@@ -20,6 +20,8 @@ jobs:
       - uses: laytan/setup-odin@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Report
+        run: odin report
       - name: Non-blocking IO test
         run: odin test nbio
         timeout-minutes: 1

@@ -27,6 +27,8 @@ jobs:
       - uses: laytan/setup-odin@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Report
+        run: odin report
       - name: Get commonmark
         run: sudo apt-fast install libcmark-dev
       - name: Get and build Odin docs generator
