@@ -18,6 +18,7 @@ Mime_Type :: enum {
 	Url_Encoded,
 	Xml,
 	Zip,
+	Wasm,
 }
 
 mime_from_extension :: proc(s: string) -> Mime_Type {
@@ -35,6 +36,7 @@ mime_from_extension :: proc(s: string) -> Mime_Type {
 	case ".jpeg": return .Jpeg
 	case ".png":  return .Png
 	case ".svg":  return .Svg
+	case ".wasm": return .Wasm
 	case:         return .Plain
 	}
 	//odinfmt:enable
@@ -57,6 +59,7 @@ _mime_to_content_type := [Mime_Type]string{
 	.Url_Encoded = "application/x-www-form-urlencoded",
 	.Xml         = "text/xml",
 	.Zip         = "application/zip",
+	.Wasm        = "application/wasm",
 }
 
 mime_to_content_type :: proc(m: Mime_Type) -> string {

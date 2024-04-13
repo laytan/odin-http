@@ -204,7 +204,7 @@ post :: proc() {
 		return
 	}
 
-	res, err := client.request("https://webhook.site/YOUR-ID-HERE", &req)
+	res, err := client.request(&req, "https://webhook.site/YOUR-ID-HERE")
 	if err != nil {
 		fmt.printf("Request failed: %s", err)
 		return
