@@ -1,4 +1,4 @@
-//+private
+// TODO: this should ideally be private or at least in another package.
 package http
 
 import "base:intrinsics"
@@ -6,10 +6,10 @@ import "base:intrinsics"
 import "core:bufio"
 import "core:net"
 
-import "nbio"
-
-Scan_Callback :: #type proc(user_data: rawptr, token: string, err: bufio.Scanner_Error)
-Split_Proc    :: #type proc(split_data: rawptr, data: []byte, at_eof: bool) -> (advance: int, token: []byte, err: bufio.Scanner_Error, final_token: bool)
+Scan_Callback   :: #type proc(user_data: rawptr, token: string, err: bufio.Scanner_Error)
+Split_Proc      :: #type proc(split_data: rawptr, data: []byte, at_eof: bool) -> (advance: int, token: []byte, err: bufio.Scanner_Error, final_token: bool)
+On_Scanner_Read :: #type proc(s: ^Scanner, n: int, e: net.Network_Error)
+Recv_Proc       :: #type proc(user_data: rawptr, buf: []byte, s: ^Scanner, callback: On_Scanner_Read)
 
 scan_lines :: proc(split_data: rawptr, data: []byte, at_eof: bool) -> (advance: int, token: []byte, err: bufio.Scanner_Error, final_token: bool) {
 	return bufio.scan_lines(data, at_eof)
@@ -33,7 +33,8 @@ scan_num_bytes :: proc(split_data: rawptr, data: []byte, at_eof: bool) -> (advan
 
 // A callback based scanner over the connection based on nbio.
 Scanner :: struct #no_copy {
-	connection:                   ^Connection,
+	recv:                         Recv_Proc,
+	recv_user_data:               rawptr,
 	split:                        Split_Proc,
 	split_data:                   rawptr,
 	buf:                          [dynamic]byte,
@@ -54,8 +55,9 @@ Scanner :: struct #no_copy {
 INIT_BUF_SIZE :: 1024
 DEFAULT_MAX_CONSECUTIVE_EMPTY_READS :: 128
 
-scanner_init :: proc(s: ^Scanner, c: ^Connection, buf_allocator := context.allocator) {
-	s.connection     = c
+scanner_init :: proc(s: ^Scanner, recv_user_data: rawptr, recv: Recv_Proc, buf_allocator := context.allocator) {
+	s.recv           = recv
+	s.recv_user_data = recv_user_data
 	s.split          = scan_lines
 	s.max_token_size = bufio.DEFAULT_MAX_SCAN_TOKEN_SIZE
 	s.buf.allocator  = buf_allocator
@@ -199,14 +201,13 @@ scanner_scan :: proc(
 	s.callback = callback
 	s.could_be_too_short = could_be_too_short
 
-	assert_has_td()
-	// TODO: some kinda timeout on this.
-	nbio.recv(&td.io, s.connection.socket, s.buf[s.end:len(s.buf)], s, scanner_on_read)
+	s.recv(s.recv_user_data, s.buf[s.end:len(s.buf)], s, scanner_on_read)
+	// assert_has_td()
+	// // TODO: some kinda timeout on this.
+	// nbio.recv(&td.io, s.socket, s.buf[s.end:len(s.buf)], s, scanner_on_read)
 }
 
-scanner_on_read :: proc(s_: rawptr, n: int, _: Maybe(net.Endpoint), e: net.Network_Error) {
-	s := cast(^Scanner)s_
-
+scanner_on_read :: proc(s: ^Scanner, n: int, e: net.Network_Error) {
 	defer scanner_scan(s, s.user_data, s.callback)
 
 	if e != nil {

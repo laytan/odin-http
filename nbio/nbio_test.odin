@@ -186,7 +186,7 @@ test_client_and_server_send_recv :: proc(t: ^testing.T) {
 		connect(&io, tctx.ep, &tctx, connect_callback)
 
 		for !tctx.done {
-			terr := tick(&io)
+			terr = tick(&io)
 			expect(t, terr == os.ERROR_NONE, fmt.tprintf("tick error: %v", terr))
 		}
 
@@ -296,7 +296,7 @@ test_send_all :: proc(t: ^testing.T) {
 	connect(&io, tctx.ep, &tctx, connect_callback)
 
 	for !tctx.done {
-		terr := tick(&io)
+		terr = tick(&io)
 		expect(t, terr == os.ERROR_NONE, fmt.tprintf("tick error: %v", terr))
 	}
 
