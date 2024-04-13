@@ -24,7 +24,7 @@ Request :: struct {
 // Initializes the request with sane defaults using the given allocator.
 request_init :: proc(r: ^Request, method := http.Method.Get, allocator := context.allocator) {
 	r.method = method
-	http.headers_init(&r.headers)
+	http.headers_init(&r.headers, allocator)
 	r.cookies = make([dynamic]http.Cookie, allocator)
 	bytes.buffer_init_allocator(&r.body, 0, 0, allocator)
 }
@@ -39,7 +39,7 @@ request_destroy :: proc(r: ^Request) {
 }
 
 with_json :: proc(r: ^Request, v: any, opt: json.Marshal_Options = {}) -> json.Marshal_Error {
-	r.method = .Post
+	if r.method == .Get do r.method = .Post
 	http.headers_set_content_type(&r.headers, http.mime_to_content_type(.Json))
 
 	stream := bytes.buffer_to_stream(&r.body)
@@ -53,10 +53,11 @@ get :: proc(target: string, allocator := context.allocator) -> (Response, Error)
 	request_init(&r, .Get, allocator)
 	defer request_destroy(&r)
 
-	return request(target, &r, allocator)
+	return request(&r, target, allocator)
 }
 
 Request_Error :: enum {
+	Ok,
 	Invalid_Response_HTTP_Version,
 	Invalid_Response_Method,
 	Invalid_Response_Header,
@@ -64,12 +65,13 @@ Request_Error :: enum {
 }
 
 SSL_Error :: enum {
+	Ok,
 	Controlled_Shutdown,
 	Fatal_Shutdown,
 	SSL_Write_Failed,
 }
 
-Error :: union {
+Error :: union #shared_nil {
 	net.Dial_Error,
 	net.Parse_Endpoint_Error,
 	net.Network_Error,
@@ -78,7 +80,7 @@ Error :: union {
 	SSL_Error,
 }
 
-request :: proc(target: string, request: ^Request, allocator := context.allocator) -> (res: Response, err: Error) {
+request :: proc(request: ^Request, target: string, allocator := context.allocator) -> (res: Response, err: Error) {
 	url, endpoint := parse_endpoint(target) or_return
 
 	// NOTE: we don't support persistent connections yet.
@@ -97,7 +99,7 @@ request :: proc(target: string, request: ^Request, allocator := context.allocato
 
 		// For servers using SNI for SSL certs (like cloudflare), this needs to be set.
 		chostname := strings.clone_to_cstring(url.host, allocator)
-		defer delete(chostname)
+		defer delete(chostname, allocator)
 		openssl.SSL_set_tlsext_host_name(ssl, chostname)
 
 		switch openssl.SSL_connect(ssl) {
@@ -148,7 +150,7 @@ response_destroy :: proc(res: ^Response, body: Maybe(Body_Type) = nil, was_alloc
 	// If we did, we wouldn't know if the key was allocated or a literal.
 	// We also set the headers to readonly before giving them to the user so they can't add any either.
 	for k in res.headers._kv {
-		delete(k)
+		delete(k, res.headers._kv.allocator)
 	}
 
 	delete(res.headers._kv)
@@ -197,7 +199,7 @@ Body_Url_Encoded :: map[string]string
 Body_Type :: union {
 	Body_Plain,
 	Body_Url_Encoded,
-	Body_Error,
+	Body_Error, // TODO: why is this here if we also return an error?
 }
 
 // Frees the memory allocated by parsing the body.
