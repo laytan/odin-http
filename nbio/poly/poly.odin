@@ -19,6 +19,7 @@ _ :: mem
 /// Re-export `nbio` stuff that is not wrapped in this package.
 
 IO                  :: nbio.IO
+make_io             :: nbio.make_io
 init                :: nbio.init
 tick                :: nbio.tick
 num_waiting         :: nbio.num_waiting
