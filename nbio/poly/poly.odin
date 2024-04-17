@@ -20,6 +20,7 @@ _ :: mem
 
 Completion          :: nbio.Completion
 IO                  :: nbio.IO
+make_io             :: nbio.make_io
 init                :: nbio.init
 tick                :: nbio.tick
 num_waiting         :: nbio.num_waiting

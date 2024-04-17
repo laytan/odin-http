@@ -1,7 +1,9 @@
 // package client provides a HTTP/1.1 client.
 package client
 
+import intr "base:intrinsics"
 import "core:bufio"
+import "core:fmt"
 import "core:log"
 import "core:mem"
 import "core:net"
@@ -13,33 +15,205 @@ import http ".."
 import nbio "../nbio/poly"
 import ssl  "../openssl"
 
+ssl_verify_ptr :: #force_inline proc(ptr: $T, loc := #caller_location) where intr.type_is_pointer(T) {
+    if intr.expect(ptr == nil, false) {
+        logger := context.logger
+        ssl.errors_print_to_log(&logger)
+        panic("openSSL returned nil pointer", loc)
+    }
+}
+
 // TODO: max response line/header/body sizes.
 
-Request :: struct {
-	// scanner: http.Scanner,
+Client :: struct {
     allocator: mem.Allocator,
-    io:        ^nbio.IO,
 
-    target:    http.URL,
-    endpoint:  net.Endpoint,
-    chost:     cstring,
+	// NOTE: these are allocated inside openSSL, nothing to do with the given allocator unfortunately.
+    io:  ^nbio.IO,
+    ctx: ^ssl.SSL_CTX,
 
-    ctx:       ^ssl.SSL_CTX,
+    // TODO: DNS cache.
+    // dns: map[string]net.Endpoint,
+
+    // TODO: should this hold all the current requests?
+}
+
+// The thing is right, http 1 needs sequential messaging on the socket, ie send request -> receive response -> send request.
+// So it doesn't really make much sense to decouple the connection from the
+// request/response structs, maybe we can use a linked list type thing where
+// you can queue a bunch of requests on a connection?
+//
+// But then we'd also want to be able to spin up multiple connections to a host
+// and send requests that way.
+//
+// A good middleground is probably allowing users to drop lower and create more
+// connections themselves, and orchestrate the requests over them. But by default
+// have a linked list of requests to send over a connection.
+
+Connection_State :: enum {
+	Pending,
+	Connecting,
+	Connected,
+	Failed,
+}
+
+Connection :: struct {
+    allocator: mem.Allocator,
+
+	client:    ^Client,
+
+	state:     Connection_State,
+	host:      cstring,
+	endpoint:  net.Endpoint,
+	scheme:    Scheme,
     ssl:       ^ssl.SSL,
-
     socket:    net.TCP_Socket,
 
-    method:    http.Method,
-    headers:   http.Headers,
-    cookies:   [dynamic]http.Cookie,
-    body:      strings.Builder,
+    request:   ^Request, // Linked list of requests to execute asynchronously.
+}
 
-    buf:       strings.Builder,
+Request :: struct {
+    allocator: mem.Allocator,
 
-    res:       Response,
+    conn: ^Connection,
 
-    on_response:           On_Response,
-    on_response_user_data: rawptr,
+    next: ^Request,
+
+	on_response: On_Response,
+	user_data:   rawptr,
+
+    path:    string,
+    method:  http.Method,
+    headers: http.Headers,
+    cookies: [dynamic]http.Cookie,
+    body:    strings.Builder,
+    buf:     strings.Builder, // TODO: this can probably be removed from the struct.
+    res:     Response,
+}
+
+Response :: struct {
+	scanner: http.Scanner, // TODO: move into connection.
+
+    status:  http.Status,
+    headers: http.Headers,
+    cookies: [dynamic]http.Cookie,
+}
+
+init :: proc {
+	client_init,
+	connection_init,
+	request_init,
+}
+
+destroy :: proc {
+	client_destroy,
+	connection_destroy,
+	request_destroy,
+}
+
+client_init :: proc(c: ^Client, io: ^nbio.IO, allocator := context.allocator) {
+	c.allocator = allocator
+	c.io = io
+
+    method := ssl.TLS_client_method()
+    ssl_verify_ptr(method)
+
+    c.ctx = ssl.SSL_CTX_new(method)
+    ssl_verify_ptr(c.ctx)
+}
+
+client_make :: proc(io: ^nbio.IO, allocator := context.allocator) -> (client: Client) {
+    init(&client, io, allocator)
+	return
+}
+
+client_destroy :: proc(client: ^Client) {
+	log.warn("TODO", #procedure)
+}
+
+Scheme :: enum {
+	From_Target,
+	HTTP,
+	HTTPS,
+}
+
+connection_init :: proc(conn: ^Connection, client: ^Client, target: string, scheme := Scheme.From_Target, allocator := context.allocator) -> (ok: bool) {
+	conn.allocator = allocator
+	conn.client = client
+	conn.scheme = scheme
+
+	url := http.url_parse(target)
+	if conn.scheme == .From_Target {
+		switch url.scheme {
+		case "https":
+			conn.scheme = .HTTPS
+		case:
+			log.warnf("given target %q does not have a `http://` or `https://` prefix to infer the type of connection from, either add a prefix or set the `scheme` parameter, falling back to http.", target)
+			fallthrough
+		case "http":
+			conn.scheme = .HTTP
+		}
+	}
+
+	conn.host = strings.clone_to_cstring(url.host, allocator)
+
+	conn.ssl = ssl.SSL_new(client.ctx)
+	ssl_verify_ptr(conn.ssl)
+
+    if ssl.SSL_set_tlsext_host_name(conn.ssl, conn.host) != 1 {
+        delete(conn.host)
+        return false
+    }
+
+	return true
+}
+
+connection_make :: proc(client: ^Client, host: string, scheme := Scheme.From_Target, allocator := context.allocator) -> (conn: Connection) {
+	connection_init(&conn, client, host, scheme, allocator)
+	return
+}
+
+connection_destroy :: proc(conn: ^Connection) {
+	log.warn("TODO", #procedure)
+}
+
+request_init :: proc(r: ^Request, conn: ^Connection, path: string, allocator := context.allocator) {
+    r.allocator = allocator
+    r.conn = conn
+
+    r.path = http.url_parse(path).path
+    r.path = strings.clone(r.path, allocator)
+
+    http.headers_init(&r.headers, allocator)
+    r.cookies.allocator  = allocator
+    r.body.buf.allocator = allocator
+    r.buf.buf.allocator  = allocator
+}
+
+request_make :: proc(conn: ^Connection, path: string, allocator := context.allocator) -> (r: Request) {
+	request_init(&r, conn, path, allocator)
+	return
+}
+
+// request_init_path :: proc(r: ^Request, conn: ^Connection, path: string)
+
+// TODO: ssl stuff.
+request_destroy :: proc(r: ^Request) {
+	log.warn("TODO", #procedure)
+ //    // Response.
+ //    http.scanner_destroy(&r.res.scanner)
+ //    http.headers_destroy(&r.res.headers)
+ //    delete(&r.res.cookies)
+	//
+ //    // Request.
+ //    http.headers_destroy(&r.headers)
+ //    delete(r.cookies)
+ //    strings.builder_destroy(&r.body)
+ //    strings.builder_destroy(&r.buf)
+	//
+ //    // Connection.
+	// delete(r.chost)
+	// nbio.close(&r.io, r.socket) // NOTE: this is added to the event loop and doesn't close right away.
 }
 
 // TODO: request_destroy etc.
@@ -49,160 +223,266 @@ Request :: struct {
 // TODO: a client struct, optionally wrapping multiple requests.
 // caching DNS resolutions...
 
-// TODO: a structure like below, where you have a connection struct holding everything for
-// the actual connection, so everything needed up to connection to the host server.
-// Now, for http 1, that doesn't have much value, because you need to be sequential over a connection.
-//
-// Request :: struct {
-//     using conn: ^Connection,
-//
-//     method:    http.Method,
-//     headers:   http.Headers,
-//     cookies:   [dynamic]http.Cookie,
-//     body:      strings.Builder,
-//
-//     buf:       strings.Builder,
-//
-// }
-
-Response :: struct {
-    scanner: http.Scanner,
-
-    cb:        On_Response,
-    user_data: rawptr,
-
-    status:  http.Status,
-    headers: http.Headers,
-    cookies: [dynamic]http.Cookie,
-}
-
 // NOTE: openssl allocations are done using libc.
 // TODO: can we set an allocator for openssl?
-request_init :: proc(io: ^nbio.IO, r: ^Request, target: string, allocator := context.allocator) -> net.Network_Error {
-    r.allocator = allocator
-    r.target, r.endpoint = parse_endpoint(target) or_return // TODO: THIS IS BLOCKING.
-    r.io = io
 
-    http.headers_init(&r.headers, allocator)
+On_Connect :: #type proc(r: ^Connection, user_data: rawptr, err: net.Network_Error)
 
-    r.cookies.allocator  = allocator
-    r.body.buf.allocator = allocator
-    r.buf.buf.allocator  = allocator
-
-    if r.target.scheme != "https" do return nil
-
-    // TODO: error handling here.
-    r.ctx = ssl.SSL_CTX_new(ssl.TLS_client_method())
-    r.ssl = ssl.SSL_new(r.ctx)
-
-	// For servers using SNI for SSL certs (like cloudflare), this needs to be set.
-    r.chost = strings.clone_to_cstring(r.target.host, allocator)
-    ssl.SSL_set_tlsext_host_name(r.ssl, r.chost)
-    return nil
+connect :: proc {
+	connect_no_cb,
+	connect_cb,
 }
 
-On_Connect :: #type proc(r: ^Request, user_data: rawptr, err: net.Network_Error)
+connect_no_cb :: #force_inline proc(c: ^Connection) { connect_cb(c, nil, proc(^Connection, rawptr, net.Network_Error) {}) }
 
-connect :: proc(r: ^Request, user_data: rawptr, callback: On_Connect) {
+// Resolves DNS if needed, then connects to the server, if there are requests queued it executes them.
+// TODO: on success/failure, start doing all requests or call the request callback with an error.
+connect_cb :: proc(c: ^Connection, user_data: rawptr, callback: On_Connect) {
 
-    on_tcp_connect :: proc(r: ^Request, user_data: rawptr, callback: On_Connect, socket: net.TCP_Socket, err: net.Network_Error) {
+    on_tcp_connect :: proc(c: ^Connection, user_data: rawptr, callback: On_Connect, socket: net.TCP_Socket, err: net.Network_Error) {
         if err != nil {
             log.errorf("TCP connect failed: %v", err)
-            callback(r, user_data, err)
+			c.state = .Failed
+            callback(c, user_data, err)
+			connection_process(c)
             return
         }
 
         log.debug("TCP connection established")
-        r.socket = socket
+        c.socket = socket
 
-        if r.target.scheme != "https" {
-            callback(r, user_data, nil)
+        if c.scheme != .HTTPS {
+			c.state = .Connected
+            callback(c, user_data, nil)
+			connection_process(c)
             return
         }
 
-        ssl.SSL_set_fd(r.ssl, i32(socket)) // TODO: can this error?
+        ssl.SSL_set_fd(c.ssl, i32(socket)) // TODO: can this error?
 
-        ssl_connect :: proc(r: ^Request, user_data: rawptr, callback: On_Connect, _: nbio.Poll_Event) {
-            switch ret := ssl.SSL_connect(r.ssl); ret {
+        ssl_connect :: proc(c: ^Connection, user_data: rawptr, callback: On_Connect, _: nbio.Poll_Event) {
+            switch ret := ssl.SSL_connect(c.ssl); ret {
             case 1:
                 log.debug("SSL connection established")
-                callback(r, user_data, nil)
+				c.state = .Connected
+                callback(c, user_data, nil)
+				connection_process(c)
             case 0:
-                log.errorf("SSL connect error controlled shutdown: %v", ssl.error_get(r.ssl, ret))
-                callback(r, user_data, net.Dial_Error.Refused)
+                log.errorf("SSL connect error controlled shutdown: %v", ssl.error_get(c.ssl, ret))
+				c.state = .Failed
+                callback(c, user_data, net.Dial_Error.Refused)
+				connection_process(c)
             case:
                 assert(ret < 0)
-                #partial switch err := ssl.error_get(r.ssl, ret); err {
+                #partial switch err := ssl.error_get(c.ssl, ret); err {
                 case .Want_Read:
                     log.debug("SSL connect want read")
-                    nbio.poll(r.io, os.Handle(r.socket), .Read,  false, r, user_data, callback, ssl_connect)
+                    nbio.poll(c.client.io, os.Handle(c.socket), .Read,  false, c, user_data, callback, ssl_connect)
                 case .Want_Write:
                     log.debug("SSL connect want write")
-                    nbio.poll(r.io, os.Handle(r.socket), .Write, false, r, user_data, callback, ssl_connect)
+                    nbio.poll(c.client.io, os.Handle(c.socket), .Write, false, c, user_data, callback, ssl_connect)
                 case:
                     log.errorf("SSL connect fatal error: %v", err)
-                    callback(r, user_data, net.Dial_Error.Refused)
+					c.state = .Failed
+                    callback(c, user_data, net.Dial_Error.Refused)
+					connection_process(c)
                 }
             }
         }
 
-        ssl_connect(r, user_data, callback, nil)
+        ssl_connect(c, user_data, callback, nil)
     }
 
-    nbio.connect(r.io, r.endpoint, r, user_data, callback, on_tcp_connect)
+	// Already connected/connecting.
+	if c.state != .Pending {
+		return
+	}
+
+	c.state = .Connecting
+
+	// TODO: this is blocking.
+	err: net.Network_Error
+	if c.endpoint, err = parse_endpoint(string(c.host), c.scheme); err != nil do fmt.panicf("DNS error: %v", err)
+
+    nbio.connect(c.client.io, c.endpoint, c, user_data, callback, on_tcp_connect)
 }
 
-On_Sent :: #type proc(r: ^Request, user_data: rawptr, err: net.Network_Error)
+On_Response :: #type proc(r: ^Request, user_data: rawptr, err: net.Network_Error)
 
-send :: proc(r: ^Request, user_data: rawptr, callback: On_Sent) {
-    if len(r.buf.buf) == 0 do prepare_request(r)
+request :: proc {
+	request_cb,
+	request_no_cb,
+}
 
-    if r.target.scheme != "https" {
-        nbio.send_all(r.io, r.socket, r.buf.buf[:], r, user_data, callback, proc(r: ^Request, user_data: rawptr, callback: On_Sent, sent: int, err: net.Network_Error) {
-            log.debugf("written request of %m to connection", sent)
-            callback(r, user_data, err)
+request_no_cb :: #force_inline proc(r: Request) { request_cb(r, nil, proc(^Request, rawptr, net.Network_Error) {}) }
+
+request_cb :: proc(user_req: Request, user_data: rawptr, callback: On_Response) {
+	r := new(Request)
+	r^ = user_req
+
+	r.on_response = callback
+	r.user_data = user_data
+
+	switch r.conn.state {
+	case .Pending:
+		r.conn.request = r
+		connect_no_cb(r.conn)
+
+	case .Connecting:
+		if r.conn.request == nil {
+			r.conn.request = r
+		} else {
+			tail: ^Request
+			for tail = r.conn.request; tail != nil && tail.next != nil; tail = tail.next {}
+			tail.next = r
+		}
+		connect_no_cb(r.conn)
+
+	case .Failed:
+		callback(r, user_data, net.Dial_Error.Refused)
+
+	case .Connected:
+		if r.conn.request == nil {
+			r.conn.request = r
+			connection_process(r.conn)
+		} else {
+			tail: ^Request
+			for tail = r.conn.request; tail != nil && tail.next != nil; tail = tail.next {}
+			tail.next = r
+		}
+	}
+}
+
+@(private="file")
+connection_process :: proc(c: ^Connection) {
+	fmt.println(c)
+	switch c.state {
+	case .Pending, .Connecting: panic("can't process requests if not connected")
+	case .Failed:
+		for req := c.request; req != nil; req = req.next {
+			req.on_response(req, req.user_data, net.Dial_Error.Refused)
+		}
+	case .Connected:
+		if c.request != nil {
+			send(c.request)
+		}
+	}
+}
+
+@(private="file")
+callback_and_process_next :: proc(r: ^Request, err: net.Network_Error) {
+
+	// TODO: if error in connection, close connection and callback with an error.
+
+	log.infof("request done: %v %v", r.res.status, err)
+
+	// TODO: Fatal flaw, we are now trying to execute the next connection right away
+	// but if the response had a body, it needs to be read first.
+	// So we either need to read the body before calling this callback, or call the callback
+	// and make it tell us it is done with the body, and then read it (if not read already) and
+	// then send the next request.
+
+	r.conn.request = r.next
+	connection_process(r.conn)
+	r.on_response(r, r.user_data, err)
+}
+
+@(private="file")
+send :: proc(r: ^Request) {
+    prepare_request(r)
+
+	if r.conn.scheme != .HTTPS {
+        // TODO: make nbio not pass the `sent` number in the send_all etc.
+
+        // Send the request line and headers.
+        nbio.send_all(r.conn.client.io, r.conn.socket, r.buf.buf[:], r, proc(r: ^Request, sent: int, err: net.Network_Error) {
+            log.debugf("written request line and headers of %m to connection", sent)
+
+            if len(r.body.buf) == 0 || err != nil {
+				callback_and_process_next(r, err)
+                return
+            }
+
+            // TODO: can we make sure the body hasn't changed between the send of the headers and this send, maybe assert the length?
+            nbio.send_all(r.conn.client.io, r.conn.socket, r.body.buf[:], r, proc(r: ^Request, sent: int, err: net.Network_Error) {
+                log.debugf("written body of %m to connection", sent)
+
+				if err != nil {
+					callback_and_process_next(r, err)
+				}
+
+				parse_response(r)
+            })
         })
-        return
-    }
+	}
 
     // TODO: test > 16kib writes.
 
-    ssl_write :: proc(r: ^Request, user_data: rawptr, callback: On_Sent, _: nbio.Poll_Event) {
-        len := i32(strings.builder_len(r.buf)) // TODO: handle bigger than max send at a time.
-        switch ret := ssl.SSL_write(r.ssl, raw_data(r.buf.buf), i32(len)); {
+    ssl_write_req :: proc(r: ^Request, _: nbio.Poll_Event) {
+        bytes := len(r.buf.buf)
+        switch ret := ssl.SSL_write(r.conn.ssl, raw_data(r.buf.buf), i32(bytes)); {
         case ret > 0:
-            log.debugf("Successfully written request of %m to connection", ret)
-            assert(ret == len)
-            callback(r, user_data, nil)
+            log.debugf("Successfully written request line and headers of %m to connection", ret)
+            assert(int(ret) == bytes)
+            ssl_write_body(r, nil)
         case:
-            #partial switch err := ssl.error_get(r.ssl, ret); err {
+            #partial switch err := ssl.error_get(r.conn.ssl, ret); err {
             case .Want_Read:
                 log.debug("SSL write want read")
-                nbio.poll(r.io, os.Handle(r.socket), .Read, false, r, user_data, callback, ssl_write)
+                nbio.poll(r.conn.client.io, os.Handle(r.conn.socket), .Read, false, r, ssl_write_req)
             case .Want_Write:
                 log.debug("SSL write want write")
-                nbio.poll(r.io, os.Handle(r.socket), .Write, false, r, user_data, callback, ssl_write)
+                nbio.poll(r.conn.client.io, os.Handle(r.conn.socket), .Write, false, r, ssl_write_req)
             case .Zero_Return:
                 log.error("write failed, connection is closed")
-                callback(r, user_data, net.TCP_Send_Error.Connection_Closed)
+				callback_and_process_next(r, net.TCP_Send_Error.Connection_Closed)
             case:
                 log.errorf("write failed due to unknown reason: %v", err)
-                callback(r, user_data, net.TCP_Send_Error.Aborted)
+				callback_and_process_next(r, net.TCP_Send_Error.Aborted)
             }
         }
     }
 
-    log.debugf("sending body: %q", strings.to_string(r.buf))
+    ssl_write_body :: proc(r: ^Request, _: nbio.Poll_Event) {
+        bytes := len(r.body.buf)
+        if bytes == 0 {
+			parse_response(r)
+            return
+        }
 
-    ssl_write(r, user_data, callback, nil)
+        switch ret := ssl.SSL_write(r.conn.ssl, raw_data(r.body.buf), i32(bytes)); {
+        case ret > 0:
+            log.debugf("Successfully written body of %m to connection", ret)
+            assert(int(ret) == bytes)
+			parse_response(r)
+        case:
+            #partial switch err := ssl.error_get(r.conn.ssl, ret); err {
+            case .Want_Read:
+                log.debug("SSL write want read")
+                nbio.poll(r.conn.client.io, os.Handle(r.conn.socket), .Read, false, r, ssl_write_body)
+            case .Want_Write:
+                log.debug("SSL write want write")
+                nbio.poll(r.conn.client.io, os.Handle(r.conn.socket), .Write, false, r, ssl_write_body)
+            case .Zero_Return:
+                log.error("write failed, connection is closed")
+                callback_and_process_next(r, net.TCP_Send_Error.Connection_Closed)
+            case:
+                log.errorf("write failed due to unknown reason: %v", err)
+                callback_and_process_next(r, net.TCP_Send_Error.Aborted)
+            }
+        }
+    }
+
+    ssl_write_req(r, nil)
 }
 
+@(private="file")
 prepare_response :: proc(r: ^Request) {
     scanner_recv :: proc(r: rawptr, buf: []byte, s: ^http.Scanner, callback: http.On_Scanner_Read) {
         r := (^Request)(r)
 
-        if r.target.scheme != "https" {
-            nbio.recv(r.io, r.socket, buf, s, callback, proc(s: ^http.Scanner, callback: http.On_Scanner_Read, n: int, _: Maybe(net.Endpoint), err: net.Network_Error) {
+        if r.conn.scheme != .HTTPS {
+            nbio.recv(r.conn.client.io, r.conn.socket, buf, s, callback, proc(s: ^http.Scanner, callback: http.On_Scanner_Read, n: int, _: Maybe(net.Endpoint), err: net.Network_Error) {
                 callback(s, n, err)
             })
             return
@@ -211,18 +491,18 @@ prepare_response :: proc(r: ^Request) {
         ssl_recv :: proc(r: ^Request, buf: []byte, callback: http.On_Scanner_Read, _: nbio.Poll_Event) {
             len := i32(len(buf)) // TODO: handle bigger than max recv at a time.
             log.debug("executing SSL read")
-            switch ret := ssl.SSL_read(r.ssl, raw_data(buf), len); {
+            switch ret := ssl.SSL_read(r.conn.ssl, raw_data(buf), len); {
             case ret > 0:
                 log.debugf("Successfully received %m from the connection", ret)
                 callback(&r.res.scanner, int(ret), nil)
             case:
-                #partial switch err := ssl.error_get(r.ssl, ret); err {
+                #partial switch err := ssl.error_get(r.conn.ssl, ret); err {
                 case .Want_Read:
                     log.debug("SSL read want read")
-                    nbio.poll(r.io, os.Handle(r.socket), .Read, false, r, buf, callback, ssl_recv)
+                    nbio.poll(r.conn.client.io, os.Handle(r.conn.socket), .Read, false, r, buf, callback, ssl_recv)
                 case .Want_Write:
                     log.debug("SSL read want write")
-                    nbio.poll(r.io, os.Handle(r.socket), .Write, false, r, buf, callback, ssl_recv)
+                    nbio.poll(r.conn.client.io, os.Handle(r.conn.socket), .Write, false, r, buf, callback, ssl_recv)
                 case .Zero_Return:
                     log.error("read failed, connection is closed")
                     callback(&r.res.scanner, 0, net.TCP_Recv_Error.Connection_Closed)
@@ -242,9 +522,8 @@ prepare_response :: proc(r: ^Request) {
     http.scanner_init(&r.res.scanner, r, scanner_recv, r.allocator)
 }
 
-On_Response :: #type proc(r: ^Response, user_data: rawptr, err: net.Network_Error)
-
-parse_response :: proc(r: ^Request, user_data: rawptr, callback: On_Response) {
+@(private="file")
+parse_response :: proc(r: ^Request) {
     if r.res.scanner.recv == nil do prepare_response(r)
 
     map_err :: proc(err: bufio.Scanner_Error) -> net.Network_Error {
@@ -255,7 +534,7 @@ parse_response :: proc(r: ^Request, user_data: rawptr, callback: On_Response) {
         r := (^Request)(r)
         if err != nil {
             log.errorf("error during read of first response line: %v", err)
-            r.res.cb(&r.res, r.res.user_data, map_err(err))
+			callback_and_process_next(r, map_err(err))
             return
         }
 
@@ -277,28 +556,28 @@ parse_response :: proc(r: ^Request, user_data: rawptr, callback: On_Response) {
         r := (^Request)(r)
         if err != nil {
             log.errorf("error during read of first response line: %v", err)
-            r.res.cb(&r.res, r.res.user_data, map_err(err))
+			callback_and_process_next(r, map_err(err))
             return
         }
 
         si := strings.index_byte(token, ' ')
         if si == -1 && si != len(token)-1 {
             log.errorf("invalid response line %q missing a space", token)
-            r.res.cb(&r.res, r.res.user_data, net.TCP_Recv_Error.Aborted) // TODO: a proper error.
+			callback_and_process_next(r, net.TCP_Recv_Error.Aborted) // TODO: a proper error.
             return
         }
 
         version, ok := http.version_parse(token[:si])
         if !ok || version.major != 1 {
             log.errorf("invalid HTTP version %q on response line %q", token[:si], token)
-            r.res.cb(&r.res, r.res.user_data, net.TCP_Recv_Error.Aborted) // TODO: a proper error.
+			callback_and_process_next(r, net.TCP_Recv_Error.Aborted) // TODO: a proper error.
             return
         }
 
         r.res.status, ok = http.status_from_string(token[si+1:])
         if !ok {
             log.errorf("invalid status %q on response line %q", token[si+1:], token)
-            r.res.cb(&r.res, r.res.user_data, net.TCP_Recv_Error.Aborted) // TODO: a proper error.
+			callback_and_process_next(r, net.TCP_Recv_Error.Aborted) // TODO: a proper error.
             return
         }
 
@@ -310,7 +589,7 @@ parse_response :: proc(r: ^Request, user_data: rawptr, callback: On_Response) {
         r := (^Request)(r)
         if err != nil {
             log.errorf("error during read of header line: %v", err)
-            r.res.cb(&r.res, r.res.user_data, map_err(err))
+			callback_and_process_next(r, map_err(err))
             return
         }
 
@@ -323,7 +602,7 @@ parse_response :: proc(r: ^Request, user_data: rawptr, callback: On_Response) {
         key, ok := http.header_parse(&r.res.headers, token, r.allocator)
         if !ok {
             log.errorf("invalid response header line %q", token)
-            r.res.cb(&r.res, r.res.user_data, net.TCP_Recv_Error.Aborted) // TODO: a proper error.
+			callback_and_process_next(r, net.TCP_Recv_Error.Aborted) // TODO: a proper error.
             return
         }
 
@@ -335,7 +614,7 @@ parse_response :: proc(r: ^Request, user_data: rawptr, callback: On_Response) {
 			cookie, cok := http.cookie_parse(cookie_str, r.allocator)
 			if !cok {
                 log.errorf("invalid cookie %q in header %q", cookie_str, token)
-                r.res.cb(&r.res, r.res.user_data, net.TCP_Recv_Error.Aborted) // TODO: a proper error.
+				callback_and_process_next(r, net.TCP_Recv_Error.Aborted) // TODO: a proper error.
 				return
 			}
 
@@ -349,28 +628,25 @@ parse_response :: proc(r: ^Request, user_data: rawptr, callback: On_Response) {
     on_headers_end :: proc(r: ^Request) {
         if !http.headers_validate(&r.res.headers) {
             log.errorf("invalid headers %v", r.res.headers._kv)
-            r.res.cb(&r.res, r.res.user_data, net.TCP_Recv_Error.Aborted) // TODO: a proper error.
+			callback_and_process_next(r, net.TCP_Recv_Error.Aborted) // TODO: a proper error.
             return
         }
 
         r.res.headers.readonly = true
-        r.res.cb(&r.res, r.res.user_data, nil)
+		callback_and_process_next(r, nil)
     }
-
-    // NOTE: I feel iffie about this
-    r.res.cb        = callback
-    r.res.user_data = user_data
 
     http.scanner_scan(&r.res.scanner, r, on_rline1)
 }
 
+@(private="file")
 prepare_request :: proc(r: ^Request) {
     strings.builder_reset(&r.buf)
     s := strings.to_stream(&r.buf)
 
     ws :: strings.write_string
 
-    err := http.requestline_write(s, { method = r.method, target = r.target, version = {1, 1} })
+    err := http.requestline_write(s, { method = r.method, target = r.path, version = {1, 1} })
     assert(err == nil) // Only really can be an allocator error.
 
 	if !http.headers_has_unsafe(r.headers, "content-length") {
@@ -403,7 +679,7 @@ prepare_request :: proc(r: ^Request) {
 
 	if !http.headers_has_unsafe(r.headers, "host") {
 		ws(&r.buf, "host: ")
-		ws(&r.buf, r.target.host)
+		ws(&r.buf, string(r.conn.host))
 		ws(&r.buf, "\r\n")
 	}
 
@@ -438,13 +714,11 @@ prepare_request :: proc(r: ^Request) {
 
 	// Empty line denotes end of headers and start of body.
 	ws(&r.buf, "\r\n")
-
-    ws(&r.buf, strings.to_string(r.body))
 }
 
-parse_endpoint :: proc(target: string) -> (url: http.URL, endpoint: net.Endpoint, err: net.Network_Error) {
-	url = http.url_parse(target)
-	host_or_endpoint := net.parse_hostname_or_endpoint(url.host) or_return
+@(private="file")
+parse_endpoint :: proc(host: string, scheme: Scheme) -> (endpoint: net.Endpoint, err: net.Network_Error) {
+	host_or_endpoint := net.parse_hostname_or_endpoint(host) or_return
 
 	switch t in host_or_endpoint {
 	case net.Endpoint:
@@ -456,7 +730,7 @@ parse_endpoint :: proc(target: string) -> (url: http.URL, endpoint: net.Endpoint
 
 		endpoint.port = t.port
 		if endpoint.port == 0 {
-			endpoint.port = url.scheme == "https" ? 443 : 80
+			endpoint.port = scheme == .HTTPS ? 443 : 80
 		}
 		return
 	case:

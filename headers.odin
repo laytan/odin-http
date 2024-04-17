@@ -12,6 +12,10 @@ headers_init :: proc(h: ^Headers, allocator := context.temp_allocator) {
 	h._kv.allocator = allocator
 }
 
+headers_destroy :: proc(h: ^Headers) {
+	delete(h._kv)
+}
+
 headers_count :: #force_inline proc(h: Headers) -> int {
 	return len(h._kv)
 }
