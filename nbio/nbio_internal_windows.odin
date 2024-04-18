@@ -12,7 +12,7 @@ import "core:time"
 
 import win "core:sys/windows"
 
-_IO :: struct {
+_IO :: struct #no_copy {
 	iocp:            win.HANDLE,
 	allocator:       mem.Allocator,
 	timeouts:        [dynamic]^Completion,

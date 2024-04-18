@@ -12,16 +12,13 @@ Request :: struct {
 	// line.method will be .Get if Server_Opts.redirect_head_to_get is set.
 	is_head:    bool,
 
-	headers:    Headers,
 	url:        URL,
 	client:     net.Endpoint,
 
 	// Route params/captures.
 	url_params: []string,
 
-	// Internal usage only.
-	_scanner:   ^Scanner,
-	_body_ok:   Maybe(bool),
+	using _: Has_Body,
 }
 
 request_init :: proc(r: ^Request, allocator := context.allocator) {

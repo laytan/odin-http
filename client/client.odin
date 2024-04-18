@@ -15,6 +15,29 @@ import http ".."
 import nbio "../nbio/poly"
 import ssl  "../openssl"
 
+// TODO:
+//
+// 1. Proper error propagation and handling
+// 1b. Dispose of a connection where an error happened (network error or 500 error (double check in RFC))
+// 1c. If there are queued requests, spawn a new connection for them
+// 1d. If a connection is closed by the server, how does it get handled, retry configuration?
+// 2. Expand configuration
+// 2b. Max body length
+// 2c. Max header size
+// 3. Cleanup
+// 4. Non-blocking DNS client resolves
+// 5. Clearly note what is internal usage only on the structs
+// 6. An API that waits for a response synchronously
+// 7. A poly API
+// 8. Connection pool? (would be some wrapper over the "lower" level stuff)
+// 9. Request timeouts
+// 10. Optionally follow redirects
+// 11. API that automatically handles JSON requests (take an any that is marshalled over the conn)
+// 12. Testing
+// 12b. Big requests > 16kb (a TLS packet)
+// 13. Document all the APIs, define thread-safety (none), param lifetimes and needed destroyers.
+// 14. DNS cache (the protocol has a TTL afaik that we should keep records for)
+
 ssl_verify_ptr :: #force_inline proc(ptr: $T, loc := #caller_location) where intr.type_is_pointer(T) {
     if intr.expect(ptr == nil, false) {
         logger := context.logger
@@ -34,21 +57,7 @@ Client :: struct {
 
     // TODO: DNS cache.
     // dns: map[string]net.Endpoint,
-
-    // TODO: should this hold all the current requests?
 }
-
-// The thing is right, http 1 needs sequential messaging on the socket, ie send request -> receive response -> send request.
-// So it doesn't really make much sense to decouple the connection from the
-// request/response structs, maybe we can use a linked list type thing where
-// you can queue a bunch of requests on a connection?
-//
-// But then we'd also want to be able to spin up multiple connections to a host
-// and send requests that way.
-//
-// A good middleground is probably allowing users to drop lower and create more
-// connections themselves, and orchestrate the requests over them. But by default
-// have a linked list of requests to send over a connection.
 
 Connection_State :: enum {
 	Pending,
@@ -69,7 +78,9 @@ Connection :: struct {
     ssl:       ^ssl.SSL,
     socket:    net.TCP_Socket,
 
-    request:   ^Request, // Linked list of requests to execute asynchronously.
+    request:   ^Request, // Linked list/queue of requests to execute over the connection in order.
+
+	scanner: http.Scanner,
 }
 
 Request :: struct {
@@ -87,16 +98,17 @@ Request :: struct {
     headers: http.Headers,
     cookies: [dynamic]http.Cookie,
     body:    strings.Builder,
-    buf:     strings.Builder, // TODO: this can probably be removed from the struct.
+    buf:     strings.Builder, // TODO: this can probably be removed from the struct and be used internally.
     res:     Response,
 }
 
 Response :: struct {
-	scanner: http.Scanner, // TODO: move into connection.
-
     status:  http.Status,
-    headers: http.Headers,
     cookies: [dynamic]http.Cookie,
+
+	body:    string,
+
+	using _: http.Has_Body,
 }
 
 init :: proc {
@@ -216,16 +228,6 @@ request_destroy :: proc(r: ^Request) {
 	// nbio.close(&r.io, r.socket) // NOTE: this is added to the event loop and doesn't close right away.
 }
 
-// TODO: request_destroy etc.
-
-// TODO: helpful wrappers, like a `client.with_json()` and `client.get()` from v1.
-
-// TODO: a client struct, optionally wrapping multiple requests.
-// caching DNS resolutions...
-
-// NOTE: openssl allocations are done using libc.
-// TODO: can we set an allocator for openssl?
-
 On_Connect :: #type proc(r: ^Connection, user_data: rawptr, err: net.Network_Error)
 
 connect :: proc {
@@ -314,12 +316,9 @@ request :: proc {
 	request_no_cb,
 }
 
-request_no_cb :: #force_inline proc(r: Request) { request_cb(r, nil, proc(^Request, rawptr, net.Network_Error) {}) }
+request_no_cb :: #force_inline proc(r: ^Request) { request_cb(r, nil, proc(^Request, rawptr, net.Network_Error) {}) }
 
-request_cb :: proc(user_req: Request, user_data: rawptr, callback: On_Response) {
-	r := new(Request)
-	r^ = user_req
-
+request_cb :: proc(r: ^Request, user_data: rawptr, callback: On_Response) {
 	r.on_response = callback
 	r.user_data = user_data
 
@@ -333,7 +332,9 @@ request_cb :: proc(user_req: Request, user_data: rawptr, callback: On_Response) 
 			r.conn.request = r
 		} else {
 			tail: ^Request
-			for tail = r.conn.request; tail != nil && tail.next != nil; tail = tail.next {}
+			for tail = r.conn.request; tail != nil && tail.next != nil; tail = tail.next {
+				assert(tail != r, "can't queue a request that is already queued")
+			}
 			tail.next = r
 		}
 		connect_no_cb(r.conn)
@@ -347,7 +348,9 @@ request_cb :: proc(user_req: Request, user_data: rawptr, callback: On_Response) 
 			connection_process(r.conn)
 		} else {
 			tail: ^Request
-			for tail = r.conn.request; tail != nil && tail.next != nil; tail = tail.next {}
+			for tail = r.conn.request; tail != nil && tail.next != nil; tail = tail.next {
+				assert(tail != r, "can't queue a request that is already queued")
+			}
 			tail.next = r
 		}
 	}
@@ -355,7 +358,6 @@ request_cb :: proc(user_req: Request, user_data: rawptr, callback: On_Response) 
 
 @(private="file")
 connection_process :: proc(c: ^Connection) {
-	fmt.println(c)
 	switch c.state {
 	case .Pending, .Connecting: panic("can't process requests if not connected")
 	case .Failed:
@@ -376,12 +378,6 @@ callback_and_process_next :: proc(r: ^Request, err: net.Network_Error) {
 
 	log.infof("request done: %v %v", r.res.status, err)
 
-	// TODO: Fatal flaw, we are now trying to execute the next connection right away
-	// but if the response had a body, it needs to be read first.
-	// So we either need to read the body before calling this callback, or call the callback
-	// and make it tell us it is done with the body, and then read it (if not read already) and
-	// then send the next request.
-
 	r.conn.request = r.next
 	connection_process(r.conn)
 	r.on_response(r, r.user_data, err)
@@ -391,6 +387,8 @@ callback_and_process_next :: proc(r: ^Request, err: net.Network_Error) {
 send :: proc(r: ^Request) {
     prepare_request(r)
 
+	log.debug(string(r.buf.buf[:]))
+
 	if r.conn.scheme != .HTTPS {
         // TODO: make nbio not pass the `sent` number in the send_all etc.
 
@@ -398,10 +396,13 @@ send :: proc(r: ^Request) {
         nbio.send_all(r.conn.client.io, r.conn.socket, r.buf.buf[:], r, proc(r: ^Request, sent: int, err: net.Network_Error) {
             log.debugf("written request line and headers of %m to connection", sent)
 
-            if len(r.body.buf) == 0 || err != nil {
+			if err != nil {
 				callback_and_process_next(r, err)
-                return
-            }
+				return
+			} else if len(r.body.buf) == 0 {
+				parse_response(r)
+				return
+			}
 
             // TODO: can we make sure the body hasn't changed between the send of the headers and this send, maybe assert the length?
             nbio.send_all(r.conn.client.io, r.conn.socket, r.body.buf[:], r, proc(r: ^Request, sent: int, err: net.Network_Error) {
@@ -414,6 +415,7 @@ send :: proc(r: ^Request) {
 				parse_response(r)
             })
         })
+		return
 	}
 
     // TODO: test > 16kib writes.
@@ -445,6 +447,7 @@ send :: proc(r: ^Request) {
 
     ssl_write_body :: proc(r: ^Request, _: nbio.Poll_Event) {
         bytes := len(r.body.buf)
+		log.debugf("Writing body of %m to connection", bytes)
         if bytes == 0 {
 			parse_response(r)
             return
@@ -494,7 +497,7 @@ prepare_response :: proc(r: ^Request) {
             switch ret := ssl.SSL_read(r.conn.ssl, raw_data(buf), len); {
             case ret > 0:
                 log.debugf("Successfully received %m from the connection", ret)
-                callback(&r.res.scanner, int(ret), nil)
+                callback(r.res.scanner, int(ret), nil)
             case:
                 #partial switch err := ssl.error_get(r.conn.ssl, ret); err {
                 case .Want_Read:
@@ -505,10 +508,10 @@ prepare_response :: proc(r: ^Request) {
                     nbio.poll(r.conn.client.io, os.Handle(r.conn.socket), .Write, false, r, buf, callback, ssl_recv)
                 case .Zero_Return:
                     log.error("read failed, connection is closed")
-                    callback(&r.res.scanner, 0, net.TCP_Recv_Error.Connection_Closed)
+                    callback(r.res.scanner, 0, net.TCP_Recv_Error.Connection_Closed)
                 case:
                     log.errorf("read failed due to unknown reason: %v", err)
-                    callback(&r.res.scanner, 0, net.TCP_Recv_Error.Aborted)
+                    callback(r.res.scanner, 0, net.TCP_Recv_Error.Aborted)
                 }
             }
         }
@@ -519,13 +522,13 @@ prepare_response :: proc(r: ^Request) {
     http.headers_init(&r.res.headers, r.allocator)
     r.res.cookies.allocator = r.allocator
 
-    http.scanner_init(&r.res.scanner, r, scanner_recv, r.allocator)
+	http.scanner_reset(&r.conn.scanner)
+    http.scanner_init(&r.conn.scanner, r, scanner_recv, r.conn.allocator)
+	r.res.scanner = &r.conn.scanner
 }
 
 @(private="file")
 parse_response :: proc(r: ^Request) {
-    if r.res.scanner.recv == nil do prepare_response(r)
-
     map_err :: proc(err: bufio.Scanner_Error) -> net.Network_Error {
         return net.TCP_Recv_Error.Aborted // TODO;!
     }
@@ -538,14 +541,14 @@ parse_response :: proc(r: ^Request) {
             return
         }
 
-        // NOTE: this RFC advice for servers, but seems sensible here too.
+        // NOTE: this is RFC advice for servers, but seems sensible here too.
         //
 		// In the interest of robustness, a server that is expecting to receive
 		// and parse a request-line SHOULD ignore at least one empty line (CRLF)
 		// received prior to the request-line.
         if len(token) == 0 {
             log.debug("first response line is empty, skipping in interest of robustness")
-            http.scanner_scan(&r.res.scanner, r, on_rline2)
+            http.scanner_scan(r.res.scanner, r, on_rline2)
             return
         }
 
@@ -582,7 +585,7 @@ parse_response :: proc(r: ^Request) {
         }
 
         log.debugf("got valid response line %q, parsing headers...", token)
-        http.scanner_scan(&r.res.scanner, r, on_header_line)
+        http.scanner_scan(r.res.scanner, r, on_header_line)
     }
 
     on_header_line :: proc(r: rawptr, token: string, err: bufio.Scanner_Error) {
@@ -622,7 +625,7 @@ parse_response :: proc(r: ^Request) {
         }
 
         log.debugf("parsed valid header %q", token)
-        http.scanner_scan(&r.res.scanner, r, on_header_line)
+        http.scanner_scan(r.res.scanner, r, on_header_line)
     }
 
     on_headers_end :: proc(r: ^Request) {
@@ -632,11 +635,20 @@ parse_response :: proc(r: ^Request) {
             return
         }
 
-        r.res.headers.readonly = true
-		callback_and_process_next(r, nil)
+		// TODO: configurable max length.
+		http.body(&r.res, -1, r, on_body)
     }
 
-    http.scanner_scan(&r.res.scanner, r, on_rline1)
+	on_body :: proc(r: rawptr, body: string, err: http.Body_Error) {
+		r := (^Request)(r)
+        r.res.headers.readonly = true
+		r.res.body = body
+
+		callback_and_process_next(r, net.TCP_Recv_Error.Aborted if err != nil else nil) // TODO: a proper error.
+	}
+
+	prepare_response(r)
+    http.scanner_scan(r.res.scanner, r, on_rline1)
 }
 
 @(private="file")

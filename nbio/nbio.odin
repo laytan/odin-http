@@ -26,23 +26,6 @@ init :: proc(io: ^IO, allocator := context.allocator) -> (err: os.Errno) {
 }
 
 /*
-Returns an initialized IO type, allocates different things per platform needs
-
-*Allocates Using Provided Allocator*
-
-Inputs:
-- allocator: (default: context.allocator)
-
-Returns:
-- io:  The initialized IO struct
-- err: An error code when something went wrong with the setup of the platform's IO API, 0 otherwise
-*/
-make_io :: proc(allocator := context.allocator) -> (io: IO, err: os.Errno) {
-	err = init(&io, allocator)
-	return
-}
-
-/*
 The place where the magic happens, each time you call this the IO implementation checks its state
 and calls any callbacks which are ready. You would typically call this in a loop
 
