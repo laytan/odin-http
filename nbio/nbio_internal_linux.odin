@@ -16,7 +16,7 @@ import io_uring "_io_uring"
 
 NANOSECONDS_PER_SECOND :: 1e+9
 
-_IO :: struct {
+_IO :: struct #no_copy {
 	ring:            io_uring.IO_Uring,
 	completion_pool: Pool(Completion),
 	// Ready to be submitted to kernel.

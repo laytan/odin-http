@@ -13,6 +13,12 @@ Body_Callback :: #type proc(user_data: rawptr, body: Body, err: Body_Error)
 
 Body_Error :: bufio.Scanner_Error
 
+Has_Body :: struct {
+	body_ok: Maybe(bool),
+	headers: Headers,
+	scanner: ^Scanner,
+}
+
 /*
 Retrieves the request's body.
 
@@ -26,14 +32,14 @@ Do not call this more than once.
 
 **Tip** If an error is returned, easily respond with an appropriate error code like this, `http.respond(res, http.body_error_status(err))`.
 */
-body :: proc(req: ^Request, max_length: int = -1, user_data: rawptr, cb: Body_Callback) {
-	assert(req._body_ok == nil, "you can only call body once per request")
+body :: proc(sub: ^Has_Body, max_length: int = -1, user_data: rawptr, cb: Body_Callback) {
+	assert(sub.body_ok == nil, "you can only call body once per request")
 
-	enc_header, ok := headers_get_unsafe(req.headers, "transfer-encoding")
+	enc_header, ok := headers_get_unsafe(sub.headers, "transfer-encoding")
 	if ok && strings.has_suffix(enc_header, "chunked") {
-		_body_chunked(req, max_length, user_data, cb)
+		_body_chunked(sub, max_length, user_data, cb)
 	} else {
-		_body_length(req, max_length, user_data, cb)
+		_body_length(sub, max_length, user_data, cb)
 	}
 }
 
@@ -115,10 +121,10 @@ body_error_status :: proc(e: Body_Error) -> Status {
 
 // "Decodes" a request body based on the content length header.
 // Meant for internal usage, you should use `http.request_body`.
-_body_length :: proc(req: ^Request, max_length: int = -1, user_data: rawptr, cb: Body_Callback) {
-	req._body_ok = false
+_body_length :: proc(sub: ^Has_Body, max_length: int = -1, user_data: rawptr, cb: Body_Callback) {
+	sub.body_ok = false
 
-	len, ok := headers_get_unsafe(req.headers, "content-length")
+	len, ok := headers_get_unsafe(sub.headers, "content-length")
 	if !ok {
 		cb(user_data, "", nil)
 		return
@@ -136,18 +142,18 @@ _body_length :: proc(req: ^Request, max_length: int = -1, user_data: rawptr, cb:
 	}
 
 	if ilen == 0 {
-		req._body_ok = true
+		sub.body_ok = true
 		cb(user_data, "", nil)
 		return
 	}
 
-	req._scanner.max_token_size = ilen
+	sub.scanner.max_token_size = ilen
 
-	req._scanner.split          = scan_num_bytes
-	req._scanner.split_data     = rawptr(uintptr(ilen))
+	sub.scanner.split          = scan_num_bytes
+	sub.scanner.split_data     = rawptr(uintptr(ilen))
 
-	req._body_ok = true
-	scanner_scan(req._scanner, user_data, cb)
+	sub.body_ok = true
+	scanner_scan(sub.scanner, user_data, cb)
 }
 
 /*
@@ -179,8 +185,8 @@ Content-Length := length
 Remove "chunked" from Transfer-Encoding
 Remove Trailer from existing header fields
 */
-_body_chunked :: proc(req: ^Request, max_length: int = -1, user_data: rawptr, cb: Body_Callback) {
-	req._body_ok = false
+_body_chunked :: proc(sub: ^Has_Body, max_length: int = -1, user_data: rawptr, cb: Body_Callback) {
+	sub.body_ok = false
 
 	on_scan :: proc(s: rawptr, size_line: string, err: bufio.Scanner_Error) {
 		s := cast(^Chunked_State)s
@@ -206,7 +212,7 @@ _body_chunked :: proc(req: ^Request, max_length: int = -1, user_data: rawptr, cb
 
 		// start scanning trailer headers.
 		if size == 0 {
-			scanner_scan(s.req._scanner, s, on_scan_trailer)
+			scanner_scan(s.sub.scanner, s, on_scan_trailer)
 			return
 		}
 
@@ -215,12 +221,12 @@ _body_chunked :: proc(req: ^Request, max_length: int = -1, user_data: rawptr, cb
 			return
 		}
 
-		s.req._scanner.max_token_size = size
+		s.sub.scanner.max_token_size = size
 
-		s.req._scanner.split          = scan_num_bytes
-		s.req._scanner.split_data     = rawptr(uintptr(size))
+		s.sub.scanner.split          = scan_num_bytes
+		s.sub.scanner.split_data     = rawptr(uintptr(size))
 
-		scanner_scan(s.req._scanner, s, on_scan_chunk)
+		scanner_scan(s.sub.scanner, s, on_scan_chunk)
 	}
 
 	on_scan_chunk :: proc(s: rawptr, token: string, err: bufio.Scanner_Error) {
@@ -231,8 +237,8 @@ _body_chunked :: proc(req: ^Request, max_length: int = -1, user_data: rawptr, cb
 			return
 		}
 
-		s.req._scanner.max_token_size = bufio.DEFAULT_MAX_SCAN_TOKEN_SIZE
-		s.req._scanner.split          = scan_lines
+		s.sub.scanner.max_token_size = bufio.DEFAULT_MAX_SCAN_TOKEN_SIZE
+		s.sub.scanner.split          = scan_lines
 
 		strings.write_string(&s.buf, token)
 
@@ -245,10 +251,10 @@ _body_chunked :: proc(req: ^Request, max_length: int = -1, user_data: rawptr, cb
 			}
 			assert(len(token) == 0)
 
-			scanner_scan(s.req._scanner, s, on_scan)
+			scanner_scan(s.sub.scanner, s, on_scan)
 		}
 
-		scanner_scan(s.req._scanner, s, on_scan_empty_line)
+		scanner_scan(s.sub.scanner, s, on_scan_empty_line)
 	}
 
 	on_scan_trailer :: proc(s: rawptr, line: string, err: bufio.Scanner_Error) {
@@ -256,21 +262,21 @@ _body_chunked :: proc(req: ^Request, max_length: int = -1, user_data: rawptr, cb
 
 		// Headers are done, success.
 		if err != nil || len(line) == 0 {
-			headers_delete_unsafe(&s.req.headers, "trailer")
+			headers_delete_unsafe(&s.sub.headers, "trailer")
 
-			te_header := headers_get_unsafe(s.req.headers, "transfer-encoding")
+			te_header := headers_get_unsafe(s.sub.headers, "transfer-encoding")
 			new_te_header := strings.trim_suffix(te_header, "chunked")
 
-			s.req.headers.readonly = false
-			headers_set_unsafe(&s.req.headers, "transfer-encoding", new_te_header)
-			s.req.headers.readonly = true
+			s.sub.headers.readonly = false
+			headers_set_unsafe(&s.sub.headers, "transfer-encoding", new_te_header)
+			s.sub.headers.readonly = true
 
-			s.req._body_ok = true
+			s.sub.body_ok = true
 			s.cb(s.user_data, strings.to_string(s.buf), nil)
 			return
 		}
 
-		key, ok := header_parse(&s.req.headers, string(line))
+		key, ok := header_parse(&s.sub.headers, string(line))
 		if !ok {
 			log.infof("Invalid header when decoding chunked body: %q", string(line))
 			s.cb(s.user_data, "", .Unknown)
@@ -280,14 +286,14 @@ _body_chunked :: proc(req: ^Request, max_length: int = -1, user_data: rawptr, cb
 		// A recipient MUST ignore (or consider as an error) any fields that are forbidden to be sent in a trailer.
 		if !header_allowed_trailer(key) {
 			log.infof("Invalid trailer header received, discarding it: %q", key)
-			headers_delete(&s.req.headers, key)
+			headers_delete(&s.sub.headers, key)
 		}
 
-		scanner_scan(s.req._scanner, s, on_scan_trailer)
+		scanner_scan(s.sub.scanner, s, on_scan_trailer)
 	}
 
 	Chunked_State :: struct {
-		req:        ^Request,
+		sub:        ^Has_Body,
 		max_length: int,
 		user_data:  rawptr,
 		cb:         Body_Callback,
@@ -295,15 +301,16 @@ _body_chunked :: proc(req: ^Request, max_length: int = -1, user_data: rawptr, cb
 		buf:        strings.Builder,
 	}
 
+	// TODO: lose the hidden temp ally.
 	s := new(Chunked_State, context.temp_allocator)
 
 	s.buf.buf.allocator = context.temp_allocator
 
-	s.req        = req
+	s.sub        = sub
 	s.max_length = max_length
 	s.user_data  = user_data
 	s.cb         = cb
 
-	s.req._scanner.split = scan_lines
-	scanner_scan(s.req._scanner, s, on_scan)
+	s.sub.scanner.split = scan_lines
+	scanner_scan(s.sub.scanner, s, on_scan)
 }

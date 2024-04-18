@@ -3,6 +3,7 @@ package nbio
 
 import "base:runtime"
 
+import "core:log"
 import "core:container/queue"
 import "core:mem"
 import "core:net"
@@ -13,7 +14,7 @@ import kqueue "_kqueue"
 
 MAX_EVENTS :: 256
 
-_IO :: struct {
+_IO :: struct #no_copy {
 	kq:              os.Handle,
 	io_inflight:     int,
 	completion_pool: Pool(Completion),
