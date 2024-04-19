@@ -225,6 +225,19 @@ _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout
 	return completion
 }
 
+INTERNAL_TIMEOUT :: rawptr(max(uintptr))
+
+_timeout_completion :: proc(io: ^IO, dur: time.Duration, target: ^Completion) {
+	completion := pool_get(&io.completion_pool)
+	completion.user_data = target
+	completion.operation = Op_Timeout {
+		callback = cast(On_Timeout)INTERNAL_TIMEOUT,
+		expires = time.time_add(time.now(), dur), // TODO: store the current time in the IO struct, this is costly.
+	}
+	target.timeout = completion
+	append(&io.timeouts, completion)
+}
+
 _next_tick :: proc(io: ^IO, user: rawptr, callback: On_Next_Tick) -> ^Completion {
 	completion := pool_get(&io.completion_pool)
 	completion.ctx = context

@@ -733,4 +733,5 @@ Operation :: union #no_nil {
 	Op_Next_Tick,
 	Op_Poll,
 	Op_Poll_Remove,
+	Op_Remove, // TODO: make poll remove use this one too.
 }
