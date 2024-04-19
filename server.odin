@@ -394,7 +394,7 @@ connection_close :: proc(c: ^Connection, loc := #caller_location) {
 		nbio.close(&td.io, c.socket, c, proc(c: rawptr, ok: bool) {
 			c := cast(^Connection)c
 
-			log.debugf("closed connection: %i", c.socket)
+			log.infof("[%i] closed connection", c.socket)
 
 			c.state = .Closed
 
@@ -477,9 +477,9 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.temp_allocator) {
 
 		if err != nil {
 			if err == .EOF {
-				log.debugf("client disconnected (EOF)")
+				log.infof("[%i] client disconnected (EOF)", l.conn.socket)
 			} else {
-				log.warnf("request scanner error: %v", err)
+				log.warnf("[%i] request scanner error: %v", err, l.conn.socket)
 			}
 
 			clean_request_loop(l.conn, close = true)
