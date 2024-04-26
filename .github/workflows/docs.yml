@@ -39,7 +39,7 @@ jobs:
           # The /home/runner/odin directory is in the PATH so output it there.
           odin build . -out:/home/runner/odin/odin-doc
           cd /home/runner
-      - uses: actions/checkout@v1
+      - uses: actions/checkout@v4
       - name: Generate documentation
         run: ./docs/generate.sh
       - uses: actions/configure-pages@v3
