@@ -98,8 +98,8 @@ Inputs:
 - user:     A pointer that will be passed through to the callback, free to use by you and untouched by us
 - callback: The callback that is called when the operation completes, see docs for `On_Timeout` for its arguments
 */
-timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout) {
-	_timeout(io, dur, user, callback)
+timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout) -> ^Completion {
+	return _timeout(io, dur, user, callback)
 }
 
 /*
@@ -199,8 +199,8 @@ Inputs:
 - user:     An optional pointer that will be passed through to the callback, free to use by you and untouched by us
 - callback: An optional callback that is called when the operation completes, see docs for `On_Close` for its arguments
 */
-close :: proc(io: ^IO, fd: Closable, user: rawptr = nil, callback: On_Close = empty_on_close) {
-	_close(io, fd, user, callback)
+close :: proc(io: ^IO, fd: Closable, user: rawptr = nil, callback: On_Close = empty_on_close) -> ^Completion {
+	return _close(io, fd, user, callback)
 }
 
 /*
@@ -225,8 +225,8 @@ Inputs:
 - user:     A pointer that will be passed through to the callback, free to use by you and untouched by us
 - callback: The callback that is called when the operation completes, see docs for `On_Accept` for its arguments
 */
-accept :: proc(io: ^IO, socket: net.TCP_Socket, user: rawptr, callback: On_Accept) {
-	_accept(io, socket, user, callback)
+accept :: proc(io: ^IO, socket: net.TCP_Socket, user: rawptr, callback: On_Accept) -> ^Completion {
+	return _accept(io, socket, user, callback)
 }
 
 /*
@@ -248,11 +248,12 @@ Inputs:
 - user:     A pointer that will be passed through to the callback, free to use by you and untouched by us
 - callback: The callback that is called when the operation completes, see docs for `On_Connect` for its arguments
 */
-connect :: proc(io: ^IO, endpoint: net.Endpoint, user: rawptr, callback: On_Connect) {
-	_, err := _connect(io, endpoint, user, callback)
+connect :: proc(io: ^IO, endpoint: net.Endpoint, user: rawptr, callback: On_Connect) -> ^Completion {
+	completion, err := _connect(io, endpoint, user, callback)
 	if err != nil {
 		callback(user, {}, err)
 	}
+	return completion
 }
 
 /*
@@ -278,8 +279,8 @@ Inputs:
 - user:     A pointer that will be passed through to the callback, free to use by you and untouched by us
 - callback: The callback that is called when the operation completes, see docs for `On_Recv` for its arguments
 */
-recv :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, callback: On_Recv) {
-	_recv(io, socket, buf, user, callback)
+recv :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, callback: On_Recv) -> ^Completion {
+	return _recv(io, socket, buf, user, callback)
 }
 
 /*
@@ -294,8 +295,8 @@ Inputs:
 - user:     A pointer that will be passed through to the callback, free to use by you and untouched by us
 - callback: The callback that is called when the operation completes, see docs for `On_Recv` for its arguments
 */
-recv_all :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, callback: On_Recv) {
-	_recv(io, socket, buf, user, callback, all = true)
+recv_all :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, callback: On_Recv) -> ^Completion {
+	return _recv(io, socket, buf, user, callback, all = true)
 }
 
 /*
@@ -322,8 +323,8 @@ Inputs:
 - user:     A pointer that will be passed through to the callback, free to use by you and untouched by us
 - callback: The callback that is called when the operation completes, see docs for `On_Sent` for its arguments
 */
-send_tcp :: proc(io: ^IO, socket: net.TCP_Socket, buf: []byte, user: rawptr, callback: On_Sent) {
-	_send(io, socket, buf, user, callback)
+send_tcp :: proc(io: ^IO, socket: net.TCP_Socket, buf: []byte, user: rawptr, callback: On_Sent) -> ^Completion {
+	return _send(io, socket, buf, user, callback)
 }
 
 /*
@@ -348,8 +349,8 @@ send_udp :: proc(
 	buf: []byte,
 	user: rawptr,
 	callback: On_Sent,
-) {
-	_send(io, socket, buf, user, callback, endpoint)
+) -> ^Completion {
+	return _send(io, socket, buf, user, callback, endpoint)
 }
 
 /*
@@ -378,8 +379,8 @@ Inputs:
 - user:     A pointer that will be passed through to the callback, free to use by you and untouched by us
 - callback: The callback that is called when the operation completes, see docs for `On_Sent` for its arguments
 */
-send_all_tcp :: proc(io: ^IO, socket: net.TCP_Socket, buf: []byte, user: rawptr, callback: On_Sent) {
-	_send(io, socket, buf, user, callback, all = true)
+send_all_tcp :: proc(io: ^IO, socket: net.TCP_Socket, buf: []byte, user: rawptr, callback: On_Sent) -> ^Completion {
+	return _send(io, socket, buf, user, callback, all = true)
 }
 
 /*
@@ -406,8 +407,8 @@ send_all_udp :: proc(
 	buf: []byte,
 	user: rawptr,
 	callback: On_Sent,
-) {
-	_send(io, socket, buf, user, callback, endpoint, all = true)
+) -> ^Completion {
+	return _send(io, socket, buf, user, callback, endpoint, all = true)
 }
 
 /*
@@ -495,8 +496,8 @@ Inputs:
 - user:     A pointer that will be passed through to the callback, free to use by you and untouched by us
 - callback: The callback that is called when the operation completes, see docs for `On_Read` for its arguments
 */
-read :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_Read) {
-	_read(io, fd, nil, buf, user, callback)
+read :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_Read) -> ^Completion {
+	return _read(io, fd, nil, buf, user, callback)
 }
 
 /*
@@ -511,8 +512,8 @@ Inputs:
 - user:     A pointer that will be passed through to the callback, free to use by you and untouched by us
 - callback: The callback that is called when the operation completes, see docs for `On_Read` for its arguments
 */
-read_all :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_Read) {
-	_read(io, fd, nil, buf, user, callback, all = true)
+read_all :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_Read) -> ^Completion {
+	return _read(io, fd, nil, buf, user, callback, all = true)
 }
 
 /*
@@ -528,8 +529,8 @@ Inputs:
 - user:     A pointer that will be passed through to the callback, free to use by you and untouched by us
 - callback: The callback that is called when the operation completes, see docs for `On_Read` for its arguments
 */
-read_at :: proc(io: ^IO, fd: os.Handle, offset: int, buf: []byte, user: rawptr, callback: On_Read) {
-	_read(io, fd, offset, buf, user, callback)
+read_at :: proc(io: ^IO, fd: os.Handle, offset: int, buf: []byte, user: rawptr, callback: On_Read) -> ^Completion {
+	return _read(io, fd, offset, buf, user, callback)
 }
 
 /*
@@ -545,8 +546,8 @@ Inputs:
 - user:     A pointer that will be passed through to the callback, free to use by you and untouched by us
 - callback: The callback that is called when the operation completes, see docs for `On_Read` for its arguments
 */
-read_at_all :: proc(io: ^IO, fd: os.Handle, offset: int, buf: []byte, user: rawptr, callback: On_Read) {
-	_read(io, fd, offset, buf, user, callback, all = true)
+read_at_all :: proc(io: ^IO, fd: os.Handle, offset: int, buf: []byte, user: rawptr, callback: On_Read) -> ^Completion {
+	return _read(io, fd, offset, buf, user, callback, all = true)
 }
 
 read_entire_file :: read_full
@@ -566,21 +567,20 @@ Inputs:
 Returns:
 - buf:      The buffer allocated to the size retrieved by seeking to the end of the file that is filled before calling the callback
 */
-read_full :: proc(io: ^IO, fd: os.Handle, user: rawptr, callback: On_Read, allocator := context.allocator) -> []byte {
+read_full :: proc(io: ^IO, fd: os.Handle, user: rawptr, callback: On_Read, allocator := context.allocator) -> ([]byte, ^Completion) {
 	size, err := seek(io, fd, 0, .End)
 	if err != os.ERROR_NONE {
 		callback(user, 0, err)
-		return nil
+		return nil, nil
 	}
 
 	if size <= 0 {
 		callback(user, 0, os.ERROR_NONE)
-		return nil
+		return nil, nil
 	}
 
 	buf := make([]byte, size, allocator)
-	read_at_all(io, fd, 0, buf, user, callback)
-	return buf
+	return buf, read_at_all(io, fd, 0, buf, user, callback)
 }
 
 /*
@@ -605,8 +605,8 @@ Inputs:
 - user:     A pointer that will be passed through to the callback, free to use by you and untouched by us
 - callback: The callback that is called when the operation completes, see docs for `On_Write` for its arguments
 */
-write :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_Write) {
-	_write(io, fd, nil, buf, user, callback)
+write :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_Write) -> ^Completion {
+	return _write(io, fd, nil, buf, user, callback)
 }
 
 /*
@@ -623,8 +623,8 @@ Inputs:
 - user:     A pointer that will be passed through to the callback, free to use by you and untouched by us
 - callback: The callback that is called when the operation completes, see docs for `On_Write` for its arguments
 */
-write_all :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_Write) {
-	_write(io, fd, nil, buf, user, callback, true)
+write_all :: proc(io: ^IO, fd: os.Handle, buf: []byte, user: rawptr, callback: On_Write) -> ^Completion {
+	return _write(io, fd, nil, buf, user, callback, true)
 }
 
 /*
@@ -640,8 +640,8 @@ Inputs:
 - user:     A pointer that will be passed through to the callback, free to use by you and untouched by us
 - callback: The callback that is called when the operation completes, see docs for `On_Write` for its arguments
 */
-write_at :: proc(io: ^IO, fd: os.Handle, offset: int, buf: []byte, user: rawptr, callback: On_Write) {
-	_write(io, fd, offset, buf, user, callback)
+write_at :: proc(io: ^IO, fd: os.Handle, offset: int, buf: []byte, user: rawptr, callback: On_Write) -> ^Completion {
+	return _write(io, fd, offset, buf, user, callback)
 }
 
 /*
@@ -659,8 +659,8 @@ Inputs:
 - user:     A pointer that will be passed through to the callback, free to use by you and untouched by us
 - callback: The callback that is called when the operation completes, see docs for `On_Write` for its arguments
 */
-write_at_all :: proc(io: ^IO, fd: os.Handle, offset: int, buf: []byte, user: rawptr, callback: On_Write) {
-	_write(io, fd, offset, buf, user, callback, true)
+write_at_all :: proc(io: ^IO, fd: os.Handle, offset: int, buf: []byte, user: rawptr, callback: On_Write) -> ^Completion {
+	return _write(io, fd, offset, buf, user, callback, true)
 }
 
 Poll_Event :: enum {
@@ -690,8 +690,8 @@ Inputs:
 - user:     An optional pointer that will be passed through to the callback, free to use by you and untouched by us
 - callback: The callback that is called when the operation completes, see docs for `On_Poll` for its arguments
 */
-poll :: proc(io: ^IO, fd: os.Handle, event: Poll_Event, multi: bool, user: rawptr, callback: On_Poll) {
-	_poll(io, fd, event, multi, user, callback)
+poll :: proc(io: ^IO, fd: os.Handle, event: Poll_Event, multi: bool, user: rawptr, callback: On_Poll) -> ^Completion {
+	return _poll(io, fd, event, multi, user, callback)
 }
 
 /*
@@ -704,12 +704,26 @@ Inputs:
 - fd:       The file descriptor to remove the poll of
 - event:    The event to remove the poll of
 */
-poll_remove :: proc(io: ^IO, fd: os.Handle, event: Poll_Event) {
-	_poll_remove(io, fd, event)
+poll_remove :: proc(io: ^IO, fd: os.Handle, event: Poll_Event) -> ^Completion {
+	return _poll_remove(io, fd, event)
+}
+
+// TODO: document.
+with_timeout :: proc(io: ^IO, dur: time.Duration, target: ^Completion, loc := #caller_location) -> ^Completion {
+	if target == nil do return nil
+
+	return _timeout_completion(io, dur, target)
+}
+
+// TODO: document.
+timeout_remove :: proc(io: ^IO, timeout: ^Completion) {
+	if timeout == nil do return
+	_timeout_remove(io, timeout)
 }
 
 MAX_USER_ARGUMENTS :: size_of(rawptr) * 5
 
+// WARNING: Do not touch these fields!
 Completion :: struct {
 	// Implementation specifics, don't use outside of implementation/os.
 	using _:   _Completion,

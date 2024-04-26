@@ -187,7 +187,8 @@ time_out_op :: proc(io: ^IO, completed: ^Completion) {
 	case Op_Recv:        op.callback(completed.user_data, 0, nil, net.UDP_Recv_Error.Timeout) // TODO: may be tcp
 	case Op_Send:        op.callback(completed.user_data, 0, net.UDP_Send_Error.Timeout)      // TODO: may be tcp
 	case Op_Write:       op.callback(completed.user_data, 0, os.EWOULDBLOCK)
-	case Op_Timeout, Op_Next_Tick, Op_Poll, Op_Poll_Remove, Op_Remove: panic("timed out untimeoutable")
+	case Op_Poll:        op.callback(completed.user_data, nil)
+	case Op_Timeout, Op_Next_Tick, Op_Poll_Remove, Op_Remove: panic("timed out untimeoutable")
 	case: unreachable()
 	}
 	pool_put(&io.completion_pool, completed)
@@ -451,7 +452,6 @@ do_recv :: proc(io: ^IO, completion: ^Completion, op: ^Op_Recv) {
 			return
 		}
 	}
-	log.debug("udp recv:", received, remote_endpoint, err)
 
 	op.received += received
 
@@ -561,24 +561,26 @@ do_write :: proc(io: ^IO, completion: ^Completion, op: ^Op_Write) {
 
 do_timeout :: proc(io: ^IO, completion: ^Completion, op: ^Op_Timeout) {
 	if rawptr(op.callback) == INTERNAL_TIMEOUT {
+		// Timeout has been cancelled by a completed op.
 		if op.expires == { _nsec = -1 } {
 			pool_put(&io.completion_pool, completion)
-			log.debug("cancelled timeout")
 			return
 		}
 
 		timed_out := (^Completion)(completion.user_data)
+
+		// Timeout while the op is in the kernel, need to add a remove event to clean it out.
 		if timed_out.in_kernel {
 			completion.operation = Op_Remove {
 				operation = &timed_out.operation,
 			}
 			append(&io.io_pending, completion)
 			time_out_op(io, timed_out)
-			log.warn("timed out in kernel")
 			return
 		}
-			log.warn("timed out out of kernel")
 
+		// Timeout while the op is in a queue to go into the kernel, avoid this by setting
+		// a special timed out value that gets checked before an op goes to kernel.
 		timed_out.timeout = (^Completion)(TIMED_OUT)
 		pool_put(&io.completion_pool, completion)
 		return
