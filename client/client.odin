@@ -105,8 +105,9 @@ Request :: struct {
 Response :: struct {
     status:  http.Status,
     cookies: [dynamic]http.Cookie,
+	body:    http.Body,
 
-	body:    string,
+	// Below is for internal use only:
 
 	using _: http.Has_Body,
 }
@@ -354,6 +355,22 @@ request_cb :: proc(r: ^Request, user_data: rawptr, callback: On_Response) {
 			tail.next = r
 		}
 	}
+}
+
+request_sync :: proc(r: ^Request) -> (err: net.Network_Error) {
+	done: bool
+	context.user_ptr = &done
+	request(r, &err, proc(_: ^Request, errptr: rawptr, err: net.Network_Error) {
+		(^net.Network_Error)(errptr)^ = err
+		(^bool)(context.user_ptr)^ = true
+	})
+
+	errno: os.Errno
+	for errno == os.ERROR_NONE && !done {
+		errno = nbio.tick(r.conn.client.io)
+	}
+	assert(errno == 0)
+	return
 }
 
 @(private="file")
