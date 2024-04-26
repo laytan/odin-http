@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-2022, macos-14] # macos-latest is intel, 14 is arm
+        os: [ubuntu-latest, macos-latest, windows-2022, macos-13] # macos-latest is ARM, 13 is Intel
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v1
