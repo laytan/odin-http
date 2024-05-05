@@ -576,7 +576,7 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.temp_allocator) {
 
 		l.req._scanner = &l.conn.scanner
 
-		rline := l.req.line.(Requestline)
+		rline := &l.req.line.(Requestline)
 		// An options request with the "*" is a no-op/ping request to
 		// check for server capabilities and should not be sent to handlers.
 		if rline.method == .Options && rline.target.(string) == "*" {
