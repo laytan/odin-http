@@ -31,7 +31,7 @@ Requestline :: struct {
 //
 // This allocates a clone of the target, because this is intended to be used with a scanner,
 // which has a buffer that changes every read.
-requestline_parse :: proc(s: string) -> (line: Requestline, err: Requestline_Error) {
+requestline_parse :: proc(s: string, allocator := context.temp_allocator) -> (line: Requestline, err: Requestline_Error) {
 	s := s
 
 	next_space := strings.index_byte(s, ' ')
@@ -45,7 +45,7 @@ requestline_parse :: proc(s: string) -> (line: Requestline, err: Requestline_Err
 	next_space = strings.index_byte(s, ' ')
 	if next_space == -1 do return line, .Not_Enough_Fields
 
-	line.target = s[:next_space]
+	line.target = strings.clone(s[:next_space], allocator)
 	s = s[len(line.target.(string)) + 1:]
 
 	line.version, ok = version_parse(s)
@@ -147,6 +147,7 @@ method_parse :: proc(m: string) -> (method: Method, ok: bool) #no_bounds_check {
 	return nil, false
 }
 
+// Parses the header and adds it to the headers if valid. The given string is copied.
 header_parse :: proc(headers: ^Headers, line: string, allocator := context.temp_allocator) -> (key: string, ok: bool) {
 	// Preceding spaces should not be allowed.
 	(len(line) > 0 && line[0] != ' ') or_return
@@ -161,7 +162,7 @@ header_parse :: proc(headers: ^Headers, line: string, allocator := context.temp_
 	has_host   := headers_has_unsafe(headers^, "host")
 	cl, has_cl := headers_get_unsafe(headers^, "content-length")
 
-	value := strings.trim_space(line[colon + 1:])
+	value := strings.clone(strings.trim_space(line[colon + 1:]), allocator)
 	key = headers_set(headers, line[:colon], value)
 
 	// RFC 7230 5.4: Server MUST respond with 400 to any request
