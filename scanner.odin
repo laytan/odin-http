@@ -177,6 +177,8 @@ scanner_scan :: proc(
 			return
 		}
 
+		// TODO: write over the part of the buffer already used
+
 		// overflow check
 		new_size := INIT_BUF_SIZE
 		if len(s.buf) > 0 {

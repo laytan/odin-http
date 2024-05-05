@@ -491,16 +491,16 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.temp_allocator) {
 			return
 		}
 
-		rline, err := requestline_parse(string(token))
+		rline, err := requestline_parse(token, context.temp_allocator)
 		switch err {
 		case .Method_Not_Implemented:
-			log.infof("request-line %q invalid method", string(token))
+			log.infof("request-line %q invalid method", token)
 			headers_set_close(&l.res.headers)
 			l.res.status = .Not_Implemented
 			respond(&l.res)
 			return
 		case .Invalid_Version_Format, .Not_Enough_Fields:
-			log.warnf("request-line %q invalid: %s", string(token), err)
+			log.warnf("request-line %q invalid: %s", token, err)
 			clean_request_loop(l.conn, close = true)
 			return
 		case .None:
@@ -537,8 +537,8 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.temp_allocator) {
 			return
 		}
 
-		if _, ok := header_parse(&l.req.headers, string(token)); !ok {
-			log.warnf("header-line %s is invalid", string(token))
+		if _, ok := header_parse(&l.req.headers, token); !ok {
+			log.warnf("header-line %s is invalid", token)
 			headers_set_close(&l.res.headers)
 			l.res.status = .Bad_Request
 			respond(&l.res)
