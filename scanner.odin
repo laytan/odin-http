@@ -5,6 +5,7 @@ import "base:intrinsics"
 
 import "core:bufio"
 import "core:net"
+import "core:mem"
 
 import "nbio"
 
@@ -78,6 +79,9 @@ scanner_reset :: proc(s: ^Scanner) {
 	s.successive_empty_token_count = 0
 	s.done                         = false
 	s.could_be_too_short           = false
+
+	when !ODIN_DISABLE_ASSERT do mem.zero_slice(s.buf[:])
+	clear(&s.buf)
 }
 
 scanner_scan :: proc(
