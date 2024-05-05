@@ -135,10 +135,13 @@ listen :: proc(
 	initial_block_cap = int(s.opts.initial_temp_block_cap)
 	max_free_blocks_queued = int(s.opts.max_free_blocks_queued)
 
+	log.info(s.opts)
+
 	errno := nbio.init(&td.io)
 	// TODO: error handling.
-	assert(errno == os.ERROR_NONE)
+	fmt.assertf(errno == os.ERROR_NONE, "nbio.init failed: %v", errno)
 
+	log.info("initialized, starting", endpoint)
 	s.tcp_sock, err = nbio.open_and_listen_tcp(&td.io, endpoint)
 	if err != nil { server_shutdown(s) }
 	return

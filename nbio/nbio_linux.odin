@@ -5,6 +5,7 @@ import "core:net"
 import "core:os"
 import "core:sys/unix"
 import "core:time"
+import "core:log"
 
 import io_uring "_io_uring"
 
@@ -28,6 +29,7 @@ _init :: proc(io: ^IO, alloc := context.allocator) -> (err: os.Errno) {
 		queue.init(&io.unqueued, allocator = alloc)
 		queue.init(&io.completed, allocator = alloc)
 	case:
+		log.error(rerr)
 		err = ring_err_to_os_err(rerr)
 	}
 
