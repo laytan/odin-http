@@ -9,6 +9,7 @@ import "core:container/queue"
 import "core:fmt"
 import "core:log"
 import "core:mem"
+import "core:mem/virtual"
 import "core:net"
 import "core:os"
 import "core:slice"
@@ -354,7 +355,7 @@ Connection :: struct {
 	socket:         net.TCP_Socket,
 	state:          Connection_State,
 	scanner:        Scanner,
-	temp_allocator: Allocator,
+	temp_allocator: virtual.Arena,
 	loop:           Loop,
 }
 
@@ -396,7 +397,8 @@ connection_close :: proc(c: ^Connection, loc := #caller_location) {
 
 			c.state = .Closed
 
-			allocator_destroy(&c.temp_allocator)
+			virtual.arena_destroy(&c.temp_allocator)
+			// allocator_destroy(&c.temp_allocator)
 			delete_key(&td.conns, c.socket)
 			free(c, c.server.conn_allocator)
 		})
@@ -441,8 +443,12 @@ on_accept :: proc(server: rawptr, sock: net.TCP_Socket, source: net.Endpoint, er
 @(private)
 conn_handle_reqs :: proc(c: ^Connection) {
 	scanner_init(&c.scanner, c, c.server.conn_allocator)
-	allocator_init(&c.temp_allocator, c.server.conn_allocator)
-	context.temp_allocator = allocator(&c.temp_allocator)
+
+	assert(virtual.arena_init_growing(&c.temp_allocator) == nil)
+	context.temp_allocator = virtual.arena_allocator(&c.temp_allocator)
+	// allocator_init(&c.temp_allocator, c.server.conn_allocator)
+	// context.temp_allocator = allocator(&c.temp_allocator)
+
 	conn_handle_req(c, context.temp_allocator)
 }
 

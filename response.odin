@@ -6,6 +6,7 @@ import "core:log"
 import "core:net"
 import "core:slice"
 import "core:strconv"
+import "core:mem/virtual"
 
 import "nbio"
 
@@ -224,6 +225,7 @@ _response_write_heading :: proc(r: ^Response, content_length: int) {
 	MIN             :: len("HTTP/1.1 200 \r\ndate: \r\ncontent-length: 1000\r\n") + DATE_LENGTH
 	AVG_HEADER_SIZE :: 20
 	reserve_size    := MIN + content_length + (AVG_HEADER_SIZE * headers_count(r.headers))
+	log.debugf("grow to %m", reserve_size)
 	bytes.buffer_grow(&r._buf, reserve_size)
 
 	// According to RFC 7230 3.1.2 the reason phrase is insignificant,
@@ -354,8 +356,9 @@ on_response_sent :: proc(conn_: rawptr, sent: int, err: net.Network_Error) {
 // Response has been sent, clean up and close/handle next.
 @(private)
 clean_request_loop :: proc(conn: ^Connection, close: Maybe(bool) = nil) {
-	blocks, size, used := allocator_free_all(&conn.temp_allocator)
-	log.debugf("temp_allocator had %d blocks of a total size of %m of which %m was used", blocks, size, used)
+	free_all(context.temp_allocator)
+	// blocks, size, used := allocator_free_all(&conn.temp_allocator)
+	// log.debugf("temp_allocator had %d blocks of a total size of %m of which %m was used", blocks, size, used)
 
 	scanner_reset(&conn.scanner)
 
