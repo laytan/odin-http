@@ -4,6 +4,7 @@ package nbio
 
 import "core:net"
 import "core:os"
+import "core:log"
 
 _open :: proc(_: ^IO, path: string, mode, perm: int) -> (handle: os.Handle, errno: os.Errno) {
 	handle, errno = os.open(path, mode, perm)
@@ -35,9 +36,11 @@ _open_socket :: proc(
 	socket: net.Any_Socket,
 	err: net.Network_Error,
 ) {
+	log.info("create socket")
 	socket, err = net.create_socket(family, protocol)
 	if err != nil do return
 
+	log.info("prepare socket")
 	err = _prepare_socket(socket)
 	if err != nil do net.close(socket)
 	return
@@ -45,8 +48,11 @@ _open_socket :: proc(
 
 _prepare_socket :: proc(socket: net.Any_Socket) -> net.Network_Error {
 	// TODO: set LINGER option?
+	log.info("reuse address")
 	net.set_option(socket, .Reuse_Address, true) or_return
+	log.info("tcp nodelay")
 	net.set_option(socket, .TCP_Nodelay, true) or_return
+	log.info("blocking")
 	net.set_blocking(socket, false) or_return
 	return nil
 }

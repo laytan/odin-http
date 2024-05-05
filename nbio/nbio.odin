@@ -3,6 +3,7 @@ package nbio
 import "core:net"
 import "core:os"
 import "core:time"
+import "core:log"
 
 /*
 The main IO type that holds the platform dependant implementation state passed around most procedures in this package
@@ -122,14 +123,18 @@ Returns:
 */
 open_and_listen_tcp :: proc(io: ^IO, ep: net.Endpoint) -> (socket: net.TCP_Socket, err: net.Network_Error) {
 	family := net.family_from_endpoint(ep)
+	log.infof("opening socket %v on tcp", family)
 	sock := open_socket(io, family, .TCP) or_return
+	log.info("opened socket")
 	socket = sock.(net.TCP_Socket)
 
+	log.info("binding socket")
 	if err = net.bind(socket, ep); err != nil {
 		close(io, socket)
 		return
 	}
 
+	log.info("listening socket")
 	if err = listen(socket); err != nil {
 		close(io, socket)
 	}

@@ -83,6 +83,7 @@ _tick :: proc(io: ^IO) -> os.Errno {
 }
 
 _listen :: proc(socket: net.TCP_Socket, backlog := 1000) -> net.Network_Error {
+	log.info("listen %v", socket)
 	errno := os.listen(os.Socket(socket), backlog)
 	return net.Listen_Error(errno)
 }
