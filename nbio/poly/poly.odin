@@ -1004,7 +1004,7 @@ write_at_all3 :: proc(io: ^nbio.IO, fd: os.Handle, offset: int, buf: []byte, p: 
 	_write3(io, fd, offset, buf, p, p2, p3, callback, all = true)
 }
 
-next_tick1 :: proc(io: ^IO, p: $T, callback: $C/proc(p: T)) -> ^Completion
+next_tick1 :: proc(io: ^IO, p: $T, callback: $C/proc(p: T))
 	where size_of(T) <= nbio.MAX_USER_ARGUMENTS {
 	completion := nbio._next_tick(io, nil, proc(completion: rawptr) {
 		completion := (^Completion)(completion)
@@ -1020,10 +1020,9 @@ next_tick1 :: proc(io: ^IO, p: $T, callback: $C/proc(p: T)) -> ^Completion
 	_  = copy(completion.user_args[n:], mem.ptr_to_bytes(&p))
 
 	completion.user_data = completion
-	return completion
 }
 
-next_tick2 :: proc(io: ^nbio.IO, p: $T, p2: $T2, callback: $C/proc(p: T, p2: T2)) -> ^Completion
+next_tick2 :: proc(io: ^nbio.IO, p: $T, p2: $T2, callback: $C/proc(p: T, p2: T2))
 	where size_of(T) + size_of(T2) <= nbio.MAX_USER_ARGUMENTS {
 	completion := nbio._next_tick(io, nil, proc(completion: rawptr) {
 		completion := (^nbio.Completion)(completion)
@@ -1041,10 +1040,9 @@ next_tick2 :: proc(io: ^nbio.IO, p: $T, p2: $T2, callback: $C/proc(p: T, p2: T2)
 	_  = copy(completion.user_args[n:], mem.ptr_to_bytes(&p2))
 
 	completion.user_data = completion
-	return completion
 }
 
-next_tick3 :: proc(io: ^IO, p: $T, p2: $T2, p3: $T3, callback: $C/proc(p: T, p2: T2, p3: T3)) -> ^Completion
+next_tick3 :: proc(io: ^IO, p: $T, p2: $T2, p3: $T3, callback: $C/proc(p: T, p2: T2, p3: T3))
 	where size_of(T) + size_of(T2) + size_of(T3) <= nbio.MAX_USER_ARGUMENTS {
 	completion := nbio._next_tick(io, nil, proc(completion: rawptr) {
 		completion := (^Completion)(completion)
@@ -1064,7 +1062,6 @@ next_tick3 :: proc(io: ^IO, p: $T, p2: $T2, p3: $T3, callback: $C/proc(p: T, p2:
 	_  = copy(completion.user_args[n:], mem.ptr_to_bytes(&p3))
 
 	completion.user_data = completion
-	return completion
 }
 
 next_tick :: proc {
@@ -1073,7 +1070,7 @@ next_tick :: proc {
 	next_tick3,
 }
 
-poll1 :: proc(io: ^IO, fd: os.Handle, event: Poll_Event, multi: bool, p: $T, callback: $C/proc(p: T, event: Poll_Event)) -> ^Completion
+poll1 :: proc(io: ^IO, fd: os.Handle, event: Poll_Event, multi: bool, p: $T, callback: $C/proc(p: T, event: Poll_Event))
 	where size_of(T) <= nbio.MAX_USER_ARGUMENTS {
 	completion := nbio._poll(io, fd, event, multi, nil, proc(completion: rawptr, event: Poll_Event) {
 		completion := (^Completion)(completion)
@@ -1089,10 +1086,9 @@ poll1 :: proc(io: ^IO, fd: os.Handle, event: Poll_Event, multi: bool, p: $T, cal
 	_  = copy(completion.user_args[n:], mem.ptr_to_bytes(&p))
 
 	completion.user_data = completion
-	return completion
 }
 
-poll2 :: proc(io: ^IO, fd: os.Handle, event: Poll_Event, multi: bool, p: $T, p2: $T2, callback: $C/proc(p: T, p2: T2, event: Poll_Event)) -> ^Completion
+poll2 :: proc(io: ^IO, fd: os.Handle, event: Poll_Event, multi: bool, p: $T, p2: $T2, callback: $C/proc(p: T, p2: T2, event: Poll_Event))
 	where size_of(T) + size_of(T2) <= nbio.MAX_USER_ARGUMENTS {
 	completion := nbio._poll(io, fd, event, multi, nil, proc(completion: rawptr, event: Poll_Event) {
 		completion := (^Completion)(completion)
@@ -1110,10 +1106,9 @@ poll2 :: proc(io: ^IO, fd: os.Handle, event: Poll_Event, multi: bool, p: $T, p2:
 	_  = copy(completion.user_args[n:], mem.ptr_to_bytes(&p2))
 
 	completion.user_data = completion
-	return completion
 }
 
-poll3 :: proc(io: ^IO, fd: os.Handle, event: Poll_Event, multi: bool, p: $T, p2: $T2, p3: $T3, callback: $C/proc(p: T, p2: T2, p3: T3, event: Poll_Event)) -> ^Completion
+poll3 :: proc(io: ^IO, fd: os.Handle, event: Poll_Event, multi: bool, p: $T, p2: $T2, p3: $T3, callback: $C/proc(p: T, p2: T2, p3: T3, event: Poll_Event))
 	where size_of(T) + size_of(T2) + size_of(T3) <= nbio.MAX_USER_ARGUMENTS {
 	completion := nbio._poll(io, fd, event, multi, nil, proc(completion: rawptr, event: Poll_Event) {
 		completion := (^Completion)(completion)
@@ -1133,7 +1128,6 @@ poll3 :: proc(io: ^IO, fd: os.Handle, event: Poll_Event, multi: bool, p: $T, p2:
 	_  = copy(completion.user_args[n:], mem.ptr_to_bytes(&p3))
 
 	completion.user_data = completion
-	return completion
 }
 
 poll :: proc {
