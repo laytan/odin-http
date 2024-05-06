@@ -18,6 +18,7 @@ _ :: mem
 
 /// Re-export `nbio` stuff that is not wrapped in this package.
 
+Completion          :: nbio.Completion
 IO                  :: nbio.IO
 init                :: nbio.init
 tick                :: nbio.tick
