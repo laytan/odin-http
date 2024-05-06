@@ -31,6 +31,8 @@ _init :: proc(io: ^IO, allocator := context.allocator) -> (err: os.Errno) {
 }
 
 _destroy :: proc(io: ^IO) {
+	context.allocator = io.allocator
+
 	delete(io.timeouts)
 	queue.destroy(&io.completed)
 	pool_destroy(&io.completion_pool)

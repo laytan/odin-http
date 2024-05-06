@@ -28,6 +28,8 @@ _num_waiting :: #force_inline proc(io: ^IO) -> int {
 }
 
 _destroy :: proc(io: ^IO) {
+	context.allocator = io.allocator
+
 	delete(io.timeouts)
 	delete(io.io_pending)
 

@@ -39,6 +39,8 @@ _num_waiting :: #force_inline proc(io: ^IO) -> int {
 }
 
 _destroy :: proc(io: ^IO) {
+	context.allocator = io.allocator
+
 	queue.destroy(&io.unqueued)
 	queue.destroy(&io.completed)
 	pool_destroy(&io.completion_pool)
