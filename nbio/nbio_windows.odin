@@ -350,3 +350,14 @@ _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout
 	return completion
 }
 
+_next_tick :: proc(io: ^IO, user: rawptr, callback: On_Next_Tick) -> ^Completion {
+	panic("unimplemented on windows: next_tick")
+}
+
+_poll :: proc(io: ^IO, fd: os.Handle, event: Poll_Event, multi: bool, user: rawptr, callback: On_Poll) -> ^Completion {
+	panic("unimplemented on windows: poll")
+}
+
+_poll_remove :: proc(io: ^IO, fd: os.Handle, event: Poll_Event) -> ^Completion {
+	panic("unimplemented on windows: poll_remove")
+}

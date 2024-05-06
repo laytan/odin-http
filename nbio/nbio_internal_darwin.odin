@@ -89,6 +89,22 @@ Op_Timeout :: struct {
 	expires:  time.Time,
 }
 
+Op_Next_Tick :: struct {
+	callback: On_Next_Tick,
+}
+
+Op_Poll :: struct {
+	callback: On_Poll,
+	fd:       os.Handle,
+	event:    Poll_Event,
+	multi:    bool,
+}
+
+Op_Poll_Remove :: struct {
+	fd:    os.Handle,
+	event: Poll_Event,
+}
+
 flush :: proc(io: ^IO) -> os.Errno {
 	events: [MAX_EVENTS]kqueue.KEvent
 
@@ -126,14 +142,17 @@ flush :: proc(io: ^IO) -> os.Errno {
 		context = completed.ctx
 
 		switch &op in completed.operation {
-		case Op_Accept:   do_accept (io, completed, &op)
-		case Op_Close:    do_close  (io, completed, &op)
-		case Op_Connect:  do_connect(io, completed, &op)
-		case Op_Read:     do_read   (io, completed, &op)
-		case Op_Recv:     do_recv   (io, completed, &op)
-		case Op_Send:     do_send   (io, completed, &op)
-		case Op_Write:    do_write  (io, completed, &op)
-		case Op_Timeout:  do_timeout(io, completed, &op)
+		case Op_Accept:      do_accept     (io, completed, &op)
+		case Op_Close:       do_close      (io, completed, &op)
+		case Op_Connect:     do_connect    (io, completed, &op)
+		case Op_Read:        do_read       (io, completed, &op)
+		case Op_Recv:        do_recv       (io, completed, &op)
+		case Op_Send:        do_send       (io, completed, &op)
+		case Op_Write:       do_write      (io, completed, &op)
+		case Op_Timeout:     do_timeout    (io, completed, &op)
+		case Op_Next_Tick:   do_next_tick  (io, completed, &op)
+		case Op_Poll:        do_poll       (io, completed, &op)
+		case Op_Poll_Remove: do_poll_remove(io, completed, &op)
 		case: unreachable()
 		}
 	}
@@ -143,7 +162,7 @@ flush :: proc(io: ^IO) -> os.Errno {
 
 flush_io :: proc(io: ^IO, events: []kqueue.KEvent) -> int {
 	events := events
-	for event, i in &events {
+	events_loop: for event, i in &events {
 		if len(io.io_pending) <= i do return i
 		completion := io.io_pending[i]
 
@@ -166,7 +185,36 @@ flush_io :: proc(io: ^IO, events: []kqueue.KEvent) -> int {
 		case Op_Send:
 			event.ident = uintptr(os.Socket(net.any_socket_to_socket(op.socket)))
 			event.filter = kqueue.EVFILT_WRITE
-		case Op_Timeout, Op_Close:
+		case Op_Poll:
+			event.ident = uintptr(op.fd)
+			switch op.event {
+			case .Read:  event.filter = kqueue.EVFILT_READ
+			case .Write: event.filter = kqueue.EVFILT_WRITE
+			case:        unreachable()
+			}
+
+			event.flags = kqueue.EV_ADD | kqueue.EV_ENABLE
+			if !op.multi {
+				event.flags |= kqueue.EV_ONESHOT
+			}
+
+			event.udata = completion
+
+			continue events_loop
+		case Op_Poll_Remove:
+			event.ident = uintptr(op.fd)
+			switch op.event {
+			case .Read:  event.filter = kqueue.EVFILT_READ
+			case .Write: event.filter = kqueue.EVFILT_WRITE
+			case:        unreachable()
+			}
+
+			event.flags = kqueue.EV_DELETE | kqueue.EV_DISABLE | kqueue.EV_ONESHOT
+
+			event.udata = completion
+
+			continue events_loop
+		case Op_Timeout, Op_Close, Op_Next_Tick:
 			panic("invalid completion operation queued")
 		}
 
@@ -422,6 +470,20 @@ do_write :: proc(io: ^IO, completion: ^Completion, op: ^Op_Write) {
 }
 
 do_timeout :: proc(io: ^IO, completion: ^Completion, op: ^Op_Timeout) {
+	op.callback(completion.user_data)
+	pool_put(&io.completion_pool, completion)
+}
+
+do_poll :: proc(io: ^IO, completion: ^Completion, op: ^Op_Poll) {
+	op.callback(completion.user_data, op.event)
+	pool_put(&io.completion_pool, completion)
+}
+
+do_poll_remove :: proc(io: ^IO, completion: ^Completion, op: ^Op_Poll_Remove) {
+	pool_put(&io.completion_pool, completion)
+}
+
+do_next_tick :: proc(io: ^IO, completion: ^Completion, op: ^Op_Next_Tick) {
 	op.callback(completion.user_data)
 	pool_put(&io.completion_pool, completion)
 }

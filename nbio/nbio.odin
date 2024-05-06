@@ -59,6 +59,25 @@ destroy :: proc(io: ^IO) {
 }
 
 /*
+The callback for a "next tick" event
+
+Inputs:
+- user: A passed through pointer from initiation to its callback
+*/
+On_Next_Tick :: #type proc(user: rawptr)
+
+/*
+Schedules a callback to be called during the next tick of the event loop.
+
+Inputs:
+- io:   The IO instance to use
+- user: A pointer that will be passed through to the callback, free to use by you and untouched by us
+*/
+next_tick :: proc(io: ^IO, user: rawptr, callback: On_Next_Tick) -> ^Completion {
+	return _next_tick(io, user, callback)
+}
+
+/*
 The callback for non blocking `timeout` calls
 
 Inputs:
@@ -644,6 +663,51 @@ write_at_all :: proc(io: ^IO, fd: os.Handle, offset: int, buf: []byte, user: raw
 	_write(io, fd, offset, buf, user, callback, true)
 }
 
+Poll_Event :: enum {
+	// The subject is ready to be read from.
+	Read,
+	// The subject is ready to be written to.
+	Write,
+}
+
+/*
+The callback for poll requests
+
+Inputs:
+- user:  A passed through pointer from initiation to its callback
+- event: The event that is ready to go
+*/
+On_Poll :: #type proc(user: rawptr, event: Poll_Event)
+
+/*
+Polls for the given event on the subject handle
+
+Inputs:
+- io:       The IO instance to use
+- fd:       The file descriptor to poll
+- event:    Whether to call the callback when `fd` is ready to be read from, or be written to
+- multi:    Keeps the poll after an event happens, calling the callback again for further events, remove poll with `poll_remove`
+- user:     An optional pointer that will be passed through to the callback, free to use by you and untouched by us
+- callback: The callback that is called when the operation completes, see docs for `On_Poll` for its arguments
+*/
+poll :: proc(io: ^IO, fd: os.Handle, event: Poll_Event, multi: bool, user: rawptr, callback: On_Poll) {
+	_poll(io, fd, event, multi, user, callback)
+}
+
+/*
+Removes the polling for this `subject`+`event` pairing
+
+This is only needed when `poll` was called with `multi` set to `true`
+
+Inputs:
+- io:       The IO instance to use
+- fd:       The file descriptor to remove the poll of
+- event:    The event to remove the poll of
+*/
+poll_remove :: proc(io: ^IO, fd: os.Handle, event: Poll_Event) {
+	_poll_remove(io, fd, event)
+}
+
 MAX_USER_ARGUMENTS :: size_of(rawptr) * 5
 
 Completion :: struct {
@@ -666,4 +730,7 @@ Operation :: union #no_nil {
 	Op_Send,
 	Op_Write,
 	Op_Timeout,
+	Op_Next_Tick,
+	Op_Poll,
+	Op_Poll_Remove,
 }

@@ -99,6 +99,12 @@ Op_Timeout :: struct {
 	expires:  time.Time,
 }
 
+Op_Next_Tick :: struct {}
+
+Op_Poll :: struct {}
+
+Op_Poll_Remove :: struct {}
+
 flush_timeouts :: proc(io: ^IO) -> (expires: Maybe(time.Duration)) {
 	curr: time.Time
 	timeout_len := len(io.timeouts)
@@ -297,6 +303,10 @@ handle_completion :: proc(io: ^IO, completion: ^Completion) {
 
 	case Op_Timeout:
 		op.callback(completion.user_data)
+
+	case Op_Next_Tick, Op_Poll, Op_Poll_Remove:
+		unreachable()
+
 	}
 	pool_put(&io.completion_pool, completion)
 }

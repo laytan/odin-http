@@ -225,3 +225,43 @@ _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout
 	return completion
 }
 
+_next_tick :: proc(io: ^IO, user: rawptr, callback: On_Next_Tick) -> ^Completion {
+	completion := pool_get(&io.completion_pool)
+	completion.ctx = context
+	completion.user_data = user
+	completion.operation = Op_Next_Tick {
+		callback = callback,
+	}
+
+	queue.push_back(&io.completed, completion)
+	return completion
+}
+
+_poll :: proc(io: ^IO, fd: os.Handle, event: Poll_Event, multi: bool, user: rawptr, callback: On_Poll) -> ^Completion {
+	completion := pool_get(&io.completion_pool)
+
+	completion.ctx = context
+	completion.user_data = user
+	completion.operation = Op_Poll{
+		callback = callback,
+		fd       = fd,
+		event    = event,
+		multi    = multi,
+	}
+
+	append(&io.io_pending, completion)
+	return completion
+}
+
+_poll_remove :: proc(io: ^IO, fd: os.Handle, event: Poll_Event) -> ^Completion {
+	completion := pool_get(&io.completion_pool)
+
+	completion.ctx = context
+	completion.operation = Op_Poll_Remove{
+		fd    = fd,
+		event = event,
+	}
+
+	append(&io.io_pending, completion)
+	return completion
+}
