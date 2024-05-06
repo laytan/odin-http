@@ -44,9 +44,13 @@ _open_socket :: proc(
 }
 
 _prepare_socket :: proc(socket: net.Any_Socket) -> net.Network_Error {
-	// TODO: set LINGER option?
 	net.set_option(socket, .Reuse_Address, true) or_return
-	net.set_option(socket, .TCP_Nodelay, true) or_return
+
+	// TODO; benchmark this, even if faster it is prob not to be turned on
+	// by default here, maybe by default for the server, but I don't think this
+	// will be faster/more efficient.
+	// net.set_option(socket, .TCP_Nodelay, true) or_return
+
 	net.set_blocking(socket, false) or_return
 	return nil
 }
