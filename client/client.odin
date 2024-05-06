@@ -66,6 +66,9 @@ Connection_State :: enum {
 	Failed,
 }
 
+// TODO: should response `Set-Cookie` headers automatically be stored on the connection and passed
+// along next requests?
+
 Connection :: struct {
     allocator: mem.Allocator,
 
@@ -106,9 +109,6 @@ Response :: struct {
     status:  http.Status,
     cookies: [dynamic]http.Cookie,
 	body:    http.Body,
-
-	// Below is for internal use only:
-
 	using _: http.Has_Body,
 }
 
@@ -181,8 +181,8 @@ connection_init :: proc(conn: ^Connection, client: ^Client, target: string, sche
 	return true
 }
 
-connection_make :: proc(client: ^Client, host: string, scheme := Scheme.From_Target, allocator := context.allocator) -> (conn: Connection) {
-	connection_init(&conn, client, host, scheme, allocator)
+connection_make :: proc(client: ^Client, target: string, scheme := Scheme.From_Target, allocator := context.allocator) -> (conn: Connection) {
+	connection_init(&conn, client, target, scheme, allocator)
 	return
 }
 
@@ -395,9 +395,10 @@ callback_and_process_next :: proc(r: ^Request, err: net.Network_Error) {
 
 	log.infof("request done: %v %v", r.res.status, err)
 
+	r.on_response(r, r.user_data, err)
+
 	r.conn.request = r.next
 	connection_process(r.conn)
-	r.on_response(r, r.user_data, err)
 }
 
 @(private="file")
@@ -719,7 +720,7 @@ prepare_request :: proc(r: ^Request) {
 		// Escape newlines in headers, if we don't, an attacker can find an endpoint
 		// that returns a header with user input, and inject headers into the response.
 		esc_value, was_allocation := strings.replace_all(value, "\n", "\\n", r.allocator)
-		defer if was_allocation do delete(esc_value)
+		defer if was_allocation do delete(esc_value, r.allocator)
 
 		ws(&r.buf, esc_value)
 		ws(&r.buf, "\r\n")

@@ -42,6 +42,7 @@ If any other error occurs, a 500 is sent and the error is logged.
 */
 respond_file :: proc(r: ^Response, path: string, content_type: Maybe(Mime_Type) = nil, loc := #caller_location) {
 	// PERF: we are still putting the content into the body buffer, we could stream it.
+	// PERF: could even use `splice`/`sendfile` on Linux https://tinselcity.github.io/Sendfile-W-Iouring/
 
 	assert_has_td(loc)
 	assert(!r.sent, "response has already been sent", loc)

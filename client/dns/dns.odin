@@ -23,8 +23,11 @@ Client :: struct {
 	io: ^nbio.IO,
 
     // Hosts/Name servers configuration.
-	using config: net.DNS_Configuration,
+	name_servers: []net.Endpoint,
 	hosts:        []net.DNS_Host_Entry,
+	// init_cb:      proc(^Client, rawptr),
+	// init_ud:      rawptr,
+	// init_state:   int,
 
     // Cache.
     cache: map[string]Cache_Entry,
@@ -50,13 +53,40 @@ Callback :: struct {
     ud: rawptr,
 }
 
-// TODO: provide a callback, OR allow `resolve` before these things are done with some sort of request queue.
+// TODO: callback.
 init :: proc(c: ^Client, allocator := context.allocator) {
     c.allocator = allocator
     c.cache.allocator = allocator
 
 	load_name_servers(c)
 	load_hosts(c)
+}
+
+// Waits until all requests are done and frees all related resources.
+destroy :: proc {
+	destroy_cb,
+	destroy_no_cb,
+}
+
+destroy_no_cb :: proc(c: ^Client) {
+	destroy_cb(c, nil, proc(_: rawptr) {})
+}
+
+destroy_cb :: proc(c: ^Client, user: rawptr, cb: proc(user: rawptr)) {
+	cache_clear(c)
+
+	// Try to clear again next tick, we don't want to interrupt in progress requests.
+	if len(c.cache) > 0 {
+		nbio.next_tick(c.io, c, user, cb, destroy_cb)
+	} else {
+		delete(c.cache)
+		delete(c.name_servers, c.allocator)
+		for h in c.hosts {
+			delete(h.name, c.allocator)
+		}
+		delete(c.hosts, c.allocator)
+		cb(user)
+	}
 }
 
 // Removes any cache entries that aren't currently being resolved.
@@ -358,14 +388,15 @@ resolve :: proc(c: ^Client, hostname: string, user: rawptr, cb: On_Resolve) {
 // Loads the name servers from the OS, this is called implicitly during `init`.
 @(private)
 load_name_servers :: proc(c: ^Client) {
-	if c.resolv_conf == "" {
-		log.error("empty resolv_conf file path")
+	resolv_conf := net.DEFAULT_DNS_CONFIGURATION.resolv_conf
+	if resolv_conf == "" {
+		log.error("empty resolv_conf file path") // TODO: this is not an error on Windows.
 		return
 	}
 
-	fd, err := nbio.open(c.io, c.resolv_conf)
+	fd, err := nbio.open(c.io, resolv_conf)
 	if err != os.ERROR_NONE {
-		log.errorf("error opening %q: %v", c.resolv_conf, err)
+		log.errorf("error opening %q: %v", resolv_conf, err)
 		return
 	}
 
@@ -388,14 +419,15 @@ load_name_servers :: proc(c: ^Client) {
 // Loads the hosts file from the OS, this is implicitly called during `init`.
 @(private)
 load_hosts :: proc(c: ^Client) {
-	if c.hosts_file == "" {
+	hosts_file := net.DEFAULT_DNS_CONFIGURATION.hosts_file
+	if hosts_file == "" {
 		log.error("empty hosts file")
 		return
 	}
 
-	fd, err := nbio.open(c.io, c.hosts_file)
+	fd, err := nbio.open(c.io, hosts_file)
 	if err != os.ERROR_NONE {
-		log.errorf("error opening %q: %v", c.hosts_file, err)
+		log.errorf("error opening %q: %v", hosts_file, err)
 		return
 	}
 

@@ -19,35 +19,53 @@ test_client :: proc(t: ^testing.T) {
 	nbio.init(&io)
 	defer nbio.destroy(&io)
 
-	client: dns.Client
-	client.io = &io
-	client.config = net.dns_configuration // TODO: make default if not set.
-	dns.init(&client)
+	// client: dns.Client
+	// client.io = &io
+	// client.config = net.dns_configuration // TODO: make default if not set.
+	// dns.init(&client)
+	//
+	// nbio.timeout(client.io, time.Second, &client, proc(client: ^dns.Client, _: Maybe(time.Time)) {
+	// 	log.info("Resolving")
+	//
+	// 	dns.resolve(client, "github.com", nil, proc(_: rawptr, recs: dns.Record, err: net.Network_Error) {
+	// 		log.info("github.com", recs, err)
+	// 	})
+	// 	dns.resolve(client, "laytanlaats.com", nil, proc(_: rawptr, recs: dns.Record, err: net.Network_Error) {
+	// 		log.info("laytanlaats.com", recs, err)
+	// 	})
+	// 	dns.resolve(client, "laytan.dev", nil, proc(_: rawptr, recs: dns.Record, err: net.Network_Error) {
+	// 		log.info("laytan.dev", recs, err)
+	// 	})
+	// 	dns.resolve(client, "laytan.dev", nil, proc(_: rawptr, recs: dns.Record, err: net.Network_Error) {
+	// 		log.info("laytan.dev", recs, err)
+	// 	})
+	// 	dns.resolve(client, "odin-http.laytan.dev", nil, proc(_: rawptr, recs: dns.Record, err: net.Network_Error) {
+	// 		log.info("odin-http.laytan.dev", recs, err)
+	// 	})
+	// 	dns.resolve(client, "odin-http.laytan.dev", nil, proc(_: rawptr, recs: dns.Record, err: net.Network_Error) {
+	// 		log.info("odin-http.laytan.dev", recs, err)
+	// 	})
+	// 	dns.resolve(client, "github.com", nil, proc(_: rawptr, recs: dns.Record, err: net.Network_Error) {
+	// 		log.info("github.com", recs, err)
+	// 	})
+	// })
 
-	nbio.timeout(client.io, time.Second, &client, proc(client: ^dns.Client, _: Maybe(time.Time)) {
-		log.info("Resolving")
+	client := client_make(&io)
+	conn   := connection_make(&client, "https://github.com")
 
-		dns.resolve(client, "github.com", nil, proc(_: rawptr, recs: dns.Record, err: net.Network_Error) {
-			log.info("github.com", recs, err)
-		})
-		dns.resolve(client, "laytanlaats.com", nil, proc(_: rawptr, recs: dns.Record, err: net.Network_Error) {
-			log.info("laytanlaats.com", recs, err)
-		})
-		dns.resolve(client, "laytan.dev", nil, proc(_: rawptr, recs: dns.Record, err: net.Network_Error) {
-			log.info("laytan.dev", recs, err)
-		})
-		dns.resolve(client, "laytan.dev", nil, proc(_: rawptr, recs: dns.Record, err: net.Network_Error) {
-			log.info("laytan.dev", recs, err)
-		})
-		dns.resolve(client, "odin-http.laytan.dev", nil, proc(_: rawptr, recs: dns.Record, err: net.Network_Error) {
-			log.info("odin-http.laytan.dev", recs, err)
-		})
-		dns.resolve(client, "odin-http.laytan.dev", nil, proc(_: rawptr, recs: dns.Record, err: net.Network_Error) {
-			log.info("odin-http.laytan.dev", recs, err)
-		})
-		dns.resolve(client, "github.com", nil, proc(_: rawptr, recs: dns.Record, err: net.Network_Error) {
-			log.info("github.com", recs, err)
-		})
+	req := request_make(&conn, "/laytan")
+	request(&req, nil, proc(r: ^Request, _: rawptr, err: net.Network_Error) {
+		log.infof("%v %v %#v %#v", r.res.status, err, r.res.headers._kv, r.res.cookies)
+	})
+
+	req = request_make(&conn, "/laytan/odin-http")
+	request(&req, nil, proc(r: ^Request, _: rawptr, err: net.Network_Error) {
+		log.infof("%v %v %#v %#v", r.res.status, err, r.res.headers._kv, r.res.cookies)
+	})
+
+	req = request_make(&conn, "/laytan/Odin")
+	request(&req, nil, proc(r: ^Request, _: rawptr, err: net.Network_Error) {
+		log.infof("%v %v %#v %#v", r.res.status, err, r.res.headers._kv, r.res.cookies)
 	})
 
 	// log.info(net.resolve("github.com"))
