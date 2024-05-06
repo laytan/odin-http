@@ -74,7 +74,7 @@ query_iter :: proc(query: ^string) -> (entry: Query_Entry, ok: bool) {
 	return
 }
 
-query_get :: proc(url: URL, key: string) -> (val: string, ok: bool) {
+query_get :: proc(url: URL, key: string) -> (val: string, ok: bool) #optional_ok {
 	q := url.query
 	for entry in #force_inline query_iter(&q) {
 		if entry.key == key {
@@ -89,7 +89,7 @@ query_get_percent_decoded :: proc(url: URL, key: string, allocator := context.te
 	return net.percent_decode(str, allocator)
 }
 
-query_get_bool :: proc(url: URL, key: string) -> (result, set: bool) {
+query_get_bool :: proc(url: URL, key: string) -> (result, set: bool) #optional_ok {
     str := query_get(url, key) or_return
     set = true
     switch str {
