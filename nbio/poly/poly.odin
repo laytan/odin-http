@@ -59,7 +59,7 @@ timeout1 :: proc(io: ^nbio.IO, dur: time.Duration, p: $T, callback: $C/proc(p: T
 	completion.user_data = completion
 }
 
-timeout2 :: proc(io: ^nbio.IO, dur: time.Duration, p1: $T, p2: $T2, callback: $C/proc(p: T, p2: T2))
+timeout2 :: proc(io: ^nbio.IO, dur: time.Duration, p: $T, p2: $T2, callback: $C/proc(p: T, p2: T2))
 	where size_of(T) + size_of(T2) <= nbio.MAX_USER_ARGUMENTS {
 	completion := nbio._timeout(io, dur, nil, proc(completion: rawptr) {
 		completion := (^nbio.Completion)(completion)
@@ -79,7 +79,7 @@ timeout2 :: proc(io: ^nbio.IO, dur: time.Duration, p1: $T, p2: $T2, callback: $C
 	completion.user_data = completion
 }
 
-timeout3 :: proc(io: ^nbio.IO, dur: time.Duration, p1: $T, p2: $T2, p3: $T3, callback: $C/proc(p: T, p2: T2, p3: T3))
+timeout3 :: proc(io: ^nbio.IO, dur: time.Duration, p: $T, p2: $T2, p3: $T3, callback: $C/proc(p: T, p2: T2, p3: T3))
 	where size_of(T) + size_of(T2) + size_of(T3) <= nbio.MAX_USER_ARGUMENTS {
 	completion := nbio._timeout(io, dur, nil, proc(completion: rawptr) {
 		completion := (^nbio.Completion)(completion)
