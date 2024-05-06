@@ -274,7 +274,7 @@ connect1 :: proc(io: ^IO, endpoint: net.Endpoint, p: $T, callback: $C/proc(p: T,
 	})
     if err != nil {
         callback(p, {}, err)
-        return
+        return completion
     }
 
 	callback, p := callback, p
@@ -298,7 +298,7 @@ connect2 :: proc(io: ^IO, endpoint: net.Endpoint, p: $T, p2: $T2, callback: $C/p
 	})
     if err != nil {
         callback(p, p2, {}, err)
-        return
+        return completion
     }
 
 	callback, p, p2 := callback, p, p2
@@ -324,7 +324,7 @@ connect3 :: proc(io: ^IO, endpoint: net.Endpoint, p: $T, p2: $T2, p3: $T3, callb
 	})
     if err != nil {
         callback(p, p2, p3, {}, err)
-        return nil
+        return completion
     }
 
 	callback, p, p2, p3 := callback, p, p2, p3

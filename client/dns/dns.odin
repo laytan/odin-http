@@ -12,9 +12,21 @@ import nbio "../../nbio/poly"
 
 // TODO: Windows.
 
-// Time we wait for a response from a DNS server.
-DNS_SERVER_TIMEOUT :: time.Second
-MAX_TTL_SECONDS    :: 60*60
+// Time we wait for a response from a DNS server in nanoseconds.
+DNS_SERVER_TIMEOUT :: #config(DNS_CLIENT_NAMESERVER_TIMEOUT, time.Second)
+
+// Max amount of seconds a DNS response is cached regardless of the TTL it suggests.
+MAX_TTL_SECONDS :: #config(DNS_CLIENT_MAX_TTL, 60*60)
+
+Init_Error :: enum {
+	None,
+	Loading, // Internal, not returned.
+	No_Path,
+	Failed_Open,
+	Failed_Read,
+}
+
+On_Init :: #type proc(c: ^Client, user: rawptr, name_servers_err: Init_Error, hosts_err: Init_Error)
 
 // WARNING: Consider all these fields private.
 Client :: struct {
@@ -23,10 +35,15 @@ Client :: struct {
 	io: ^nbio.IO,
 
     // Hosts/Name servers configuration.
-	using config: net.DNS_Configuration,
-	hosts:        []net.DNS_Host_Entry,
+	name_servers:     []net.Endpoint,
+	name_servers_err: Init_Error,
 
-    // Cache.
+	hosts:            []net.DNS_Host_Entry,
+	hosts_err:        Init_Error,
+
+	init_cb: On_Init,
+	init_ud: rawptr,
+
     cache: map[string]Cache_Entry,
 }
 
@@ -50,13 +67,47 @@ Callback :: struct {
     ud: rawptr,
 }
 
-// TODO: provide a callback, OR allow `resolve` before these things are done with some sort of request queue.
-init :: proc(c: ^Client, allocator := context.allocator) {
+init :: proc(c: ^Client, io: ^nbio.IO, user_data: rawptr, on_init: On_Init, allocator := context.allocator) {
     c.allocator = allocator
     c.cache.allocator = allocator
 
+	c.io = io
+
+	c.init_cb = on_init
+	c.init_ud = user_data
+
+	c.name_servers_err = .Loading
+	c.hosts_err        = .Loading
+
 	load_name_servers(c)
 	load_hosts(c)
+}
+
+// Waits until all requests are done and frees all related resources.
+destroy :: proc {
+	destroy_cb,
+	destroy_no_cb,
+}
+
+destroy_no_cb :: proc(c: ^Client) {
+	destroy_cb(c, nil, proc(_: rawptr) {})
+}
+
+destroy_cb :: proc(c: ^Client, user: rawptr, cb: proc(user: rawptr)) {
+	cache_clear(c)
+
+	// Try to clear again next tick, we don't want to interrupt in progress requests.
+	if len(c.cache) > 0 {
+		nbio.next_tick(c.io, c, user, cb, destroy_cb)
+	} else {
+		delete(c.cache)
+		delete(c.name_servers, c.allocator)
+		for h in c.hosts {
+			delete(h.name, c.allocator)
+		}
+		delete(c.hosts, c.allocator)
+		cb(user)
+	}
 }
 
 // Removes any cache entries that aren't currently being resolved.
@@ -81,7 +132,20 @@ cache_evict :: proc(c: ^Client, hostname: string) {
     }
 }
 
-// TODO: a shrink cache proc, like `cache_shrink(dns: ^Dns, max_entries: int)` that deletes x randoms.
+// Removes entries so that the cache has at most `max_entries` in it.
+// NOTE: this is done "psuedo-random".
+cache_shrink :: proc(c: ^Client, max_entries: int) {
+	to_remove := max(0, len(c.cache) - max_entries)
+	for k in c.cache {
+		if to_remove <= 0 {
+			break
+		}
+
+		cache_evict(c, k)
+
+		to_remove -= 1
+	}
+}
 
 On_Resolve :: #type proc(user: rawptr, record: Record, err: net.Network_Error)
 
@@ -269,7 +333,7 @@ resolve :: proc(c: ^Client, hostname: string, user: rawptr, cb: On_Resolve) {
         delete(entry.callbacks)
 	}
 
-    evict_record :: proc(c: ^Client, hostname: string, _: Maybe(time.Time)) {
+    evict_record :: proc(c: ^Client, hostname: string) {
         if entry, ok := c.cache[hostname]; ok {
             log.debugf("DNS TTL of %vs from %q has expired", entry.record.ttl_secs, hostname)
             delete_key(&c.cache, hostname)
@@ -355,17 +419,49 @@ resolve :: proc(c: ^Client, hostname: string, user: rawptr, cb: On_Resolve) {
 	}
 }
 
+@(private)
+load_name_servers_done :: proc(c: ^Client, err: Init_Error, msg: string = "", args: ..any) {
+	if msg != "" {
+		log.errorf(msg, ..args)
+	}
+
+	c.name_servers_err = err
+
+	if c.hosts_err != .Loading && c.init_cb != nil {
+		c.init_cb(c, c.init_ud, c.name_servers_err, c.hosts_err)
+	}
+}
+
+@(private)
+load_hosts_done :: proc(c: ^Client, err: Init_Error, msg: string = "", args: ..any) {
+	if msg != "" {
+		log.errorf(msg, ..args)
+	}
+
+	c.hosts_err = err
+
+	if c.name_servers_err != .Loading && c.init_cb != nil {
+		c.init_cb(c, c.init_ud, c.name_servers_err, c.hosts_err)
+	}
+}
+
 // Loads the name servers from the OS, this is called implicitly during `init`.
 @(private)
 load_name_servers :: proc(c: ^Client) {
-	if c.resolv_conf == "" {
-		log.error("empty resolv_conf file path")
+	assert(c.name_servers_err == .Loading)
+
+	resolv_conf := net.DEFAULT_DNS_CONFIGURATION.resolv_conf
+	if resolv_conf == "" {
+		// TODO: this is not an error on Windows.
+		load_name_servers_done(c, .No_Path, "the `net.DEFAULT_DNS_CONFIGURATION` does not contain a filepath to find the resolv conf file")
 		return
 	}
 
-	fd, err := nbio.open(c.io, c.resolv_conf)
+	log.debugf("reading resolv conf at %q", resolv_conf)
+
+	fd, err := nbio.open(c.io, resolv_conf)
 	if err != os.ERROR_NONE {
-		log.errorf("error opening %q: %v", c.resolv_conf, err)
+		load_name_servers_done(c, .Failed_Open, "the resolv conf at %q could not be opened due to errno: %v", resolv_conf, err)
 		return
 	}
 
@@ -374,12 +470,14 @@ load_name_servers :: proc(c: ^Client) {
 		defer delete(buf, c.allocator)
 
 		if err != os.ERROR_NONE {
-			log.errorf("error reading resolv_conf: %v", err)
+			load_name_servers_done(c, .Failed_Read, "read resolv conf errno: %v", err)
 			return
 		}
 
 		c.name_servers = net.parse_resolv_conf(string(buf), c.allocator)
 		log.debugf("resolv_conf:\n%s\nname_servers:\n%v", string(buf), c.name_servers)
+
+		load_name_servers_done(c, .None)
 	}
 
 	nbio.read_entire_file(c.io, fd, c, fd, on_resolv_conf_content, c.allocator)
@@ -388,14 +486,19 @@ load_name_servers :: proc(c: ^Client) {
 // Loads the hosts file from the OS, this is implicitly called during `init`.
 @(private)
 load_hosts :: proc(c: ^Client) {
-	if c.hosts_file == "" {
-		log.error("empty hosts file")
+	assert(c.hosts_err == .Loading)
+
+	hosts_file := net.DEFAULT_DNS_CONFIGURATION.hosts_file
+	if hosts_file == "" {
+		load_hosts_done(c, .No_Path, "the `net.DEFAULT_DNS_CONFIGURATION` does not contain a filepath to find the hosts file")
 		return
 	}
 
-	fd, err := nbio.open(c.io, c.hosts_file)
+	log.debugf("reading hosts file at %q", hosts_file)
+
+	fd, err := nbio.open(c.io, hosts_file)
 	if err != os.ERROR_NONE {
-		log.errorf("error opening %q: %v", c.hosts_file, err)
+		load_hosts_done(c, .Failed_Open, "the hosts file at %q could not be opened due to errno: %v", hosts_file, err)
 		return
 	}
 
@@ -404,12 +507,14 @@ load_hosts :: proc(c: ^Client) {
 		defer delete(buf, c.allocator)
 
 		if err != os.ERROR_NONE {
-			log.errorf("error reading hosts file: %v", err)
+			load_hosts_done(c, .Failed_Read, "read hosts file errno: %v", err)
 			return
 		}
 
 		c.hosts = net.parse_hosts(string(buf), c.allocator)
 		log.debugf("hosts:\n%s\nentries:\n%v", string(buf), c.hosts)
+
+		load_hosts_done(c, .None)
 	}
 
 	nbio.read_entire_file(c.io, fd, c, fd, on_hosts_content, c.allocator)

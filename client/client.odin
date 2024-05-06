@@ -3,14 +3,15 @@ package client
 
 import intr "base:intrinsics"
 import "core:bufio"
-import "core:fmt"
 import "core:log"
+import "core:fmt"
 import "core:mem"
 import "core:net"
 import "core:os"
 import "core:strconv"
 import "core:strings"
 
+import      "dns"
 import http ".."
 import nbio "../nbio/poly"
 import ssl  "../openssl"
@@ -25,7 +26,6 @@ import ssl  "../openssl"
 // 2b. Max body length
 // 2c. Max header size
 // 3. Cleanup
-// 4. Non-blocking DNS client resolves
 // 5. Clearly note what is internal usage only on the structs
 // 6. An API that waits for a response synchronously
 // 7. A poly API
@@ -36,7 +36,6 @@ import ssl  "../openssl"
 // 12. Testing
 // 12b. Big requests > 16kb (a TLS packet)
 // 13. Document all the APIs, define thread-safety (none), param lifetimes and needed destroyers.
-// 14. DNS cache (the protocol has a TTL afaik that we should keep records for)
 
 ssl_verify_ptr :: #force_inline proc(ptr: $T, loc := #caller_location) where intr.type_is_pointer(T) {
     if intr.expect(ptr == nil, false) {
@@ -55,8 +54,7 @@ Client :: struct {
     io:  ^nbio.IO,
     ctx: ^ssl.SSL_CTX,
 
-    // TODO: DNS cache.
-    // dns: map[string]net.Endpoint,
+	dnsc: ^dns.Client,
 }
 
 Connection_State :: enum {
@@ -66,10 +64,16 @@ Connection_State :: enum {
 	Failed,
 }
 
+// TODO: should response `Set-Cookie` headers automatically be stored on the connection and passed
+// along next requests?
+
 Connection :: struct {
     allocator: mem.Allocator,
 
 	client:    ^Client,
+
+    connect_ud: rawptr,
+    connect_cb: On_Connect,
 
 	state:     Connection_State,
 	host:      cstring,
@@ -88,10 +92,10 @@ Request :: struct {
 
     conn: ^Connection,
 
-    next: ^Request,
-
 	on_response: On_Response,
 	user_data:   rawptr,
+
+    next: ^Request, // TODO: remove.
 
     path:    string,
     method:  http.Method,
@@ -106,9 +110,6 @@ Response :: struct {
     status:  http.Status,
     cookies: [dynamic]http.Cookie,
 	body:    http.Body,
-
-	// Below is for internal use only:
-
 	using _: http.Has_Body,
 }
 
@@ -124,9 +125,10 @@ destroy :: proc {
 	request_destroy,
 }
 
-client_init :: proc(c: ^Client, io: ^nbio.IO, allocator := context.allocator) {
+client_init :: proc(c: ^Client, io: ^nbio.IO, dnsc: ^dns.Client, allocator := context.allocator) {
 	c.allocator = allocator
 	c.io = io
+	c.dnsc = dnsc
 
     method := ssl.TLS_client_method()
     ssl_verify_ptr(method)
@@ -135,8 +137,8 @@ client_init :: proc(c: ^Client, io: ^nbio.IO, allocator := context.allocator) {
     ssl_verify_ptr(c.ctx)
 }
 
-client_make :: proc(io: ^nbio.IO, allocator := context.allocator) -> (client: Client) {
-    init(&client, io, allocator)
+client_make :: proc(io: ^nbio.IO, dnsc: ^dns.Client, allocator := context.allocator) -> (client: Client) {
+    init(&client, io, dnsc, allocator)
 	return
 }
 
@@ -150,7 +152,7 @@ Scheme :: enum {
 	HTTPS,
 }
 
-connection_init :: proc(conn: ^Connection, client: ^Client, target: string, scheme := Scheme.From_Target, allocator := context.allocator) -> (ok: bool) {
+connection_init :: proc(conn: ^Connection, client: ^Client, target: string, scheme := Scheme.From_Target, allocator := context.allocator) {
 	conn.allocator = allocator
 	conn.client = client
 	conn.scheme = scheme
@@ -160,29 +162,29 @@ connection_init :: proc(conn: ^Connection, client: ^Client, target: string, sche
 		switch url.scheme {
 		case "https":
 			conn.scheme = .HTTPS
-		case:
-			log.warnf("given target %q does not have a `http://` or `https://` prefix to infer the type of connection from, either add a prefix or set the `scheme` parameter, falling back to http.", target)
-			fallthrough
 		case "http":
 			conn.scheme = .HTTP
+		case:
+			log.warnf("given target %q does not have a `http://` or `https://` prefix to infer the type of connection from, either add a prefix or set the `scheme` parameter, falling back to https.", target)
+            conn.scheme =.HTTPS
 		}
 	}
 
 	conn.host = strings.clone_to_cstring(url.host, allocator)
 
-	conn.ssl = ssl.SSL_new(client.ctx)
-	ssl_verify_ptr(conn.ssl)
+    if conn.scheme == .HTTPS {
+        conn.ssl = ssl.SSL_new(client.ctx)
+        ssl_verify_ptr(conn.ssl)
 
-    if ssl.SSL_set_tlsext_host_name(conn.ssl, conn.host) != 1 {
-        delete(conn.host)
-        return false
+        // TODO: when does this happen?
+        if ssl.SSL_set_tlsext_host_name(conn.ssl, conn.host) != 1 {
+            fmt.panicf("SSL_set_tlsext_host_name with host %q failed", conn.host)
+        }
     }
-
-	return true
 }
 
-connection_make :: proc(client: ^Client, host: string, scheme := Scheme.From_Target, allocator := context.allocator) -> (conn: Connection) {
-	connection_init(&conn, client, host, scheme, allocator)
+connection_make :: proc(client: ^Client, target: string, scheme := Scheme.From_Target, allocator := context.allocator) -> (conn: Connection) {
+	connection_init(&conn, client, target, scheme, allocator)
 	return
 }
 
@@ -241,12 +243,15 @@ connect_no_cb :: #force_inline proc(c: ^Connection) { connect_cb(c, nil, proc(^C
 // Resolves DNS if needed, then connects to the server, if there are requests queued it executes them.
 // TODO: on success/failure, start doing all requests or call the request callback with an error.
 connect_cb :: proc(c: ^Connection, user_data: rawptr, callback: On_Connect) {
+    assert(c.connect_ud == nil && c.connect_cb == nil, "already connecting/connected")
+    c.connect_ud = user_data
+    c.connect_cb = callback
 
-    on_tcp_connect :: proc(c: ^Connection, user_data: rawptr, callback: On_Connect, socket: net.TCP_Socket, err: net.Network_Error) {
+    on_tcp_connect :: proc(c: ^Connection, socket: net.TCP_Socket, err: net.Network_Error) {
         if err != nil {
             log.errorf("TCP connect failed: %v", err)
 			c.state = .Failed
-            callback(c, user_data, err)
+            c.connect_cb(c, c.connect_ud, err)
 			connection_process(c)
             return
         }
@@ -256,58 +261,81 @@ connect_cb :: proc(c: ^Connection, user_data: rawptr, callback: On_Connect) {
 
         if c.scheme != .HTTPS {
 			c.state = .Connected
-            callback(c, user_data, nil)
+            c.connect_cb(c, c.connect_ud, nil)
 			connection_process(c)
             return
         }
 
         ssl.SSL_set_fd(c.ssl, i32(socket)) // TODO: can this error?
 
-        ssl_connect :: proc(c: ^Connection, user_data: rawptr, callback: On_Connect, _: nbio.Poll_Event) {
+        ssl_connect :: proc(c: ^Connection, _: nbio.Poll_Event) {
             switch ret := ssl.SSL_connect(c.ssl); ret {
             case 1:
                 log.debug("SSL connection established")
 				c.state = .Connected
-                callback(c, user_data, nil)
+                c.connect_cb(c, c.connect_ud, nil)
 				connection_process(c)
             case 0:
                 log.errorf("SSL connect error controlled shutdown: %v", ssl.error_get(c.ssl, ret))
 				c.state = .Failed
-                callback(c, user_data, net.Dial_Error.Refused)
+                c.connect_cb(c, c.connect_ud, net.Dial_Error.Refused)
 				connection_process(c)
             case:
                 assert(ret < 0)
                 #partial switch err := ssl.error_get(c.ssl, ret); err {
                 case .Want_Read:
                     log.debug("SSL connect want read")
-                    nbio.poll(c.client.io, os.Handle(c.socket), .Read,  false, c, user_data, callback, ssl_connect)
+                    nbio.poll(c.client.io, os.Handle(c.socket), .Read,  false, c, ssl_connect)
                 case .Want_Write:
                     log.debug("SSL connect want write")
-                    nbio.poll(c.client.io, os.Handle(c.socket), .Write, false, c, user_data, callback, ssl_connect)
+                    nbio.poll(c.client.io, os.Handle(c.socket), .Write, false, c, ssl_connect)
                 case:
                     log.errorf("SSL connect fatal error: %v", err)
 					c.state = .Failed
-                    callback(c, user_data, net.Dial_Error.Refused)
+                    c.connect_cb(c, c.connect_ud, net.Dial_Error.Refused)
 					connection_process(c)
                 }
             }
         }
-
-        ssl_connect(c, user_data, callback, nil)
+        ssl_connect(c, nil)
     }
 
-	// Already connected/connecting.
-	if c.state != .Pending {
-		return
-	}
+    on_dns_resolve :: proc(user: rawptr, record: dns.Record, err: net.Network_Error) {
+        c := (^Connection)(user)
+        if err != nil {
+            log.errorf("DNS resolve error: %v", err)
+            c.connect_cb(c, c.connect_ud, err)
+            return
+        }
+        
+        c.endpoint = {
+            address = record.address,
+            port    = c.scheme == .HTTPS ? 443 : 80,
+        }
+        log.debugf("DNS resolved, making TCP connection with %v", c.endpoint)
+        nbio.connect(c.client.io, c.endpoint, c, on_tcp_connect)
+    }
 
+    assert(c.state == .Pending, "already connecting/connected")
 	c.state = .Connecting
 
-	// TODO: this is blocking.
-	err: net.Network_Error
-	if c.endpoint, err = parse_endpoint(string(c.host), c.scheme); err != nil do fmt.panicf("DNS error: %v", err)
+    host_or_endpoint, err := net.parse_hostname_or_endpoint(string(c.host))
+    if err != nil {
+        callback(c, user_data, err)
+        return
+    }
 
-    nbio.connect(c.client.io, c.endpoint, c, user_data, callback, on_tcp_connect)
+    switch t in host_or_endpoint {
+    case net.Endpoint:
+        c.endpoint = t
+        nbio.connect(c.client.io, c.endpoint, c, on_tcp_connect)
+        return
+    case net.Host:
+        dns.resolve(c.client.dnsc, t.hostname, c, on_dns_resolve)
+        return
+    case:
+        unreachable()
+    }
 }
 
 On_Response :: #type proc(r: ^Request, user_data: rawptr, err: net.Network_Error)
@@ -325,25 +353,29 @@ request_cb :: proc(r: ^Request, user_data: rawptr, callback: On_Response) {
 
 	switch r.conn.state {
 	case .Pending:
+		log.debug("connection is pending, connecting for given request")
 		r.conn.request = r
 		connect_no_cb(r.conn)
 
 	case .Connecting:
+		log.debug("connection is connecting, adding to connection's queue")
 		if r.conn.request == nil {
 			r.conn.request = r
 		} else {
-			tail: ^Request
-			for tail = r.conn.request; tail != nil && tail.next != nil; tail = tail.next {
+			// PERF: O(n) on queued requests.
+			tail := r.conn.request
+			for ; tail.next != nil; tail = tail.next {
 				assert(tail != r, "can't queue a request that is already queued")
 			}
 			tail.next = r
 		}
-		connect_no_cb(r.conn)
 
 	case .Failed:
+		log.debug("connection failed, failing request")
 		callback(r, user_data, net.Dial_Error.Refused)
 
 	case .Connected:
+		log.debug("connection already connected, sending request")
 		if r.conn.request == nil {
 			r.conn.request = r
 			connection_process(r.conn)
@@ -395,9 +427,10 @@ callback_and_process_next :: proc(r: ^Request, err: net.Network_Error) {
 
 	log.infof("request done: %v %v", r.res.status, err)
 
+	r.on_response(r, r.user_data, err)
+
 	r.conn.request = r.next
 	connection_process(r.conn)
-	r.on_response(r, r.user_data, err)
 }
 
 @(private="file")
@@ -719,7 +752,7 @@ prepare_request :: proc(r: ^Request) {
 		// Escape newlines in headers, if we don't, an attacker can find an endpoint
 		// that returns a header with user input, and inject headers into the response.
 		esc_value, was_allocation := strings.replace_all(value, "\n", "\\n", r.allocator)
-		defer if was_allocation do delete(esc_value)
+		defer if was_allocation do delete(esc_value, r.allocator)
 
 		ws(&r.buf, esc_value)
 		ws(&r.buf, "\r\n")
@@ -743,26 +776,4 @@ prepare_request :: proc(r: ^Request) {
 
 	// Empty line denotes end of headers and start of body.
 	ws(&r.buf, "\r\n")
-}
-
-@(private="file")
-parse_endpoint :: proc(host: string, scheme: Scheme) -> (endpoint: net.Endpoint, err: net.Network_Error) {
-	host_or_endpoint := net.parse_hostname_or_endpoint(host) or_return
-
-	switch t in host_or_endpoint {
-	case net.Endpoint:
-		endpoint = t
-		return
-	case net.Host:
-		ep4, ep6 := net.resolve(t.hostname) or_return
-		endpoint = ep4 if ep4.address != nil else ep6
-
-		endpoint.port = t.port
-		if endpoint.port == 0 {
-			endpoint.port = scheme == .HTTPS ? 443 : 80
-		}
-		return
-	case:
-		unreachable()
-	}
 }
