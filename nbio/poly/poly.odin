@@ -39,15 +39,15 @@ timeout :: proc {
 	timeout3,
 }
 
-timeout1 :: proc(io: ^nbio.IO, dur: time.Duration, p: $T, callback: $C/proc(p: T, completed_time: Maybe(time.Time)))
+timeout1 :: proc(io: ^nbio.IO, dur: time.Duration, p: $T, callback: $C/proc(p: T))
 	where size_of(T) <= nbio.MAX_USER_ARGUMENTS {
-	completion := nbio._timeout(io, dur, nil, proc(completion: rawptr, completed_time: Maybe(time.Time)) {
+	completion := nbio._timeout(io, dur, nil, proc(completion: rawptr) {
 		completion := (^nbio.Completion)(completion)
 
 		cb := (^C)(&completion.user_args[0])^
 		p  := (^T)(raw_data(completion.user_args[size_of(C):]))^
 
-		cb(p, completed_time)
+		cb(p)
 	})
 
 	callback, p := callback, p
@@ -57,16 +57,16 @@ timeout1 :: proc(io: ^nbio.IO, dur: time.Duration, p: $T, callback: $C/proc(p: T
 	completion.user_data = completion
 }
 
-timeout2 :: proc(io: ^nbio.IO, dur: time.Duration, p1: $T, p2: $T2, callback: $C/proc(p: T, p2: T2, completed_time: Maybe(time.Time)))
+timeout2 :: proc(io: ^nbio.IO, dur: time.Duration, p1: $T, p2: $T2, callback: $C/proc(p: T, p2: T2))
 	where size_of(T) + size_of(T2) <= nbio.MAX_USER_ARGUMENTS {
-	completion := nbio._timeout(io, dur, nil, proc(completion: rawptr, completed_time: Maybe(time.Time)) {
+	completion := nbio._timeout(io, dur, nil, proc(completion: rawptr) {
 		completion := (^nbio.Completion)(completion)
 
 		cb := (^C) (&completion.user_args[0])^
 		p  := (^T) (raw_data(completion.user_args[size_of(C):]))^
 		p2 := (^T2)(raw_data(completion.user_args[size_of(C) + size_of(T):]))^
 
-		cb(p, p2, completed_time)
+		cb(p, p2)
 	})
 
 	callback, p, p2 := callback, p, p2
@@ -77,9 +77,9 @@ timeout2 :: proc(io: ^nbio.IO, dur: time.Duration, p1: $T, p2: $T2, callback: $C
 	completion.user_data = completion
 }
 
-timeout3 :: proc(io: ^nbio.IO, dur: time.Duration, p1: $T, p2: $T2, p3: $T3, callback: $C/proc(p: T, p2: T2, p3: T3, completed_time: Maybe(time.Time)))
+timeout3 :: proc(io: ^nbio.IO, dur: time.Duration, p1: $T, p2: $T2, p3: $T3, callback: $C/proc(p: T, p2: T2, p3: T3))
 	where size_of(T) + size_of(T2) + size_of(T3) <= nbio.MAX_USER_ARGUMENTS {
-	completion := nbio._timeout(io, dur, nil, proc(completion: rawptr, completed_time: Maybe(time.Time)) {
+	completion := nbio._timeout(io, dur, nil, proc(completion: rawptr) {
 		completion := (^nbio.Completion)(completion)
 
 		cb := (^C) (&completion.user_args[0])^
@@ -87,7 +87,7 @@ timeout3 :: proc(io: ^nbio.IO, dur: time.Duration, p1: $T, p2: $T2, p3: $T3, cal
 		p2 := (^T2)(raw_data(completion.user_args[size_of(C) + size_of(T):]))^
 		p3 := (^T3)(raw_data(completion.user_args[size_of(C) + size_of(T) + size_of(T2):]))^
 
-		cb(p, p2, p3, completed_time)
+		cb(p, p2, p3)
 	})
 
 	callback, p, p2, p3 := callback, p, p2, p3

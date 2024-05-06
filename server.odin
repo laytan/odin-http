@@ -389,7 +389,7 @@ connection_close :: proc(c: ^Connection, loc := #caller_location) {
 
 	scanner_destroy(&c.scanner)
 
-	nbio.timeout(&td.io, Conn_Close_Delay, c, proc(c: rawptr, _: Maybe(time.Time)) {
+	nbio.timeout(&td.io, Conn_Close_Delay, c, proc(c: rawptr) {
 		c := cast(^Connection)c
 		nbio.close(&td.io, c.socket, c, proc(c: rawptr, ok: bool) {
 			c := cast(^Connection)c
@@ -417,7 +417,7 @@ on_accept :: proc(server: rawptr, sock: net.TCP_Socket, source: net.Endpoint, er
 			#partial switch e {
 			case .No_Socket_Descriptors_Available_For_Client_Socket:
 				log.error("Connection limit reached, trying again in a bit")
-				nbio.timeout(&td.io, time.Second, server, proc(server: rawptr, _: Maybe(time.Time)) {
+				nbio.timeout(&td.io, time.Second, server, proc(server: rawptr) {
 					server := cast(^Server)server
 					nbio.accept(&td.io, server.tcp_sock, server, on_accept)
 				})
@@ -624,17 +624,17 @@ Server_Date :: struct {
 @(private)
 server_date_start :: proc(s: ^Server) {
 	s.date.buf.buf = slice.into_dynamic(s.date.buf_backing[:])
-	server_date_update(s, time.now())
+	server_date_update(s)
 }
 
 // Updates the time and schedules itself for after a second.
 @(private)
-server_date_update :: proc(s: rawptr, now: Maybe(time.Time)) {
+server_date_update :: proc(s: rawptr) {
 	s := cast(^Server)s
 	nbio.timeout(&td.io, time.Second, s, server_date_update)
 
 	bytes.buffer_reset(&s.date.buf)
-	date_write(bytes.buffer_to_stream(&s.date.buf), now.? or_else time.now())
+	date_write(bytes.buffer_to_stream(&s.date.buf), time.now())
 }
 
 @(private)

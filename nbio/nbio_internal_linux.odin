@@ -472,7 +472,7 @@ timeout_callback :: proc(io: ^IO, completion: ^Completion, op: ^Op_Timeout) {
 		// TODO: we are swallowing the returned error here.
 		fmt.assertf(errno == os.ERROR_NONE || errno == os.ETIME, "timeout error: %v", errno)
 
-		op.callback(completion.user_data, nil)
+		op.callback(completion.user_data)
 		pool_put(&io.completion_pool, completion)
 	}
 }

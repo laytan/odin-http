@@ -95,9 +95,8 @@ Op_Send :: struct {
 }
 
 Op_Timeout :: struct {
-	callback:     On_Timeout,
-	expires:      time.Time,
-	completed_at: time.Time,
+	callback: On_Timeout,
+	expires:  time.Time,
 }
 
 flush_timeouts :: proc(io: ^IO) -> (expires: Maybe(time.Duration)) {
@@ -115,7 +114,6 @@ flush_timeouts :: proc(io: ^IO) -> (expires: Maybe(time.Duration)) {
 		// Timeout done.
 		if (cexpires <= 0) {
 			ordered_remove(&io.timeouts, i)
-			op.completed_at = curr
 			queue.push_back(&io.completed, completion)
 			timeout_len -= 1
 			continue
@@ -298,7 +296,7 @@ handle_completion :: proc(io: ^IO, completion: ^Completion) {
 		}
 
 	case Op_Timeout:
-		op.callback(completion.user_data, op.completed_at)
+		op.callback(completion.user_data)
 	}
 	pool_put(&io.completion_pool, completion)
 }

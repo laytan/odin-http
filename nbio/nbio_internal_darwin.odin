@@ -85,9 +85,8 @@ Op_Write :: struct {
 }
 
 Op_Timeout :: struct {
-	callback:       On_Timeout,
-	expires:        time.Time,
-	completed_time: time.Time,
+	callback: On_Timeout,
+	expires:  time.Time,
 }
 
 flush :: proc(io: ^IO) -> os.Errno {
@@ -192,8 +191,6 @@ flush_timeouts :: proc(io: ^IO) -> (min_timeout: Maybe(i64)) {
 		unow := time.to_unix_nanoseconds(now)
 		expires := time.to_unix_nanoseconds(timeout.expires)
 		if unow >= expires {
-			timeout.completed_time = now
-
 			ordered_remove(&io.timeouts, i)
 			queue.push_back(&io.completed, completion)
 			continue
@@ -425,7 +422,7 @@ do_write :: proc(io: ^IO, completion: ^Completion, op: ^Op_Write) {
 }
 
 do_timeout :: proc(io: ^IO, completion: ^Completion, op: ^Op_Timeout) {
-	op.callback(completion.user_data, op.completed_time)
+	op.callback(completion.user_data)
 	pool_put(&io.completion_pool, completion)
 }
 
