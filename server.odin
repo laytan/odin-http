@@ -5,10 +5,10 @@ import "base:runtime"
 import "core:bufio"
 import "core:bytes"
 import "core:c/libc"
-import "core:container/queue"
 import "core:fmt"
 import "core:log"
 import "core:mem"
+import "core:mem/virtual"
 import "core:net"
 import "core:os"
 import "core:slice"
@@ -40,14 +40,15 @@ Server_Opts :: struct {
 	limit_headers:           int,
 	// The thread count to use, defaults to your core count - 1.
 	thread_count:            int,
-	// The initial size of the temp_allocator for each connection, defaults to 256KiB and doubles
-	// each time it needs to grow.
-	// NOTE: this value is assigned globally, running multiple servers with a different value will
-	// not work.
-	initial_temp_block_cap:  uint,
-	// The amount of free blocks each thread is allowed to hold on to before deallocating excess.
-	// Defaults to 64.
-	max_free_blocks_queued:  uint,
+
+	// // The initial size of the temp_allocator for each connection, defaults to 256KiB and doubles
+	// // each time it needs to grow.
+	// // NOTE: this value is assigned globally, running multiple servers with a different value will
+	// // not work.
+	// initial_temp_block_cap:  uint,
+	// // The amount of free blocks each thread is allowed to hold on to before deallocating excess.
+	// // Defaults to 64.
+	// max_free_blocks_queued:  uint,
 }
 
 Default_Server_Opts := Server_Opts {
@@ -55,8 +56,8 @@ Default_Server_Opts := Server_Opts {
 	redirect_head_to_get    = true,
 	limit_request_line      = 8000,
 	limit_headers           = 8000,
-	initial_temp_block_cap  = 256 * mem.Kilobyte,
-	max_free_blocks_queued  = 64,
+	// initial_temp_block_cap  = 256 * mem.Kilobyte,
+	// max_free_blocks_queued  = 64,
 }
 
 @(init, private)
@@ -107,8 +108,8 @@ Server_Thread :: struct {
 	state: Server_State,
 	io:    nbio.IO,
 
-	free_temp_blocks:       map[int]queue.Queue(^Block),
-	free_temp_blocks_count: int,
+	// free_temp_blocks:       map[int]queue.Queue(^Block),
+	// free_temp_blocks_count: int,
 }
 
 @(private, disabled = ODIN_DISABLE_ASSERT)
@@ -132,8 +133,8 @@ listen :: proc(
 	s.opts = opts
 	s.conn_allocator = context.allocator
 	s.main_thread = sync.current_thread_id()
-	initial_block_cap = int(s.opts.initial_temp_block_cap)
-	max_free_blocks_queued = int(s.opts.max_free_blocks_queued)
+	// initial_block_cap = int(s.opts.initial_temp_block_cap)
+	// max_free_blocks_queued = int(s.opts.max_free_blocks_queued)
 
 	errno := nbio.init(&td.io)
 	// TODO: error handling.
@@ -182,8 +183,8 @@ listen_and_serve :: proc(
 }
 
 _server_thread_init :: proc(s: ^Server) {
-	td.conns            = make(map[net.TCP_Socket]^Connection)
-	td.free_temp_blocks = make(map[int]queue.Queue(^Block))
+	td.conns = make(map[net.TCP_Socket]^Connection)
+	// td.free_temp_blocks = make(map[int]queue.Queue(^Block))
 
 	if sync.current_thread_id() != s.main_thread {
 		errno := nbio.init(&td.io)
@@ -244,18 +245,18 @@ _server_thread_shutdown :: proc(s: ^Server, loc := #caller_location) {
 
 	td.state = .Closing
 	defer delete(td.conns)
-	defer {
-		blocks: int
-		for _, &bucket in td.free_temp_blocks {
-			for block in queue.pop_front_safe(&bucket) {
-				blocks += 1
-				free(block)
-			}
-			queue.destroy(&bucket)
-		}
-		delete(td.free_temp_blocks)
-		log.infof("had %i temp blocks to spare", blocks)
-	}
+	// defer {
+	// 	blocks: int
+	// 	for _, &bucket in td.free_temp_blocks {
+	// 		for block in queue.pop_front_safe(&bucket) {
+	// 			blocks += 1
+	// 			free(block)
+	// 		}
+	// 		queue.destroy(&bucket)
+	// 	}
+	// 	delete(td.free_temp_blocks)
+	// 	log.infof("had %i temp blocks to spare", blocks)
+	// }
 
 	for i := 0; ; i += 1 {
 		for sock, conn in td.conns {
@@ -349,12 +350,13 @@ connection_set_state :: proc(c: ^Connection, s: Connection_State) -> bool {
 	return true
 }
 
+// TODO/PERF: pool the connections, saves having to allocate scanner buf and temp_allocator every time.
 Connection :: struct {
 	server:         ^Server,
 	socket:         net.TCP_Socket,
 	state:          Connection_State,
 	scanner:        Scanner,
-	temp_allocator: Allocator,
+	temp_allocator: virtual.Arena,
 	loop:           Loop,
 }
 
@@ -396,7 +398,9 @@ connection_close :: proc(c: ^Connection, loc := #caller_location) {
 
 			c.state = .Closed
 
-			allocator_destroy(&c.temp_allocator)
+			// allocator_destroy(&c.temp_allocator)
+			virtual.arena_destroy(&c.temp_allocator)
+
 			delete_key(&td.conns, c.socket)
 			free(c, c.server.conn_allocator)
 		})
@@ -440,9 +444,14 @@ on_accept :: proc(server: rawptr, sock: net.TCP_Socket, source: net.Endpoint, er
 
 @(private)
 conn_handle_reqs :: proc(c: ^Connection) {
+	// TODO/PERF: not sure why this is allocated on the connections allocator, can't it use the arena?
 	scanner_init(&c.scanner, c, c.server.conn_allocator)
-	allocator_init(&c.temp_allocator, c.server.conn_allocator)
-	context.temp_allocator = allocator(&c.temp_allocator)
+
+	// allocator_init(&c.temp_allocator, c.server.conn_allocator)
+	// context.temp_allocator = allocator(&c.temp_allocator)
+	assert(virtual.arena_init_growing(&c.temp_allocator) == nil)
+	context.temp_allocator = virtual.arena_allocator(&c.temp_allocator)
+
 	conn_handle_req(c, context.temp_allocator)
 }
 
