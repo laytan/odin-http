@@ -218,11 +218,41 @@ _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout
 	completion.user_data = user
 	completion.operation = Op_Timeout {
 		callback = callback,
-		expires  = time.time_add(time.now(), dur),
+		expires  = time.time_add(time.now(), dur), // TODO: store the current time in the IO struct, this is costly.
 	}
 
 	append(&io.timeouts, completion)
 	return completion
+}
+
+INTERNAL_TIMEOUT :: rawptr(max(uintptr))
+
+// TODO: We could have completions hold a pointer to the IO so it doesn't need to be passed here.
+_timeout_completion :: proc(io: ^IO, dur: time.Duration, target: ^Completion) -> ^Completion {
+	assert(target != nil)
+
+	when !ODIN_DISABLE_ASSERT {
+		#partial switch _ in target.operation {
+		case Op_Timeout, Op_Next_Tick, Op_Poll_Remove, Op_Remove: panic("trying to add a timeout to an operation that can't timeout")
+		}
+	}
+
+	completion := pool_get(&io.completion_pool)
+	completion.user_data = target
+	completion.operation = Op_Timeout {
+		callback = cast(On_Timeout)INTERNAL_TIMEOUT,
+		expires = time.time_add(time.now(), dur), // TODO: store the current time in the IO struct, this is costly.
+	}
+	target.timeout = completion
+	append(&io.timeouts, completion)
+	return completion
+}
+
+_timeout_remove :: proc(io: ^IO, timeout: ^Completion) {
+	assert(timeout != nil)
+
+	op := &timeout.operation.(Op_Timeout)
+	op.expires = { _nsec = -1 }
 }
 
 _next_tick :: proc(io: ^IO, user: rawptr, callback: On_Next_Tick) -> ^Completion {

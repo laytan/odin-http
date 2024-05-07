@@ -3,6 +3,7 @@ package nbio
 
 import "base:runtime"
 
+import "core:log"
 import "core:container/queue"
 import "core:mem"
 import "core:net"
@@ -13,7 +14,9 @@ import kqueue "_kqueue"
 
 MAX_EVENTS :: 256
 
-_IO :: struct {
+TIMED_OUT :: rawptr(max(uintptr))
+
+_IO :: struct #no_copy {
 	kq:              os.Handle,
 	io_inflight:     int,
 	completion_pool: Pool(Completion),
@@ -25,6 +28,8 @@ _IO :: struct {
 
 _Completion :: struct {
 	operation: Operation,
+	timeout:   ^Completion,
+	in_kernel: bool,
 	ctx:       runtime.Context,
 }
 
@@ -105,11 +110,15 @@ Op_Poll_Remove :: struct {
 	event: Poll_Event,
 }
 
+Op_Remove :: struct {
+	operation: ^Operation,
+}
+
 flush :: proc(io: ^IO) -> os.Errno {
 	events: [MAX_EVENTS]kqueue.KEvent
 
 	_ = flush_timeouts(io)
-	change_events := flush_io(io, events[:])
+	change_events, completions_flushed := flush_io(io, events[:])
 
 	if (change_events > 0 || queue.len(io.completed) == 0) {
 		if (change_events == 0 && queue.len(io.completed) == 0 && io.io_inflight == 0) {
@@ -121,8 +130,9 @@ flush :: proc(io: ^IO) -> os.Errno {
 		if err != .None do return ev_err_to_os_err(err)
 
 		// PERF: this is ordered and O(N), can this be made unordered?
-		remove_range(&io.io_pending, 0, change_events)
+		remove_range(&io.io_pending, 0, completions_flushed)
 
+		// TODO: does removal return a response, because this would be wrong otherwise?
 		io.io_inflight += change_events
 		io.io_inflight -= new_events
 
@@ -130,6 +140,7 @@ flush :: proc(io: ^IO) -> os.Errno {
 			queue.reserve(&io.completed, new_events)
 			for event in events[:new_events] {
 				completion := cast(^Completion)event.udata
+				completion.in_kernel = false
 				queue.push_back(&io.completed, completion)
 			}
 		}
@@ -140,6 +151,11 @@ flush :: proc(io: ^IO) -> os.Errno {
 	for _ in 0 ..< n {
 		completed := queue.pop_front(&io.completed)
 		context = completed.ctx
+
+		if completed.timeout == (^Completion)(TIMED_OUT) {
+			time_out_op(io, completed)
+			continue
+		}
 
 		switch &op in completed.operation {
 		case Op_Accept:      do_accept     (io, completed, &op)
@@ -153,18 +169,47 @@ flush :: proc(io: ^IO) -> os.Errno {
 		case Op_Next_Tick:   do_next_tick  (io, completed, &op)
 		case Op_Poll:        do_poll       (io, completed, &op)
 		case Op_Poll_Remove: do_poll_remove(io, completed, &op)
-		case: unreachable()
+		case Op_Remove:      unreachable()
+		case:                unreachable()
 		}
 	}
 
 	return os.ERROR_NONE
 }
 
-flush_io :: proc(io: ^IO, events: []kqueue.KEvent) -> int {
+time_out_op :: proc(io: ^IO, completed: ^Completion) {
+	log.warn("timedout")
+	switch &op in completed.operation {
+	case Op_Accept:      op.callback(completed.user_data, {}, {}, net.Accept_Error.Would_Block)
+	case Op_Close:       op.callback(completed.user_data, false)
+	case Op_Connect:     op.callback(completed.user_data, {}, net.Dial_Error.Timeout)
+	case Op_Read:        op.callback(completed.user_data, 0, os.EWOULDBLOCK)
+	case Op_Recv:        op.callback(completed.user_data, 0, nil, net.UDP_Recv_Error.Timeout) // TODO: may be tcp
+	case Op_Send:        op.callback(completed.user_data, 0, net.UDP_Send_Error.Timeout)      // TODO: may be tcp
+	case Op_Write:       op.callback(completed.user_data, 0, os.EWOULDBLOCK)
+	case Op_Poll:        op.callback(completed.user_data, nil)
+	case Op_Timeout, Op_Next_Tick, Op_Poll_Remove, Op_Remove: panic("timed out untimeoutable")
+	case: unreachable()
+	}
+	pool_put(&io.completion_pool, completed)
+}
+
+flush_io :: proc(io: ^IO, events: []kqueue.KEvent) -> (changed_events: int, completions: int) {
 	events := events
-	events_loop: for event, i in &events {
-		if len(io.io_pending) <= i do return i
-		completion := io.io_pending[i]
+	j: int
+	events_loop: for i := 0; i < len(events); i += 1 {
+		defer j += 1
+		event := &events[i]
+		if len(io.io_pending) <= j do return i, j
+		completion := io.io_pending[j]
+
+		if completion.timeout == (^Completion)(TIMED_OUT) {
+			time_out_op(io, completion)
+			i -= 1
+			continue
+		}
+
+		completion.in_kernel = true
 
 		switch op in completion.operation {
 		case Op_Accept:
@@ -214,6 +259,42 @@ flush_io :: proc(io: ^IO, events: []kqueue.KEvent) -> int {
 			event.udata = completion
 
 			continue events_loop
+		case Op_Remove:
+			log.warn("op remove")
+			#partial switch inner_op in op.operation {
+			case Op_Accept:
+				event.ident = uintptr(inner_op.sock)
+				event.filter = kqueue.EVFILT_READ
+			case Op_Connect:
+				event.ident = uintptr(inner_op.socket)
+				event.filter = kqueue.EVFILT_WRITE
+			case Op_Read:
+				event.ident = uintptr(inner_op.fd)
+				event.filter = kqueue.EVFILT_READ
+			case Op_Write:
+				event.ident = uintptr(inner_op.fd)
+				event.filter = kqueue.EVFILT_WRITE
+			case Op_Recv:
+				event.ident = uintptr(os.Socket(net.any_socket_to_socket(inner_op.socket)))
+				event.filter = kqueue.EVFILT_READ
+			case Op_Send:
+				event.ident = uintptr(os.Socket(net.any_socket_to_socket(inner_op.socket)))
+				event.filter = kqueue.EVFILT_WRITE
+			case Op_Poll:
+				event.ident = uintptr(inner_op.fd)
+				switch inner_op.event {
+				case .Read:  event.filter = kqueue.EVFILT_READ
+				case .Write: event.filter = kqueue.EVFILT_WRITE
+				case:        unreachable()
+				}
+			case: panic("can not remove op")
+			}
+
+			event.flags = kqueue.EV_DELETE | kqueue.EV_DISABLE | kqueue.EV_ONESHOT
+
+			pool_put(&io.completion_pool, completion)
+			continue events_loop
+
 		case Op_Timeout, Op_Close, Op_Next_Tick:
 			panic("invalid completion operation queued")
 		}
@@ -222,7 +303,7 @@ flush_io :: proc(io: ^IO, events: []kqueue.KEvent) -> int {
 		event.udata = completion
 	}
 
-	return len(events)
+	return len(events), j
 }
 
 flush_timeouts :: proc(io: ^IO) -> (min_timeout: Maybe(i64)) {
@@ -240,7 +321,7 @@ flush_timeouts :: proc(io: ^IO) -> (min_timeout: Maybe(i64)) {
 		expires := time.to_unix_nanoseconds(timeout.expires)
 		if unow >= expires {
 			ordered_remove(&io.timeouts, i)
-			queue.push_back(&io.completed, completion)
+			do_timeout(io, completion, timeout)
 			continue
 		}
 
@@ -375,6 +456,7 @@ do_recv :: proc(io: ^IO, completion: ^Completion, op: ^Op_Recv) {
 	op.received += received
 
 	if err != nil {
+		maybe_cancel_timeout(completion)
 		op.callback(completion.user_data, op.received, remote_endpoint, err)
 		pool_put(&io.completion_pool, completion)
 		return
@@ -386,8 +468,16 @@ do_recv :: proc(io: ^IO, completion: ^Completion, op: ^Op_Recv) {
 		return
 	}
 
+	maybe_cancel_timeout(completion)
 	op.callback(completion.user_data, op.received, remote_endpoint, err)
 	pool_put(&io.completion_pool, completion)
+}
+
+maybe_cancel_timeout :: #force_inline proc(completion: ^Completion) {
+	if completion.timeout != nil {
+		timeout := &completion.timeout.operation.(Op_Timeout)
+		timeout.expires = { _nsec = -1 }
+	}
 }
 
 do_send :: proc(io: ^IO, completion: ^Completion, op: ^Op_Send) {
@@ -470,6 +560,32 @@ do_write :: proc(io: ^IO, completion: ^Completion, op: ^Op_Write) {
 }
 
 do_timeout :: proc(io: ^IO, completion: ^Completion, op: ^Op_Timeout) {
+	if rawptr(op.callback) == INTERNAL_TIMEOUT {
+		// Timeout has been cancelled by a completed op.
+		if op.expires == { _nsec = -1 } {
+			pool_put(&io.completion_pool, completion)
+			return
+		}
+
+		timed_out := (^Completion)(completion.user_data)
+
+		// Timeout while the op is in the kernel, need to add a remove event to clean it out.
+		if timed_out.in_kernel {
+			completion.operation = Op_Remove {
+				operation = &timed_out.operation,
+			}
+			append(&io.io_pending, completion)
+			time_out_op(io, timed_out)
+			return
+		}
+
+		// Timeout while the op is in a queue to go into the kernel, avoid this by setting
+		// a special timed out value that gets checked before an op goes to kernel.
+		timed_out.timeout = (^Completion)(TIMED_OUT)
+		pool_put(&io.completion_pool, completion)
+		return
+	}
+
 	op.callback(completion.user_data)
 	pool_put(&io.completion_pool, completion)
 }

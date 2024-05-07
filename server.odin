@@ -394,7 +394,7 @@ connection_close :: proc(c: ^Connection, loc := #caller_location) {
 		nbio.close(&td.io, c.socket, c, proc(c: rawptr, ok: bool) {
 			c := cast(^Connection)c
 
-			log.debugf("closed connection: %i", c.socket)
+			log.infof("[%i] closed connection", c.socket)
 
 			c.state = .Closed
 
@@ -444,8 +444,21 @@ on_accept :: proc(server: rawptr, sock: net.TCP_Socket, source: net.Endpoint, er
 
 @(private)
 conn_handle_reqs :: proc(c: ^Connection) {
+	scanner_recv :: proc(c: rawptr, buf: []byte, s: ^Scanner, callback: On_Scanner_Read) {
+		c := (^Connection)(c)
+		assert_has_td()
+
+		context.user_ptr = rawptr(callback)
+		nbio.recv(&td.io, c.socket, buf, s, proc(s: rawptr, n: int, _: Maybe(net.Endpoint), err: net.Network_Error) {
+			s := (^Scanner)(s)
+			callback := (On_Scanner_Read)(context.user_ptr)
+			callback(s, n, err)
+
+		})
+	}
+
 	// TODO/PERF: not sure why this is allocated on the connections allocator, can't it use the arena?
-	scanner_init(&c.scanner, c, c.server.conn_allocator)
+	scanner_init(&c.scanner, c, scanner_recv, c.server.conn_allocator)
 
 	// allocator_init(&c.temp_allocator, c.server.conn_allocator)
 	// context.temp_allocator = allocator(&c.temp_allocator)
@@ -464,9 +477,9 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.temp_allocator) {
 
 		if err != nil {
 			if err == .EOF {
-				log.debugf("client disconnected (EOF)")
+				log.infof("[%i] client disconnected (EOF)", l.conn.socket)
 			} else {
-				log.warnf("request scanner error: %v", err)
+				log.warnf("[%i] request scanner error: %v", err, l.conn.socket)
 			}
 
 			clean_request_loop(l.conn, close = true)
@@ -482,7 +495,7 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.temp_allocator) {
 			return
 		}
 
-		on_rline2(loop, token, err)
+		on_rline2(loop, token, nil)
 	}
 
 	on_rline2 :: proc(loop: rawptr, token: string, err: bufio.Scanner_Error) {
@@ -583,7 +596,7 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.temp_allocator) {
 			return
 		}
 
-		l.req._scanner = &l.conn.scanner
+		l.req.scanner = &l.conn.scanner
 
 		rline := &l.req.line.(Requestline)
 		// An options request with the "*" is a no-op/ping request to
