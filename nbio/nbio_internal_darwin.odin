@@ -476,7 +476,9 @@ do_timeout :: proc(io: ^IO, completion: ^Completion, op: ^Op_Timeout) {
 
 do_poll :: proc(io: ^IO, completion: ^Completion, op: ^Op_Poll) {
 	op.callback(completion.user_data, op.event)
-	pool_put(&io.completion_pool, completion)
+	if !op.multi {
+		pool_put(&io.completion_pool, completion)
+	}
 }
 
 do_poll_remove :: proc(io: ^IO, completion: ^Completion, op: ^Op_Poll_Remove) {

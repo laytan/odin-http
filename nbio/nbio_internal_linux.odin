@@ -528,7 +528,9 @@ poll_enqueue :: proc(io: ^IO, completion: ^Completion, op: ^Op_Poll) {
 
 poll_callback :: proc(io: ^IO, completion: ^Completion, op: ^Op_Poll) {
 	op.callback(completion.user_data, op.event)
-	pool_put(&io.completion_pool, completion)
+	if !op.multi {
+		pool_put(&io.completion_pool, completion)
+	}
 }
 
 poll_remove_enqueue :: proc(io: ^IO, completion: ^Completion, op: ^Op_Poll_Remove) {
