@@ -487,17 +487,20 @@ timeout_enqueue :: proc(io: ^IO, completion: ^Completion, op: ^Op_Timeout) {
 }
 
 timeout_callback :: proc(io: ^IO, completion: ^Completion, op: ^Op_Timeout) {
-	errno := os.Errno(-completion.result)
-	switch errno {
-	case os.EINTR, os.EWOULDBLOCK:
-		timeout_enqueue(io, completion, op)
-	case:
-		// TODO: we are swallowing the returned error here.
-		fmt.assertf(errno == os.ERROR_NONE || errno == os.ETIME, "timeout error: %v", errno)
-
-		op.callback(completion.user_data)
-		pool_put(&io.completion_pool, completion)
+	if completion.result < 0 {
+		errno := os.Errno(-completion.result)
+		switch errno {
+		case os.ETIME: // OK.
+		case os.EINTR, os.EWOULDBLOCK:
+			timeout_enqueue(io, completion, op)
+			return
+		case:
+			fmt.panicf("timeout error: %v", errno)
+		}
 	}
+
+	op.callback(completion.user_data)
+	pool_put(&io.completion_pool, completion)
 }
 
 next_tick_callback :: proc(io: ^IO, completion: ^Completion, op: ^Op_Next_Tick) {
