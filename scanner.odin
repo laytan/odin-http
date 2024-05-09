@@ -66,8 +66,10 @@ scanner_destroy :: proc(s: ^Scanner) {
 }
 
 scanner_reset :: proc(s: ^Scanner) {
-	s.start                        = 0
-	s.end                          = 0
+	remove_range(&s.buf, 0, s.start)
+	s.end   -= s.start
+	s.start  = 0
+
 	s.split                        = scan_lines
 	s.split_data                   = nil
 	s.max_token_size               = bufio.DEFAULT_MAX_SCAN_TOKEN_SIZE
@@ -78,6 +80,8 @@ scanner_reset :: proc(s: ^Scanner) {
 	s.successive_empty_token_count = 0
 	s.done                         = false
 	s.could_be_too_short           = false
+	s.user_data                    = nil
+	s.callback                     = nil
 }
 
 scanner_scan :: proc(
@@ -133,9 +137,6 @@ scanner_scan :: proc(
 			} else {
 				s.successive_empty_token_count += 1
 
-				if s.max_consecutive_empty_reads <= 0 {
-					s.max_consecutive_empty_reads = DEFAULT_MAX_CONSECUTIVE_EMPTY_READS
-				}
 				if s.successive_empty_token_count > s.max_consecutive_empty_reads {
 					set_err(s, .No_Progress)
 					callback(user_data, "", s._err)
@@ -204,8 +205,8 @@ scanner_scan :: proc(
 	nbio.recv(&td.io, s.connection.socket, s.buf[s.end:len(s.buf)], s, scanner_on_read)
 }
 
-scanner_on_read :: proc(s_: rawptr, n: int, _: Maybe(net.Endpoint), e: net.Network_Error) {
-	s := cast(^Scanner)s_
+scanner_on_read :: proc(s: rawptr, n: int, _: Maybe(net.Endpoint), e: net.Network_Error) {
+	s := (^Scanner)(s)
 
 	defer scanner_scan(s, s.user_data, s.callback)
 
@@ -238,19 +239,6 @@ scanner_on_read :: proc(s_: rawptr, n: int, _: Maybe(net.Endpoint), e: net.Netwo
 	s.end += n
 	if n > 0 {
 		s.successive_empty_token_count = 0
-		return
-	}
-	s.consecutive_empty_reads += 1
-
-	if s.max_consecutive_empty_reads <= 0 {
-		s.max_consecutive_empty_reads = DEFAULT_MAX_CONSECUTIVE_EMPTY_READS
-	}
-	if s.consecutive_empty_reads > s.max_consecutive_empty_reads {
-		if s.could_be_too_short {
-			s._err = .Too_Short
-		} else {
-			s._err = .No_Progress
-		}
 		return
 	}
 }
