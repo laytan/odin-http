@@ -290,7 +290,7 @@ response_send :: proc(r: ^Response, conn: ^Connection, loc := #caller_location) 
 	assert(!r.sent, "response has already been sent", loc)
 	r.sent = true
 
-	check_body := proc(res: rawptr, body: Body, err: Body_Error) {
+	check_body :: proc(res: rawptr, body: Body, err: Body_Error) {
 		res := cast(^Response)res
 		will_close: bool
 
@@ -381,23 +381,9 @@ response_needs_content_length :: proc(r: ^Response, conn: ^Connection) -> bool {
 		return false
 	}
 
-	if rline, ok := conn.loop.req.line.(Requestline); ok {
-		if status_is_success(r.status) && rline.method == .Connect {
-			return false
-		}
-
-		return true
-	}
-
-	return true
-}
-
-@(private)
-response_can_have_body :: proc(r: ^Response, conn: ^Connection) -> bool {
-	response_needs_content_length(r, conn) or_return
-
-	if rline, ok := conn.loop.req.line.(Requestline); ok {
-		return rline.method != .Head
+	line := conn.loop.req.line.?
+	if status_is_success(r.status) && line.method == .Connect {
+		return false
 	}
 
 	return true
@@ -425,6 +411,12 @@ response_must_close :: proc(req: ^Request, res: ^Response) -> bool {
 	// If the connection's state indicates closing, close.
 	if res._conn.state >= .Will_Close {
 		headers_set_close(&res.headers)
+		return true
+	}
+
+	// HTTP 1.0 does not have persistent connections.
+	line := req.line.?
+	if line.version == {1, 0} {
 		return true
 	}
 

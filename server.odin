@@ -511,7 +511,7 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.temp_allocator) {
 		}
 
 		// Might need to support more versions later.
-		if rline.version.major != 1 || rline.version.minor < 1 {
+		if rline.version.major != 1 || rline.version.minor > 1 {
 			log.infof("request http version not supported %v", rline.version)
 			headers_set_close(&l.res.headers)
 			l.res.status = .HTTP_Version_Not_Supported
