@@ -162,7 +162,7 @@ flush :: proc(io: ^IO) -> os.Errno {
 
 flush_io :: proc(io: ^IO, events: []kqueue.KEvent) -> int {
 	events := events
-	events_loop: for event, i in &events {
+	events_loop: for &event, i in events {
 		if len(io.io_pending) <= i do return i
 		completion := io.io_pending[i]
 
