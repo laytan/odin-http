@@ -5,8 +5,11 @@ import "base:intrinsics"
 
 import "core:bufio"
 import "core:net"
+import "core:log"
+import "core:mem"
+import "core:time"
 
-Scan_Callback   :: #type proc(user_data: rawptr, token: string, err: bufio.Scanner_Error)
+Scan_Callback   :: #type proc(s: ^Scanner, token: string, err: bufio.Scanner_Error)
 Split_Proc      :: #type proc(split_data: rawptr, data: []byte, at_eof: bool) -> (advance: int, token: []byte, err: bufio.Scanner_Error, final_token: bool)
 On_Scanner_Read :: #type proc(s: ^Scanner, n: int, e: net.Network_Error)
 Recv_Proc       :: #type proc(user_data: rawptr, buf: []byte, s: ^Scanner, callback: On_Scanner_Read)
@@ -31,6 +34,8 @@ scan_num_bytes :: proc(split_data: rawptr, data: []byte, at_eof: bool) -> (advan
 	return n, data[:n], nil, false
 }
 
+SCANNER_MAX_USER_DATA :: 3*size_of(rawptr)
+
 // A callback based scanner over the connection based on nbio.
 Scanner :: struct #no_copy {
 	recv:                         Recv_Proc,
@@ -48,7 +53,8 @@ Scanner :: struct #no_copy {
 	successive_empty_token_count: int,
 	done:                         bool,
 	could_be_too_short:           bool,
-	user_data:                    rawptr,
+	timeout:                      time.Duration,
+	user_data:                    [SCANNER_MAX_USER_DATA+size_of(rawptr)]byte,
 	callback:                     Scan_Callback,
 }
 
@@ -82,15 +88,50 @@ scanner_reset :: proc(s: ^Scanner) {
 	s.successive_empty_token_count = 0
 	s.done                         = false
 	s.could_be_too_short           = false
-	s.user_data                    = nil
+	s.user_data                    = {}
 	s.callback                     = nil
 }
 
-scanner_scan :: proc(
-	s: ^Scanner,
-	user_data: rawptr,
-	callback: proc(user_data: rawptr, token: string, err: bufio.Scanner_Error),
-) {
+scanner_scan1 :: proc(s: ^Scanner, p: $T, cb: $C/proc(p: T, token: string, err: bufio.Scanner_Error))
+	where size_of(T) <= SCANNER_MAX_USER_DATA {
+
+	s.callback = proc(s: ^Scanner, token: string, err: bufio.Scanner_Error) {
+		cb := (^C)(raw_data(s.user_data[:]))^
+		p  := (^T)(raw_data(s.user_data[size_of(C):]))^
+		cb(p, token, err)
+	}
+
+	cb, p := cb, p
+	n := copy(s.user_data[:],  mem.ptr_to_bytes(&cb))
+	     copy(s.user_data[n:], mem.ptr_to_bytes(&p))
+
+	_scanner_scan(s)
+}
+
+scanner_scan2 :: proc(s: ^Scanner, p: $T, p2: $T2, cb: $C/proc(p: T, p2: T2, token: string, err: bufio.Scanner_Error))
+	where size_of(T) + size_of(T2) <= SCANNER_MAX_USER_DATA {
+
+	s.callback = proc(s: ^Scanner, token: string, err: bufio.Scanner_Error) {
+		cb := (^C) (raw_data(s.user_data[:]))^
+		p  := (^T) (raw_data(s.user_data[size_of(C):]))^
+		p2 := (^T2)(raw_data(s.user_data[size_of(C)+size_of(T):]))^
+		cb(p, p2, token, err)
+	}
+
+	cb, p, p2 := cb, p, p2
+	n := copy(s.user_data[:],  mem.ptr_to_bytes(&cb))
+	n += copy(s.user_data[n:], mem.ptr_to_bytes(&p))
+	     copy(s.user_data[n:], mem.ptr_to_bytes(&p2))
+
+	_scanner_scan(s)
+}
+
+scanner_scan :: proc {
+	scanner_scan1,
+	scanner_scan2,
+}
+
+_scanner_scan :: proc(s: ^Scanner) {
 	set_err :: proc(s: ^Scanner, err: bufio.Scanner_Error) {
 		switch s._err {
 		case nil, .EOF:
@@ -99,7 +140,7 @@ scanner_scan :: proc(
 	}
 
 	if s.done {
-		callback(user_data, "", .EOF)
+		s.callback(s, "", .EOF)
 		return
 	}
 
@@ -110,24 +151,24 @@ scanner_scan :: proc(
 		if final_token {
 			s.token = token
 			s.done = true
-			callback(user_data, "", .EOF)
+			s.callback(s, "", .EOF)
 			return
 		}
 		if err != nil {
 			set_err(s, err)
-			callback(user_data, "", s._err)
+			s.callback(s, "", s._err)
 			return
 		}
 
 		// Do advance
 		if advance < 0 {
 			set_err(s, .Negative_Advance)
-			callback(user_data, "", s._err)
+			s.callback(s, "", s._err)
 			return
 		}
 		if advance > s.end - s.start {
 			set_err(s, .Advanced_Too_Far)
-			callback(user_data, "", s._err)
+			s.callback(s, "", s._err)
 			return
 		}
 		s.start += advance
@@ -141,15 +182,13 @@ scanner_scan :: proc(
 
 				if s.successive_empty_token_count > s.max_consecutive_empty_reads {
 					set_err(s, .No_Progress)
-					callback(user_data, "", s._err)
+					s.callback(s, "", s._err)
 					return
 				}
 			}
 
 			s.consecutive_empty_reads = 0
-			s.callback = nil
-			s.user_data = nil
-			callback(user_data, string(token), s._err)
+			s.callback(s, string(token), s._err)
 			return
 		}
 	}
@@ -158,7 +197,7 @@ scanner_scan :: proc(
 	if s._err != nil {
 		s.start = 0
 		s.end = 0
-		callback(user_data, "", s._err)
+		s.callback(s, "", s._err)
 		return
 	}
 
@@ -172,7 +211,7 @@ scanner_scan :: proc(
 
 		if s.end - s.start >= s.max_token_size {
 			set_err(s, .Too_Long)
-			callback(user_data, "", s._err)
+			s.callback(s, "", s._err)
 			return
 		}
 
@@ -184,7 +223,7 @@ scanner_scan :: proc(
 			overflowed: bool
 			if new_size, overflowed = intrinsics.overflow_mul(len(s.buf), 2); overflowed {
 				set_err(s, .Too_Long)
-				callback(user_data, "", s._err)
+				s.callback(s, "", s._err)
 				return
 			}
 		}
@@ -198,18 +237,13 @@ scanner_scan :: proc(
 
 	// Read data into the buffer
 	s.consecutive_empty_reads += 1
-	s.user_data = user_data
-	s.callback = callback
 	s.could_be_too_short = could_be_too_short
 
 	s.recv(s.recv_user_data, s.buf[s.end:len(s.buf)], s, scanner_on_read)
-	// assert_has_td()
-	// // TODO: some kinda timeout on this.
-	// nbio.recv(&td.io, s.socket, s.buf[s.end:len(s.buf)], s, scanner_on_read)
 }
 
 scanner_on_read :: proc(s: ^Scanner, n: int, e: net.Network_Error) {
-	defer scanner_scan(s, s.user_data, s.callback)
+	defer _scanner_scan(s)
 
 	if e != nil {
 		#partial switch ee in e {
@@ -219,9 +253,19 @@ scanner_on_read :: proc(s: ^Scanner, n: int, e: net.Network_Error) {
 				// 9 for EBADF (bad file descriptor) happens when OS closes socket.
 				s._err = .EOF
 				return
+			case .Timeout:
+				s._err = .No_Progress
+				return
+			}
+		case net.UDP_Recv_Error:
+			#partial switch ee {
+			case .Timeout:
+				s._err = .No_Progress
+				return
 			}
 		}
 
+		log.errorf("unexpected scanner recv err: %#v", e)
 		s._err = .Unknown
 		return
 	}

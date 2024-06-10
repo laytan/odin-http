@@ -153,7 +153,9 @@ _body_length :: proc(sub: ^Has_Body, max_length: int = -1, user_data: rawptr, cb
 	sub.scanner.split_data     = rawptr(uintptr(ilen))
 
 	sub.body_ok = true
-	scanner_scan(sub.scanner, user_data, cb)
+	scanner_scan2(sub.scanner, user_data, cb, proc(user_data: rawptr, cb: Body_Callback, token: string, err: bufio.Scanner_Error) {
+		cb(user_data, token, err)
+	})
 }
 
 /*
@@ -188,8 +190,7 @@ Remove Trailer from existing header fields
 _body_chunked :: proc(sub: ^Has_Body, max_length: int = -1, user_data: rawptr, cb: Body_Callback) {
 	sub.body_ok = false
 
-	on_scan :: proc(s: rawptr, size_line: string, err: bufio.Scanner_Error) {
-		s := cast(^Chunked_State)s
+	on_scan :: proc(s: ^Chunked_State, size_line: string, err: bufio.Scanner_Error) {
 		size_line := size_line
 
 		if err != nil {
@@ -229,9 +230,7 @@ _body_chunked :: proc(sub: ^Has_Body, max_length: int = -1, user_data: rawptr, c
 		scanner_scan(s.sub.scanner, s, on_scan_chunk)
 	}
 
-	on_scan_chunk :: proc(s: rawptr, token: string, err: bufio.Scanner_Error) {
-		s := cast(^Chunked_State)s
-
+	on_scan_chunk :: proc(s: ^Chunked_State, token: string, err: bufio.Scanner_Error) {
 		if err != nil {
 			s.cb(s.user_data, "", err)
 			return
@@ -242,9 +241,7 @@ _body_chunked :: proc(sub: ^Has_Body, max_length: int = -1, user_data: rawptr, c
 
 		strings.write_string(&s.buf, token)
 
-		on_scan_empty_line :: proc(s: rawptr, token: string, err: bufio.Scanner_Error) {
-			s := cast(^Chunked_State)s
-
+		on_scan_empty_line :: proc(s: ^Chunked_State, token: string, err: bufio.Scanner_Error) {
 			if err != nil {
 				s.cb(s.user_data, "", err)
 				return
@@ -257,9 +254,7 @@ _body_chunked :: proc(sub: ^Has_Body, max_length: int = -1, user_data: rawptr, c
 		scanner_scan(s.sub.scanner, s, on_scan_empty_line)
 	}
 
-	on_scan_trailer :: proc(s: rawptr, line: string, err: bufio.Scanner_Error) {
-		s := cast(^Chunked_State)s
-
+	on_scan_trailer :: proc(s: ^Chunked_State, line: string, err: bufio.Scanner_Error) {
 		// Headers are done, success.
 		if err != nil || len(line) == 0 {
 			headers_delete_unsafe(&s.sub.headers, "trailer")

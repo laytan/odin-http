@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+		<title>Chatroom</title>
+	</head>
+	<body>
+		<pre id="chat"></pre>
+		<form id="input">
+			<input type="text" />
+			<input type="submit" value="Chat!" />
+		</form>
+
+		<script>
+			const socket = new WebSocket("ws://127.0.0.1:8081/chat");
+
+			let messages = [];
+			let initReceived = false;
+
+			const draw = () => {
+				document.getElementById("chat").innerHTML = messages.join("\n");
+			};
+
+			socket.addEventListener("close", (event) => {
+				console.error("close", event);
+			});
+
+			socket.addEventListener("message", (event) => {
+				console.log("message", event);
+
+				if (initReceived) {
+					messages.push(event.data);
+				} else {
+					messages = JSON.parse(event.data);
+					initReceived = true;
+				}
+
+				draw();
+			});
+
+			const form = document.getElementById("input");
+			form.addEventListener("submit", (event) => {
+				event.preventDefault();
+
+				const message = event.target[0].value;
+				if (message.length > 0) {
+					socket.send(message);
+				}
+			});
+		</script>
+	</body>
+</html>

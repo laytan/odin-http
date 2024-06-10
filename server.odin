@@ -265,7 +265,7 @@ _server_thread_shutdown :: proc(s: ^Server, loc := #caller_location) {
 				log.infof("shutdown: connection %i still active", sock)
 			case .New, .Idle, .Pending:
 				log.infof("shutdown: closing connection %i", sock)
-				connection_close(conn)
+				_connection_close(conn)
 			case .Closing:
 				// Only logging this every 10_000 calls to avoid spam.
 				if i % 10_000 == 0 do log.debugf("shutdown: connection %i is closing", sock)
@@ -358,6 +358,7 @@ Connection :: struct {
 	scanner:        Scanner,
 	temp_allocator: virtual.Arena,
 	loop:           Loop,
+	ud:             rawptr,
 }
 
 // Loop/request cycle state.
@@ -368,8 +369,7 @@ Loop :: struct {
 	res:  Response,
 }
 
-@(private)
-connection_close :: proc(c: ^Connection, loc := #caller_location) {
+_connection_close :: proc(c: ^Connection, loc := #caller_location) {
 	assert_has_td(loc)
 
 	if c.state >= .Closing {
@@ -407,6 +407,10 @@ connection_close :: proc(c: ^Connection, loc := #caller_location) {
 	})
 }
 
+connection_temp_allocator :: proc(c: ^Connection) -> mem.Allocator {
+	return virtual.arena_allocator(&c.temp_allocator)
+}
+
 @(private)
 on_accept :: proc(server: rawptr, sock: net.TCP_Socket, source: net.Endpoint, err: net.Network_Error) {
 	server := cast(^Server)server
@@ -438,7 +442,7 @@ on_accept :: proc(server: rawptr, sock: net.TCP_Socket, source: net.Endpoint, er
 
 	td.conns[c.socket] = c
 
-	log.debugf("new connection with thread, got %d conns", len(td.conns))
+	log.infof("[%i] new connection", c.socket)
 	conn_handle_reqs(c)
 }
 
@@ -449,12 +453,16 @@ conn_handle_reqs :: proc(c: ^Connection) {
 		assert_has_td()
 
 		context.user_ptr = rawptr(callback)
-		nbio.recv(&td.io, c.socket, buf, s, proc(s: rawptr, n: int, _: Maybe(net.Endpoint), err: net.Network_Error) {
+		nbio.with_timeout(
+			&td.io, s.timeout,
+			nbio.recv(&td.io, c.socket, buf, s, on_recv),
+		)
+
+		on_recv :: proc(s: rawptr, n: int, _: Maybe(net.Endpoint), err: net.Network_Error) {
 			s := (^Scanner)(s)
 			callback := (On_Scanner_Read)(context.user_ptr)
 			callback(s, n, err)
-
-		})
+		}
 	}
 
 	// TODO/PERF: not sure why this is allocated on the connections allocator, can't it use the arena?
@@ -470,9 +478,7 @@ conn_handle_reqs :: proc(c: ^Connection) {
 
 @(private)
 conn_handle_req :: proc(c: ^Connection, allocator := context.temp_allocator) {
-	on_rline1 :: proc(loop: rawptr, token: string, err: bufio.Scanner_Error) {
-		l := cast(^Loop)loop
-
+	on_rline1 :: proc(l: ^Loop, token: string, err: bufio.Scanner_Error) {
 		if !connection_set_state(l.conn, .Active) do return
 
 		if err != nil {
@@ -491,16 +497,14 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.temp_allocator) {
 		// received prior to the request-line.
 		if len(token) == 0 {
 			log.debug("first request line empty, skipping in interest of robustness")
-			scanner_scan(&l.conn.scanner, loop, on_rline2)
+			scanner_scan(&l.conn.scanner, l, on_rline2)
 			return
 		}
 
-		on_rline2(loop, token, nil)
+		on_rline2(l, token, nil)
 	}
 
-	on_rline2 :: proc(loop: rawptr, token: string, err: bufio.Scanner_Error) {
-		l := cast(^Loop)loop
-
+	on_rline2 :: proc(l: ^Loop, token: string, err: bufio.Scanner_Error) {
 		if err != nil {
 			log.warnf("request scanning error: %v", err)
 			clean_request_loop(l.conn, close = true)
@@ -535,12 +539,10 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.temp_allocator) {
 		l.req.url = url_parse(rline.target.(string))
 
 		l.conn.scanner.max_token_size = l.conn.server.opts.limit_headers
-		scanner_scan(&l.conn.scanner, loop, on_header_line)
+		scanner_scan(&l.conn.scanner, l, on_header_line)
 	}
 
-	on_header_line :: proc(loop: rawptr, token: string, err: bufio.Scanner_Error) {
-		l := cast(^Loop)loop
-
+	on_header_line :: proc(l: ^Loop, token: string, err: bufio.Scanner_Error) {
 		if err != nil {
 			log.warnf("request scanning error: %v", err)
 			clean_request_loop(l.conn, close = true)
@@ -570,7 +572,7 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.temp_allocator) {
 			return
 		}
 
-		scanner_scan(&l.conn.scanner, loop, on_header_line)
+		scanner_scan(&l.conn.scanner, l, on_header_line)
 	}
 
 	on_headers_end :: proc(l: ^Loop) {
@@ -632,6 +634,7 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.temp_allocator) {
 Server_Date :: struct {
 	buf_backing: [DATE_LENGTH]byte,
 	buf:         bytes.Buffer,
+	now:         time.Time,
 }
 
 @(private)
@@ -647,7 +650,8 @@ server_date_update :: proc(s: rawptr) {
 	nbio.timeout(&td.io, time.Second, s, server_date_update)
 
 	bytes.buffer_reset(&s.date.buf)
-	date_write(bytes.buffer_to_stream(&s.date.buf), time.now())
+	s.date.now = time.now()
+	date_write(bytes.buffer_to_stream(&s.date.buf), s.date.now)
 }
 
 @(private)

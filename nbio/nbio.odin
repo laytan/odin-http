@@ -711,6 +711,7 @@ poll_remove :: proc(io: ^IO, fd: os.Handle, event: Poll_Event) -> ^Completion {
 // TODO: document.
 with_timeout :: proc(io: ^IO, dur: time.Duration, target: ^Completion, loc := #caller_location) -> ^Completion {
 	if target == nil do return nil
+	if dur == 0 do return nil
 
 	return _timeout_completion(io, dur, target)
 }

@@ -1,0 +1,16 @@
+
+{
+   "options": {
+      "connections": 10000,
+      "batchsize": 100,
+      "batchdelay": 10,
+      "retrydelay": 10
+   },
+   "servers":  [
+                  {
+                     "name": "AutobahnPython",
+                     "uri": "ws://127.0.0.1:8080",
+                     "desc": "Autobahn WebSocket Python on localhost"
+                  }
+               ]
+}

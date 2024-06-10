@@ -178,7 +178,7 @@ flush :: proc(io: ^IO) -> os.Errno {
 }
 
 time_out_op :: proc(io: ^IO, completed: ^Completion) {
-	log.warn("timedout")
+	context = completed.ctx
 	switch &op in completed.operation {
 	case Op_Accept:      op.callback(completed.user_data, {}, {}, net.Accept_Error.Would_Block)
 	case Op_Close:       op.callback(completed.user_data, false)

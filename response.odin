@@ -20,6 +20,9 @@ Response :: struct {
 	// NOTE: use `http.response_status` if the response body might have been set already.
 	status:           Status,
 
+	on_sent: proc(c: ^Connection, user: rawptr),
+	on_sent_ud: rawptr,
+
 	// Only for internal usage.
 	_conn:            ^Connection,
 	// TODO/PERF: with some internal refactoring, we should be able to write directly to the
@@ -354,6 +357,16 @@ on_response_sent :: proc(conn_: rawptr, sent: int, err: net.Network_Error) {
 // Response has been sent, clean up and close/handle next.
 @(private)
 clean_request_loop :: proc(conn: ^Connection, close: Maybe(bool) = nil) {
+	if conn.loop.res.on_sent != nil {
+		conn.loop.res.on_sent(conn, conn.loop.res.on_sent_ud)
+	}
+
+	// If the response is switching protocol, do not try to handle new
+	// requests, this is now the user's connection to deal with.
+	if conn.loop.res.status == .Switching_Protocols {
+		return
+	}
+
 	// blocks, size, used := allocator_free_all(&conn.temp_allocator)
 	// log.debugf("temp_allocator had %d blocks of a total size of %m of which %m was used", blocks, size, used)
 	free_all(context.temp_allocator)
@@ -364,7 +377,7 @@ clean_request_loop :: proc(conn: ^Connection, close: Maybe(bool) = nil) {
 	conn.loop.res = {}
 
 	if c, ok := close.?; (ok && c) || conn.state == .Will_Close {
-		connection_close(conn)
+		_connection_close(conn)
 	} else {
 		if !connection_set_state(conn, .Idle) do return
 		conn_handle_req(conn, context.temp_allocator)
