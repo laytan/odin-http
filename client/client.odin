@@ -16,27 +16,6 @@ import http ".."
 import nbio "../nbio/poly"
 import ssl  "../openssl"
 
-// TODO:
-//
-// 1. Proper error propagation and handling
-// 1b. Dispose of a connection where an error happened (network error or 500 error (double check in RFC))
-// 1c. If there are queued requests, spawn a new connection for them
-// 1d. If a connection is closed by the server, how does it get handled, retry configuration?
-// 2. Expand configuration
-// 2b. Max body length
-// 2c. Max header size
-// 3. Cleanup
-// 5. Clearly note what is internal usage only on the structs
-// 6. An API that waits for a response synchronously
-// 7. A poly API
-// 8. Connection pool? (would be some wrapper over the "lower" level stuff)
-// 9. Request timeouts
-// 10. Optionally follow redirects
-// 11. API that automatically handles JSON requests (take an any that is marshalled over the conn)
-// 12. Testing
-// 12b. Big requests > 16kb (a TLS packet)
-// 13. Document all the APIs, define thread-safety (none), param lifetimes and needed destroyers.
-
 ssl_verify_ptr :: #force_inline proc(ptr: $T, loc := #caller_location) where intr.type_is_pointer(T) {
     if intr.expect(ptr == nil, false) {
         logger := context.logger
@@ -307,7 +286,7 @@ connect_cb :: proc(c: ^Connection, user_data: rawptr, callback: On_Connect) {
             c.connect_cb(c, c.connect_ud, err)
             return
         }
-        
+
         c.endpoint = {
             address = record.address,
             port    = c.scheme == .HTTPS ? 443 : 80,
