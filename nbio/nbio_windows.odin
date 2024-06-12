@@ -21,7 +21,7 @@ _init :: proc(io: ^IO, allocator := context.allocator) -> (err: os.Errno) {
 		assert(win.WSACleanup() == win.NO_ERROR)
 	}
 
-	io.iocp = win.CreateIoCompletionPort(win.INVALID_HANDLE_VALUE, nil, nil, 0)
+	io.iocp = win.CreateIoCompletionPort(win.INVALID_HANDLE_VALUE, nil, 0, 0)
 	if io.iocp == nil {
 		err = os.Errno(win.GetLastError())
 		return
@@ -174,7 +174,7 @@ _open :: proc(io: ^IO, path: string, mode, perm: int) -> (os.Handle, os.Errno) {
 
 	// Everything past here is custom/not from `os.open`.
 
-	handle_iocp := win.CreateIoCompletionPort(win.HANDLE(handle), io.iocp, nil, 0)
+	handle_iocp := win.CreateIoCompletionPort(win.HANDLE(handle), io.iocp, 0, 0)
 	assert(handle_iocp == io.iocp)
 
 	cmode: byte
