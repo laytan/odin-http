@@ -140,7 +140,7 @@ prepare_socket :: proc(io: ^IO, socket: net.Any_Socket) -> net.Network_Error {
 
 	handle := win.HANDLE(uintptr(net.any_socket_to_socket(socket)))
 
-	handle_iocp := win.CreateIoCompletionPort(handle, io.iocp, nil, 0)
+	handle_iocp := win.CreateIoCompletionPort(handle, io.iocp, 0, 0)
 	assert(handle_iocp == io.iocp)
 
 	mode: byte
