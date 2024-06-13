@@ -83,6 +83,27 @@ init :: proc(c: ^Client, io: ^nbio.IO, user_data: rawptr, on_init: On_Init, allo
 	load_hosts(c)
 }
 
+init_sync :: proc(c: ^Client, io: ^nbio.IO, allocator := context.allocator) -> (name_servers_err: Init_Error, hosts_err: Init_Error, ok: bool) {
+	context.user_ptr = &name_servers_err
+	init(c, io, &hosts_err, proc(c: ^Client, user: rawptr, name_servers_err: Init_Error, hosts_err: Init_Error) {
+		(^Init_Error)(context.user_ptr)^ = name_servers_err
+		(^Init_Error)(user)^ = hosts_err
+	})
+
+	for {
+		errno := nbio.tick(io)
+		if errno != os.ERROR_NONE {
+			ok = false
+			return
+		}
+
+		if name_servers_err != .Loading && hosts_err != .Loading {
+			ok = true
+			return
+		}
+	}
+}
+
 // Waits until all requests are done and frees all related resources.
 destroy :: proc {
 	destroy_cb,

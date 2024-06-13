@@ -1,3 +1,4 @@
+//+build !js
 package http
 
 import "core:net"
@@ -13,8 +14,6 @@ Handler :: struct {
 	next:      Maybe(^Handler),
 	handle:    Handler_Proc,
 }
-
-// TODO: something like http.handler_with_body which gets the body before calling the handler.
 
 handler :: proc(handle: Handle_Proc) -> Handler {
 	h: Handler

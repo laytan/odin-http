@@ -1,3 +1,4 @@
+//+build !js
 package http
 
 import "core:bufio"

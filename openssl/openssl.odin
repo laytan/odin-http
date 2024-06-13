@@ -2,10 +2,12 @@ package openssl
 
 import "base:runtime"
 import "core:c"
+import "core:net"
 import "core:log"
 import "core:c/libc"
 
-// odinfmt:disable
+import "../client"
+
 when ODIN_OS == .Darwin && ODIN_ARCH == .arm64 {
 	foreign import lib {
 		"./includes/darwin/libssl.a",
@@ -22,7 +24,6 @@ when ODIN_OS == .Darwin && ODIN_ARCH == .arm64 {
 		"system:crypto",
 	}
 }
-// odinfmt:enable
 
 SSL_METHOD :: struct {}
 SSL_CTX :: struct {}
@@ -101,3 +102,73 @@ errors_print_to_log :: proc(logger: ^runtime.Logger) {
 		return 0
 	}, logger)
 }
+
+http_client_ssl_implementation :: proc() -> client.SSL {
+	return {
+		implemented = true,
+		client_create = proc() -> client.SSL_Client {
+			method := TLS_client_method()
+			assert(method != nil)
+			ctx := SSL_CTX_new(method)
+			assert(ctx != nil)
+			return client.SSL_Client(ctx)
+		},
+		connection_create = proc(c: client.SSL_Client, socket: net.TCP_Socket, host: cstring) -> client.SSL_Connection {
+			conn := SSL_new((^SSL_CTX)(c))
+			assert(conn != nil)
+			assert(SSL_set_tlsext_host_name(conn, host) == 1)
+			assert(SSL_set_fd(conn, i32(socket)) == 1)
+			return client.SSL_Connection(conn)
+		},
+		connect = proc(c: client.SSL_Connection) -> client.SSL_Result {
+			ssl := (^SSL)(c)
+			switch ret := SSL_connect(ssl); ret {
+			case 1:
+				return nil
+			case 0:
+				return .Shutdown
+			case:
+				assert(ret < 0)
+				#partial switch error_get(ssl, ret) {
+				case .Want_Read:  return .Want_Read
+				case .Want_Write: return .Want_Write
+				case:             return .Fatal
+				}
+			}
+		},
+		send = proc(c: client.SSL_Connection, buf: []byte) -> (int, client.SSL_Result) {
+			ssl := (^SSL)(c)
+			assert(len(buf) > 0)
+			assert(len(buf) <= int(max(i32)))
+			switch ret := SSL_write(ssl, raw_data(buf), i32(len(buf))); {
+			case ret > 0:
+				assert(int(ret) == len(buf))
+				return int(ret), nil
+			case:
+				#partial switch error_get(ssl, ret) {
+				case .Want_Read:   return 0, .Want_Read
+				case .Want_Write:  return 0, .Want_Write
+				case .Zero_Return: return 0, .Shutdown
+				case:              return 0, .Fatal
+				}
+			}
+		},
+		recv = proc(c: client.SSL_Connection, buf: []byte) -> (int, client.SSL_Result) {
+			ssl := (^SSL)(c)
+			assert(len(buf) > 0)
+			assert(len(buf) <= int(max(i32)))
+			switch ret := SSL_read(ssl, raw_data(buf), i32(len(buf))); {
+			case ret > 0:
+				return int(ret), nil
+			case:
+				#partial switch error_get(ssl, ret) {
+				case .Want_Read:   return 0, .Want_Read
+				case .Want_Write:  return 0, .Want_Write
+				case .Zero_Return: return 0, .Shutdown
+				case:              return 0, .Fatal
+				}
+			}
+		},
+	}
+}
+

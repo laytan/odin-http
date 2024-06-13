@@ -1,3 +1,4 @@
+//+build !js
 package http
 
 import "base:runtime"
@@ -117,8 +118,15 @@ assert_has_td :: #force_inline proc(loc := #caller_location) {
 	assert(td.state != .Uninitialized, "The thread you are calling from is not a server/handler thread", loc)
 }
 
-@(thread_local)
+@(private, thread_local)
 td: Server_Thread
+
+// Returns the implicit IO/event loop for the current handler thread.
+io :: proc(loc := #caller_location) -> ^nbio.IO {
+	assert_has_td(loc)
+	return &td.io
+
+}
 
 Default_Endpoint := net.Endpoint {
 	address = net.IP4_Any,

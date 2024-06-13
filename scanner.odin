@@ -1,5 +1,7 @@
-// TODO: this should ideally be private or at least in another package.
+//+build !js
 package http
+
+// TODO: this should ideally be private or at least in another package.
 
 import "base:intrinsics"
 
@@ -214,8 +216,6 @@ _scanner_scan :: proc(s: ^Scanner) {
 			s.callback(s, "", s._err)
 			return
 		}
-
-		// TODO: write over the part of the buffer already used
 
 		// overflow check
 		new_size := INIT_BUF_SIZE

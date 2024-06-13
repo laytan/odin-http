@@ -1,3 +1,4 @@
+//+build !js
 //+private
 package nbio
 

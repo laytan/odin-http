@@ -125,6 +125,8 @@ open_socket :: proc(
 	return _open_socket(io, family, protocol)
 }
 
+when ODIN_OS != .JS {
+
 /*
 Creates a socket, sets non blocking mode, relates it to the given IO, binds the socket to the given endpoint and starts listening
 
@@ -150,6 +152,8 @@ open_and_listen_tcp :: proc(io: ^IO, ep: net.Endpoint) -> (socket: net.TCP_Socke
 		close(io, socket)
 	}
 	return
+}
+
 }
 
 /*

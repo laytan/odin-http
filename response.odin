@@ -1,3 +1,4 @@
+//+build !js
 package http
 
 import "core:bytes"
@@ -25,8 +26,6 @@ Response :: struct {
 
 	// Only for internal usage.
 	_conn:            ^Connection,
-	// TODO/PERF: with some internal refactoring, we should be able to write directly to the
-	// connection (maybe a small buffer in this struct).
 	_buf:             bytes.Buffer,
 	_heading_written: bool,
 }

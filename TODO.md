@@ -1,17 +1,12 @@
 # TODO
 
-- [ ] TESTS TESTS TESTS
-	- [ ] Can we run the autobahn tests in CI, don't think so?
-- [ ] Get on framework benchmarks (can leave out DB tests (if I can't figure out why what I was doing is slow) I think)
 - [ ] Make sure everything runs under `-sanitize:thread` and `-sanitize:address`
 
 ## HTTP Server
 
 - [ ] Consider switching the temp allocator back again to the custom `allocator.odin`, or remove it
-- [ ] Add an API to set a custom temp allocator
 - [ ] Set (more) timeouts
-- [ ] Overload the router procs so you can do `route_get("/foo", foo)` instead of `route_get("/foo", http.handler(foo))`
-- [ ] `http.io()` that returns `&http.td.io` or errors if it isn't one of the handler threads
+- [x] `http.io()` that returns `&http.td.io` or errors if it isn't one of the handler threads
 
 ## HTTP Client
 
@@ -20,18 +15,16 @@
 	- [ ] If there are queued requests, spawn a new connection for them
 	- [ ] If a connection is closed by the server, how does it get handled, retry configuration?
 - [ ] Expand configuration
-	- [ ] Max body length
-	- [ ] Max header size
+    - [ ] Max response size
 	- [ ] Timeouts
-	- [ ] Follow redirects
-	- [ ] Ingest cookies
-- [ ] Create a thin VTable interface for the OpenSSL functionality (so we can put openSSL in vendor and the rest in core)
+- [x] Create a thin VTable interface for the OpenSSL functionality (so we can put openSSL in vendor and the rest in core)
 - [ ] Synchronous API (just take over the `nbio` event loop until the request is done)
+- [ ] API that takes over event loop until all pending requests are completed
 - [ ] Poly API
 - [ ] Testing
 	- [ ] Big requests > 16kb (a TLS packet)
-- [ ] Nice APIS wrapping over all the configuration
-- [ ] Move into main package?
+- [ ] Consider move into main package, but may be confusing?
+- [ ] Each host has multiple connections, when a request is made, get an available connection or make a new connection.
 
 ## DNS Client
 
@@ -45,6 +38,7 @@
 - [ ] Move the sub /poly package into the main one
 - [ ] Remove toggling the poly API
 - [ ] `#no_bounds_check` the poly API
+- [ ] JS implementation
 
 ## WebSocket Server
 
@@ -56,9 +50,25 @@
 
 - [ ] Implement
 - [ ] Reuse code between server and client
-- [ ] WASM back-end
+
+# Non critical wants
+
+- [ ] Get on framework benchmarks (can leave out DB tests (if I can't figure out why what I was doing is slow) I think)
+
+## HTTP Server
+
+- [ ] Add an API to set a custom temp allocator
+- [ ] Overload the router procs so you can do `route_get("/foo", foo)` instead of `route_get("/foo", http.handler(foo))`
+- [ ] A way to say: "get the body before calling this handler"
+- [ ] An API to write directly to the underlying socket, (to not have the overhead of buffering the body in memory)
+
+## HTTP Client
+
+- [ ] Follow redirects
+- [ ] Ingest cookies / Cookie JAR
+- [ ] Nice APIS wrapping over all the configuration for common actions
 
 ## WASM
 
-- [ ] HTTP Client backed by JS/WASM (This may have to be an additional, even higher level API, or, have the HTTP API be full of opaque structs and have getters)
+- [x] HTTP Client backed by JS/WASM (This may have to be an additional, even higher level API, or, have the HTTP API be full of opaque structs and have getters)
 - [ ] WebSocket Client backed by JS/WASM

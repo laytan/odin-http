@@ -158,7 +158,6 @@ header_parse :: proc(headers: ^Headers, line: string, allocator := context.temp_
 	// There must not be a space before the colon.
 	(line[colon - 1] != ' ') or_return
 
-	// TODO/PERF: only actually relevant/needed if the key is one of these.
 	has_host   := headers_has_unsafe(headers^, "host")
 	cl, has_cl := headers_get_unsafe(headers^, "content-length")
 
