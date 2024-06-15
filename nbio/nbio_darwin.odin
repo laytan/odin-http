@@ -10,7 +10,9 @@ import kqueue "_kqueue"
 _init :: proc(io: ^IO, allocator := context.allocator) -> (err: os.Errno) {
 	qerr: kqueue.Queue_Error
 	io.kq, qerr = kqueue.kqueue()
-	if qerr != .None do return kq_err_to_os_err(qerr)
+	if qerr != .None {
+		return os.Errno(qerr)
+	}
 
 	pool_init(&io.completion_pool, allocator = allocator)
 
@@ -231,10 +233,8 @@ INTERNAL_TIMEOUT :: rawptr(max(uintptr))
 _timeout_completion :: proc(io: ^IO, dur: time.Duration, target: ^Completion) -> ^Completion {
 	assert(target != nil)
 
-	when !ODIN_DISABLE_ASSERT {
-		#partial switch _ in target.operation {
-		case Op_Timeout, Op_Next_Tick, Op_Poll_Remove, Op_Remove: panic("trying to add a timeout to an operation that can't timeout")
-		}
+	#partial switch _ in target.operation {
+	case Op_Timeout, Op_Next_Tick, Op_Remove: panic("trying to add a timeout to an operation that can't timeout")
 	}
 
 	completion := pool_get(&io.completion_pool)
@@ -248,11 +248,35 @@ _timeout_completion :: proc(io: ^IO, dur: time.Duration, target: ^Completion) ->
 	return completion
 }
 
-_timeout_remove :: proc(io: ^IO, timeout: ^Completion) {
-	assert(timeout != nil)
+_remove :: proc(io: ^IO, target: ^Completion) {
+	assert(target != nil)
 
-	op := &timeout.operation.(Op_Timeout)
-	op.expires = { _nsec = -1 }
+	#partial switch &op in target.operation {
+	case Op_Timeout:
+		op.expires = { _nsec = -1 }
+
+		if op.callback == cast(On_Timeout)INTERNAL_TIMEOUT {
+			_remove(io, (^Completion)(target.user_data))
+		}
+
+		return
+	case Op_Next_Tick:
+		panic("can't remove a next_tick event") // NOTE: I mean we could?
+	case Op_Remove:
+		panic("can't remove a remove event")
+	}
+
+	if !target.in_kernel {
+		target.timeout = (^Completion)(REMOVED)
+		return
+	}
+
+	completion := pool_get(&io.completion_pool)
+	completion.operation = Op_Remove {
+		target = target,
+	}
+
+	append(&io.io_pending, completion)
 }
 
 _next_tick :: proc(io: ^IO, user: rawptr, callback: On_Next_Tick) -> ^Completion {
@@ -277,19 +301,6 @@ _poll :: proc(io: ^IO, fd: os.Handle, event: Poll_Event, multi: bool, user: rawp
 		fd       = fd,
 		event    = event,
 		multi    = multi,
-	}
-
-	append(&io.io_pending, completion)
-	return completion
-}
-
-_poll_remove :: proc(io: ^IO, fd: os.Handle, event: Poll_Event) -> ^Completion {
-	completion := pool_get(&io.completion_pool)
-
-	completion.ctx = context
-	completion.operation = Op_Poll_Remove{
-		fd    = fd,
-		event = event,
 	}
 
 	append(&io.io_pending, completion)

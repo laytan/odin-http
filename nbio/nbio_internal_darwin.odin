@@ -3,7 +3,6 @@ package nbio
 
 import "base:runtime"
 
-import "core:log"
 import "core:container/queue"
 import "core:mem"
 import "core:net"
@@ -15,6 +14,7 @@ import kqueue "_kqueue"
 MAX_EVENTS :: 256
 
 TIMED_OUT :: rawptr(max(uintptr))
+REMOVED   :: rawptr(max(uintptr)-1)
 
 _IO :: struct #no_copy {
 	kq:              os.Handle,
@@ -105,13 +105,8 @@ Op_Poll :: struct {
 	multi:    bool,
 }
 
-Op_Poll_Remove :: struct {
-	fd:    os.Handle,
-	event: Poll_Event,
-}
-
 Op_Remove :: struct {
-	operation: ^Operation,
+	target: ^Completion,
 }
 
 flush :: proc(io: ^IO) -> os.Errno {
@@ -125,9 +120,11 @@ flush :: proc(io: ^IO) -> os.Errno {
 			return os.ERROR_NONE
 		}
 
-		ts: kqueue.Time_Spec
+		ts: os.Unix_File_Time
 		new_events, err := kqueue.kevent(io.kq, events[:change_events], events[:], &ts)
-		if err != .None do return ev_err_to_os_err(err)
+		if err != .None {
+			return os.Errno(err)
+		}
 
 		// PERF: this is ordered and O(N), can this be made unordered?
 		remove_range(&io.io_pending, 0, completions_flushed)
@@ -154,8 +151,12 @@ flush :: proc(io: ^IO) -> os.Errno {
 
 		if completed.timeout == (^Completion)(TIMED_OUT) {
 			time_out_op(io, completed)
+            pool_put(&io.completion_pool, completed)
 			continue
-		}
+		} else if completed.timeout == (^Completion)(REMOVED) {
+            pool_put(&io.completion_pool, completed)
+            continue
+        }
 
 		switch &op in completed.operation {
 		case Op_Accept:      do_accept     (io, completed, &op)
@@ -168,7 +169,6 @@ flush :: proc(io: ^IO) -> os.Errno {
 		case Op_Timeout:     do_timeout    (io, completed, &op)
 		case Op_Next_Tick:   do_next_tick  (io, completed, &op)
 		case Op_Poll:        do_poll       (io, completed, &op)
-		case Op_Poll_Remove: do_poll_remove(io, completed, &op)
 		case Op_Remove:      unreachable()
 		case:                unreachable()
 		}
@@ -188,7 +188,7 @@ time_out_op :: proc(io: ^IO, completed: ^Completion) {
 	case Op_Send:        op.callback(completed.user_data, 0, net.UDP_Send_Error.Timeout)      // TODO: may be tcp
 	case Op_Write:       op.callback(completed.user_data, 0, os.EWOULDBLOCK)
 	case Op_Poll:        op.callback(completed.user_data, nil)
-	case Op_Timeout, Op_Next_Tick, Op_Poll_Remove, Op_Remove: panic("timed out untimeoutable")
+	case Op_Timeout, Op_Next_Tick, Op_Remove: panic("timed out untimeoutable")
 	case: unreachable()
 	}
 	pool_put(&io.completion_pool, completed)
@@ -205,101 +205,93 @@ flush_io :: proc(io: ^IO, events: []kqueue.KEvent) -> (changed_events: int, comp
 
 		if completion.timeout == (^Completion)(TIMED_OUT) {
 			time_out_op(io, completion)
+            pool_put(&io.completion_pool, completion)
 			i -= 1
 			continue
-		}
+		} else if completion.timeout == (^Completion)(REMOVED) {
+            pool_put(&io.completion_pool, completion)
+			i -= 1
+			continue
+        }
 
 		completion.in_kernel = true
 
 		switch op in completion.operation {
 		case Op_Accept:
 			event.ident = uintptr(op.sock)
-			event.filter = kqueue.EVFILT_READ
+			event.filter = .Read
 		case Op_Connect:
 			event.ident = uintptr(op.socket)
-			event.filter = kqueue.EVFILT_WRITE
+			event.filter = .Write
 		case Op_Read:
 			event.ident = uintptr(op.fd)
-			event.filter = kqueue.EVFILT_READ
+			event.filter = .Read
 		case Op_Write:
 			event.ident = uintptr(op.fd)
-			event.filter = kqueue.EVFILT_WRITE
+			event.filter = .Write
 		case Op_Recv:
 			event.ident = uintptr(os.Socket(net.any_socket_to_socket(op.socket)))
-			event.filter = kqueue.EVFILT_READ
+			event.filter = .Read
 		case Op_Send:
 			event.ident = uintptr(os.Socket(net.any_socket_to_socket(op.socket)))
-			event.filter = kqueue.EVFILT_WRITE
+			event.filter = .Write
 		case Op_Poll:
 			event.ident = uintptr(op.fd)
 			switch op.event {
-			case .Read:  event.filter = kqueue.EVFILT_READ
-			case .Write: event.filter = kqueue.EVFILT_WRITE
+			case .Read:  event.filter = .Read
+			case .Write: event.filter = .Write
 			case:        unreachable()
 			}
 
-			event.flags = kqueue.EV_ADD | kqueue.EV_ENABLE
+			event.flags = { .Add, .Enable }
 			if !op.multi {
-				event.flags |= kqueue.EV_ONESHOT
+				event.flags += { .One_Shot }
 			}
-
-			event.udata = completion
-
-			continue events_loop
-		case Op_Poll_Remove:
-			event.ident = uintptr(op.fd)
-			switch op.event {
-			case .Read:  event.filter = kqueue.EVFILT_READ
-			case .Write: event.filter = kqueue.EVFILT_WRITE
-			case:        unreachable()
-			}
-
-			event.flags = kqueue.EV_DELETE | kqueue.EV_DISABLE | kqueue.EV_ONESHOT
 
 			event.udata = completion
 
 			continue events_loop
 		case Op_Remove:
-			log.warn("op remove")
-			#partial switch inner_op in op.operation {
+			#partial switch inner_op in op.target.operation {
 			case Op_Accept:
 				event.ident = uintptr(inner_op.sock)
-				event.filter = kqueue.EVFILT_READ
+				event.filter = .Read
 			case Op_Connect:
 				event.ident = uintptr(inner_op.socket)
-				event.filter = kqueue.EVFILT_WRITE
+				event.filter = .Write
 			case Op_Read:
 				event.ident = uintptr(inner_op.fd)
-				event.filter = kqueue.EVFILT_READ
+				event.filter = .Read
 			case Op_Write:
 				event.ident = uintptr(inner_op.fd)
-				event.filter = kqueue.EVFILT_WRITE
+				event.filter = .Write
 			case Op_Recv:
 				event.ident = uintptr(os.Socket(net.any_socket_to_socket(inner_op.socket)))
-				event.filter = kqueue.EVFILT_READ
+				event.filter = .Read
 			case Op_Send:
 				event.ident = uintptr(os.Socket(net.any_socket_to_socket(inner_op.socket)))
-				event.filter = kqueue.EVFILT_WRITE
+				event.filter = .Write
 			case Op_Poll:
 				event.ident = uintptr(inner_op.fd)
 				switch inner_op.event {
-				case .Read:  event.filter = kqueue.EVFILT_READ
-				case .Write: event.filter = kqueue.EVFILT_WRITE
+				case .Read:  event.filter = .Read
+				case .Write: event.filter = .Write
 				case:        unreachable()
 				}
 			case: panic("can not remove op")
 			}
 
-			event.flags = kqueue.EV_DELETE | kqueue.EV_DISABLE | kqueue.EV_ONESHOT
+			event.flags = { .Delete, .Disable, .One_Shot }
 
 			pool_put(&io.completion_pool, completion)
+			pool_put(&io.completion_pool, op.target)
 			continue events_loop
 
 		case Op_Timeout, Op_Close, Op_Next_Tick:
 			panic("invalid completion operation queued")
 		}
 
-		event.flags = kqueue.EV_ADD | kqueue.EV_ENABLE | kqueue.EV_ONESHOT
+		event.flags = { .Add, .Enable, .One_Shot }
 		event.udata = completion
 	}
 
@@ -395,12 +387,10 @@ do_connect :: proc(io: ^IO, completion: ^Completion, op: ^Op_Connect) {
 do_read :: proc(io: ^IO, completion: ^Completion, op: ^Op_Read) {
 	read: int
 	err: os.Errno
-	//odinfmt:disable
 	switch {
 	case op.offset >= 0: read, err = os.read_at(op.fd, op.buf, i64(op.offset))
 	case:                read, err = os.read(op.fd, op.buf)
 	}
-	//odinfmt:enable
 
 	op.read += read
 
@@ -522,12 +512,10 @@ do_send :: proc(io: ^IO, completion: ^Completion, op: ^Op_Send) {
 do_write :: proc(io: ^IO, completion: ^Completion, op: ^Op_Write) {
 	written: int
 	err: os.Errno
-	//odinfmt:disable
 	switch {
 	case op.offset >= 0: written, err = os.write_at(op.fd, op.buf, i64(op.offset))
 	case:                written, err = os.write(op.fd, op.buf)
 	}
-	//odinfmt:enable
 
 	op.written += written
 
@@ -572,7 +560,7 @@ do_timeout :: proc(io: ^IO, completion: ^Completion, op: ^Op_Timeout) {
 		// Timeout while the op is in the kernel, need to add a remove event to clean it out.
 		if timed_out.in_kernel {
 			completion.operation = Op_Remove {
-				operation = &timed_out.operation,
+				target = timed_out,
 			}
 			append(&io.io_pending, completion)
 			time_out_op(io, timed_out)
@@ -597,57 +585,9 @@ do_poll :: proc(io: ^IO, completion: ^Completion, op: ^Op_Poll) {
 	}
 }
 
-do_poll_remove :: proc(io: ^IO, completion: ^Completion, op: ^Op_Poll_Remove) {
-	pool_put(&io.completion_pool, completion)
-}
-
 do_next_tick :: proc(io: ^IO, completion: ^Completion, op: ^Op_Next_Tick) {
 	op.callback(completion.user_data)
 	pool_put(&io.completion_pool, completion)
-}
-
-kq_err_to_os_err :: proc(err: kqueue.Queue_Error) -> os.Errno {
-	switch err {
-	case .Out_Of_Memory:
-		return os.ENOMEM
-	case .Descriptor_Table_Full:
-		return os.EMFILE
-	case .File_Table_Full:
-		return os.ENFILE
-	case .Unknown:
-		return os.EFAULT
-	case .None:
-		fallthrough
-	case:
-		return os.ERROR_NONE
-	}
-}
-
-ev_err_to_os_err :: proc(err: kqueue.Event_Error) -> os.Errno {
-	switch err {
-	case .Access_Denied:
-		return os.EACCES
-	case .Invalid_Event:
-		return os.EFAULT
-	case .Invalid_Descriptor:
-		return os.EBADF
-	case .Signal:
-		return os.EINTR
-	case .Invalid_Timeout_Or_Filter:
-		return os.EINVAL
-	case .Event_Not_Found:
-		return os.ENOENT
-	case .Out_Of_Memory:
-		return os.ENOMEM
-	case .Process_Not_Found:
-		return os.ESRCH
-	case .Unknown:
-		return os.EFAULT
-	case .None:
-		fallthrough
-	case:
-		return os.ERROR_NONE
-	}
 }
 
 // Private proc in net package, verbatim copy.

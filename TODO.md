@@ -56,6 +56,7 @@
 # Non critical wants
 
 - [ ] Get on framework benchmarks (can leave out DB tests (if I can't figure out why what I was doing is slow) I think)
+- [ ] Support the BSDs
 
 ## HTTP Server
 

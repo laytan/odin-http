@@ -1,12 +1,10 @@
 package openssl
 
-import "base:runtime"
 import "core:c"
 import "core:net"
-import "core:log"
 import "core:c/libc"
 
-import "../client"
+import http ".."
 
 when ODIN_OS == .Darwin && ODIN_ARCH == .arm64 {
 	foreign import lib {
@@ -41,7 +39,7 @@ foreign lib {
 	SSL_new :: proc(ctx: ^SSL_CTX) -> ^SSL ---
 	SSL_set_fd :: proc(ssl: ^SSL, fd: c.int) -> c.int ---
 	SSL_connect :: proc(ssl: ^SSL) -> c.int ---
-	SSL_get_error :: proc(ssl: ^SSL, ret: c.int) -> c.int ---
+	SSL_get_error :: proc(ssl: ^SSL, ret: c.int) -> Error ---
 	ERR_print_errors_fp :: proc(fp: ^libc.FILE) ---
 	ERR_print_errors_cb :: proc(cb: Error_Callback, u: rawptr) ---
 	SSL_read :: proc(ssl: ^SSL, buf: [^]byte, num: c.int) -> c.int ---
@@ -65,7 +63,7 @@ ERR_print_errors_stderr :: proc() {
 	ERR_print_errors_fp(libc.stderr)
 }
 
-Error :: enum {
+Error :: enum c.int {
 	None,
 	Ssl,
 	Want_Read,
@@ -80,47 +78,30 @@ Error :: enum {
 	Want_Client_Hello_CB,
 }
 
-error_get :: proc(ssl: ^SSL, ret: c.int) -> Error {
-	return Error(SSL_get_error(ssl, ret))
-}
-
-errors_print :: proc {
-	ERR_print_errors_fp,
-	errors_print_to_stderr,
-	ERR_print_errors_cb,
-	errors_print_to_log,
-}
-
-errors_print_to_stderr :: #force_inline proc() { errors_print(libc.stderr) }
-
-errors_print_to_log :: proc(logger: ^runtime.Logger) {
-	ERR_print_errors_cb(proc "c" (str: cstring, len: c.size_t, u: rawptr) -> c.int {
-		context = runtime.default_context()
-		context.logger = (cast(^runtime.Logger)u)^
-
-		log.error(string((cast([^]byte)str)[:len]))
-		return 0
-	}, logger)
-}
-
-http_client_ssl_implementation :: proc() -> client.SSL {
+http_client_ssl_implementation :: proc() -> http.Client_SSL {
 	return {
 		implemented = true,
-		client_create = proc() -> client.SSL_Client {
+		client_create = proc() -> http.SSL_Client {
 			method := TLS_client_method()
 			assert(method != nil)
 			ctx := SSL_CTX_new(method)
 			assert(ctx != nil)
-			return client.SSL_Client(ctx)
+			return http.SSL_Client(ctx)
 		},
-		connection_create = proc(c: client.SSL_Client, socket: net.TCP_Socket, host: cstring) -> client.SSL_Connection {
+		client_destroy = proc(c: http.SSL_Client) {
+			SSL_CTX_free((^SSL_CTX)(c))
+		},
+		connection_create = proc(c: http.SSL_Client, socket: net.TCP_Socket, host: cstring) -> http.SSL_Connection {
 			conn := SSL_new((^SSL_CTX)(c))
 			assert(conn != nil)
 			assert(SSL_set_tlsext_host_name(conn, host) == 1)
 			assert(SSL_set_fd(conn, i32(socket)) == 1)
-			return client.SSL_Connection(conn)
+			return http.SSL_Connection(conn)
 		},
-		connect = proc(c: client.SSL_Connection) -> client.SSL_Result {
+		connection_destroy = proc(c: http.SSL_Client, conn: http.SSL_Connection) {
+			SSL_free((^SSL)(conn))
+		},
+		connect = proc(c: http.SSL_Connection) -> http.SSL_Result {
 			ssl := (^SSL)(c)
 			switch ret := SSL_connect(ssl); ret {
 			case 1:
@@ -129,14 +110,14 @@ http_client_ssl_implementation :: proc() -> client.SSL {
 				return .Shutdown
 			case:
 				assert(ret < 0)
-				#partial switch error_get(ssl, ret) {
+				#partial switch SSL_get_error(ssl, ret) {
 				case .Want_Read:  return .Want_Read
 				case .Want_Write: return .Want_Write
 				case:             return .Fatal
 				}
 			}
 		},
-		send = proc(c: client.SSL_Connection, buf: []byte) -> (int, client.SSL_Result) {
+		send = proc(c: http.SSL_Connection, buf: []byte) -> (int, http.SSL_Result) {
 			ssl := (^SSL)(c)
 			assert(len(buf) > 0)
 			assert(len(buf) <= int(max(i32)))
@@ -145,7 +126,7 @@ http_client_ssl_implementation :: proc() -> client.SSL {
 				assert(int(ret) == len(buf))
 				return int(ret), nil
 			case:
-				#partial switch error_get(ssl, ret) {
+				#partial switch SSL_get_error(ssl, ret) {
 				case .Want_Read:   return 0, .Want_Read
 				case .Want_Write:  return 0, .Want_Write
 				case .Zero_Return: return 0, .Shutdown
@@ -153,7 +134,7 @@ http_client_ssl_implementation :: proc() -> client.SSL {
 				}
 			}
 		},
-		recv = proc(c: client.SSL_Connection, buf: []byte) -> (int, client.SSL_Result) {
+		recv = proc(c: http.SSL_Connection, buf: []byte) -> (int, http.SSL_Result) {
 			ssl := (^SSL)(c)
 			assert(len(buf) > 0)
 			assert(len(buf) <= int(max(i32)))
@@ -161,7 +142,7 @@ http_client_ssl_implementation :: proc() -> client.SSL {
 			case ret > 0:
 				return int(ret), nil
 			case:
-				#partial switch error_get(ssl, ret) {
+				#partial switch SSL_get_error(ssl, ret) {
 				case .Want_Read:   return 0, .Want_Read
 				case .Want_Write:  return 0, .Want_Write
 				case .Zero_Return: return 0, .Shutdown

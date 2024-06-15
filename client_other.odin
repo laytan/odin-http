@@ -6,7 +6,6 @@ import intr "base:intrinsics"
 
 import      "core:bufio"
 import      "core:log"
-import      "core:fmt"
 import      "core:mem"
 import      "core:net"
 import      "core:os"
@@ -21,24 +20,23 @@ _client_init :: proc(c: ^Client, io: ^nbio.IO, allocator := context.allocator) -
 	c.io = io
 	c.conns.allocator = allocator
 
-	if c.dnsc == nil {
-		c.dnsc = new(dns.Client, allocator)
-
-		ns_err, hosts_err, ok := dns.init_sync(c.dnsc, c.io, allocator)
-		if ns_err != nil {
-			log.errorf("DNS client init: name servers error: %v", ns_err)
-		}
-		if hosts_err != nil {
-			log.errorf("DNS client init: hosts error: %v", hosts_err)
-		}
-		if !ok {
-			return false
-		}
+	// NOTE: this is "blocking"
+	ns_err, hosts_err, ok := dns.init_sync(&c.dnsc, c.io, allocator)
+	if ns_err != nil {
+		log.errorf("DNS client init: name servers error: %v", ns_err)
+	}
+	if hosts_err != nil {
+		log.errorf("DNS client init: hosts error: %v", hosts_err)
+	}
+	if !ok {
+		return false
 	}
 
 	if client_ssl.implemented {
 		assert(client_ssl.client_create != nil)
+		assert(client_ssl.client_destroy != nil)
 		assert(client_ssl.connection_create != nil)
+		assert(client_ssl.connection_destroy != nil)
 		assert(client_ssl.connect != nil)
 		assert(client_ssl.send != nil)
 		assert(client_ssl.recv != nil)
@@ -49,10 +47,76 @@ _client_init :: proc(c: ^Client, io: ^nbio.IO, allocator := context.allocator) -
 	return true
 }
 
+_client_destroy :: proc(c: ^Client) {
+	context.allocator = c.allocator
+
+	for ep, &conns in c.conns {
+		#reverse for conn, i in conns {
+			switch conn.state {
+			case .Pending, .Failed, .Closed:
+				log.debug("freeing connection")
+				strings.builder_destroy(&conn.buf)
+				scanner_destroy(&conn.scanner)
+				free(conn)
+				ordered_remove(&conns, i)
+			case .Connected:
+				log.debug("closing connection")
+				conn.state = .Closing
+				nbio.close(c.io, conn.socket, c, conn, proc(c: ^Client, conn: ^Client_Connection, ok: bool) {
+					if conn.ssl != nil {
+						client_ssl.connection_destroy(c.ssl, conn.ssl)
+					}
+					conn.state = .Closed
+				})
+			case .Connecting, .Requesting, .Sent_Headers, .Sent_Request, .Closing:
+			}
+		}
+
+		if len(conns) <= 0 {
+			delete(conns)
+			delete_key(&c.conns, ep)
+		}
+	}
+
+	if len(c.conns) > 0 {
+		nbio.next_tick(c.io, c, _client_destroy)
+		return
+	}
+
+	delete(c.conns)
+
+	dns.destroy(&c.dnsc)
+
+	if c.ssl != nil {
+		client_ssl.client_destroy(c.ssl)
+	}
+
+	log.debug("client destroyed")
+}
+
+_response_destroy :: proc(c: ^Client, res: Client_Response) {
+	context.allocator = c.allocator
+
+	for k, v in res.headers._kv {
+		delete(k)
+		delete(v)
+	}
+	headers_destroy(res.headers)
+
+	for cookie in res.cookies {
+		delete(cookie.value)
+	}
+	delete(res.cookies)
+
+	delete(res.body)
+}
+
 _Client :: struct {
     allocator: mem.Allocator,
     io:        ^nbio.IO,
-	dnsc:      ^dns.Client,
+	// TODO: ideally the dns client is able to be set by the user.
+	// So you can run multiple clients on the same DNS client?
+	dnsc:      dns.Client,
 	ssl:       SSL_Client,
 	conns:     map[net.Endpoint][dynamic]^Client_Connection,
 }
@@ -62,6 +126,7 @@ In_Flight :: struct {
 	c:       ^_Client,
 	conn:    ^Client_Connection,
 	res:     Client_Response,
+	ep:      net.Endpoint,
 	user:    rawptr,
 	cb:      On_Response,
 }
@@ -85,6 +150,8 @@ Client_Connection_State :: enum {
 	Requesting,
 	Sent_Headers,
 	Sent_Request,
+	Closing,
+	Closed,
 	Failed,
 }
 
@@ -102,11 +169,16 @@ _client_request :: proc(c: ^Client, req: Client_Request, user: rawptr, cb: On_Re
 	r.user = user
 	r.cb = cb
 
+	// TODO: determine HTTP or HTTPS from request
+	// + port if not provided.
+
     switch t in host_or_endpoint {
     case net.Endpoint:
+		r.ep = t
 		on_dns_resolve(r, { t.address, max(u32) }, nil)
     case net.Host:
-		dns.resolve(c.dnsc, t.hostname, r, on_dns_resolve)
+		r.ep.port = t.port
+		dns.resolve(&c.dnsc, t.hostname, r, on_dns_resolve)
     case:
         unreachable()
     }
@@ -120,24 +192,30 @@ _client_request :: proc(c: ^Client, req: Client_Request, user: rawptr, cb: On_Re
 			return
 		}
 
-		port := r.url.scheme == "https" ? 443 : 80
-		endpoint := net.Endpoint{ record.address, port }
+		r.ep.address = record.address
 
-		log.debugf("DNS of %q resolved to %v", r.url.host, endpoint)
+		log.debugf("DNS of %v resolved to %v", r.url, r.ep)
 
-		if endpoint not_in r.c.conns {
-			r.c.conns[endpoint] = {}
+		// TODO: clean this all up.
+		// a connection should be keyed by hostname/ssl.
+		// have a free connections list, etc.
+
+		{
+			context.allocator = r.c.allocator
+			if r.ep not_in r.c.conns {
+				r.c.conns[r.ep] = {}
+			}
+
+			conns := &r.c.conns[r.ep]
+			conn, has_conn := pop_safe(conns)
+			if !has_conn {
+				log.debug("no ready connections for that endpoint")
+				conn = new(Client_Connection, r.c.allocator)
+			}
+
+			r.conn = conn
+			r.conn.ep = r.ep
 		}
-
-		conns := &r.c.conns[endpoint]
-		conn, has_conn := pop_safe(conns)
-		if !has_conn {
-			log.debug("no ready connections for that endpoint")
-			conn = new(Client_Connection, r.c.allocator)
-		}
-
-		r.conn = conn
-		r.conn.ep = endpoint
 		connect(r)
 	}
 
@@ -412,6 +490,10 @@ _client_request :: proc(c: ^Client, req: Client_Request, user: rawptr, cb: On_Re
 		scanner_recv :: proc(r: rawptr, buf: []byte, s: ^Scanner, callback: On_Scanner_Read) {
 			r := (^In_Flight)(r)
 
+			// TODO: use the timeout.
+
+			// TODO: don't rely on port.
+
 			if r.conn.ep.port != 443 {
 				log.debug("executing non-SSL read")
 				nbio.recv(
@@ -511,6 +593,9 @@ _client_request :: proc(c: ^Client, req: Client_Request, user: rawptr, cb: On_Re
 			}
 
 			log.debugf("got valid response line %q, parsing headers...", token)
+
+			headers_init(&r.headers, r.c.allocator)
+
 			scanner_scan(&r.conn.scanner, r, on_header_line)
 		}
 
@@ -521,13 +606,15 @@ _client_request :: proc(c: ^Client, req: Client_Request, user: rawptr, cb: On_Re
 				return
 			}
 
+			// NOTE: any errors should destroy all allocations.
+
 			// First empty line means end of headers.
 			if len(token) == 0 {
 				on_headers_end(r)
 				return
 			}
 
-			key, ok := header_parse(&r.conn.headers, token, /*r.allocator*/)
+			key, ok := header_parse(&r.conn.headers, token, r.c.allocator)
 			if !ok {
 				log.errorf("invalid response header line %q", token)
 				handle_net_err(r, net.TCP_Recv_Error.Aborted) // TODO: a proper error.
@@ -537,9 +624,9 @@ _client_request :: proc(c: ^Client, req: Client_Request, user: rawptr, cb: On_Re
 			if key == "set-cookie" {
 				cookie_str := headers_get_unsafe(r.conn.headers, "set-cookie")
 				headers_delete_unsafe(&r.conn.headers, "set-cookie")
-				delete(key, /*r.allocator*/)
+				delete(key, r.c.allocator)
 
-				cookie, cok := cookie_parse(cookie_str, /*r.allocator*/)
+				cookie, cok := cookie_parse(cookie_str, r.c.allocator) // NOTE: this allocator is used for temp allocations.
 				if !cok {
 					log.errorf("invalid cookie %q in header %q", cookie_str, token)
 					handle_net_err(r, net.TCP_Recv_Error.Aborted) // TODO: a proper error.
@@ -571,15 +658,20 @@ _client_request :: proc(c: ^Client, req: Client_Request, user: rawptr, cb: On_Re
 				return
 			}
 
+			r.conn.state = .Connected
+
 			r.res.headers = r.conn.headers
 			r.res.headers.readonly = true
 
-			r.res.body = make([]byte, len(body))
+			r.res.body = make([]byte, len(body), r.c.allocator)
 			copy(r.res.body, body)
 
-			// TODO: clean it all up
+			conns := &r.c.conns[r.ep]
+			append(conns, r.conn)
 
 			r.cb(r.res, r.user, nil)
+
+			free(r, r.c.allocator)
 		}
 	}
 }

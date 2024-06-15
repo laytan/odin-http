@@ -1,7 +1,5 @@
 package nbio
 
-import "core:net"
-import "core:os"
 import "core:time"
 
 On_Timeout :: #type proc(user: rawptr)

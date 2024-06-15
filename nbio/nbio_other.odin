@@ -151,6 +151,10 @@ Using the given socket, accepts the next incoming connection, calling the callba
 
 *Due to platform limitations, you must pass a socket that was opened using the `open_socket` and related procedures from this package*
 
+TODO: this is also the case in other calls.
+
+NOTE: if `close` is called on the socket while an `accept` is waiting in the event loop, the `accept` will never call back.
+
 Inputs:
 - io:     The IO instance to use
 - socket: A bound and listening socket *that was created using this package*
@@ -411,27 +415,13 @@ Inputs:
 - io:       The IO instance to use
 - fd:       The file descriptor to poll
 - event:    Whether to call the callback when `fd` is ready to be read from, or be written to
-- multi:    Keeps the poll after an event happens, calling the callback again for further events, remove poll with `poll_remove`
+- multi:    Keeps the poll after an event happens, calling the callback again for further events, remove poll with `remove`
 */
 poll :: proc {
 	poll_raw,
 	poll1,
 	poll2,
 	poll3,
-}
-
-/*
-Removes the polling for this `subject`+`event` pairing
-
-This is only needed when `poll` was called with `multi` set to `true`
-
-Inputs:
-- io:       The IO instance to use
-- fd:       The file descriptor to remove the poll of
-- event:    The event to remove the poll of
-*/
-poll_remove :: proc(io: ^IO, fd: os.Handle, event: Poll_Event) -> ^Completion {
-	return _poll_remove(io, fd, event)
 }
 
 @(private)
@@ -446,6 +436,5 @@ Operation :: union #no_nil {
 	Op_Timeout,
 	Op_Next_Tick,
 	Op_Poll,
-	Op_Poll_Remove,
-	Op_Remove, // TODO: make poll remove use this one too.
+	Op_Remove,
 }

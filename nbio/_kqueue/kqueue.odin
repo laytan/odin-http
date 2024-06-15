@@ -1,52 +1,47 @@
-//+build darwin
+//+build darwin, openbsd, freebsd
 package kqueue
+
+when ODIN_OS == .Darwin {
+	foreign import lib "system:System.framework"
+} else {
+	foreign import lib "system:c"
+}
 
 import "core:c"
 import "core:os"
 
 Queue_Error :: enum {
 	None,
-	Out_Of_Memory,
-	Descriptor_Table_Full,
-	File_Table_Full,
-	Unknown,
+	Out_Of_Memory         = int(os.ENOMEM),
+	Descriptor_Table_Full = int(os.EMFILE),
+	File_Table_Full       = int(os.ENFILE),
 }
 
 kqueue :: proc() -> (kq: os.Handle, err: Queue_Error) {
 	kq = os.Handle(_kqueue())
 	if kq == -1 {
-		switch os.Errno(os.get_last_error()) {
-		case os.ENOMEM:
-			err = .Out_Of_Memory
-		case os.EMFILE:
-			err = .Descriptor_Table_Full
-		case os.ENFILE:
-			err = .File_Table_Full
-		case:
-			err = .Unknown
-		}
+		err = Queue_Error(os.get_last_error())
 	}
 	return
 }
 
 Event_Error :: enum {
 	None,
-	Access_Denied,
-	Invalid_Event,
-	Invalid_Descriptor,
-	Signal,
-	Invalid_Timeout_Or_Filter,
-	Event_Not_Found,
-	Out_Of_Memory,
-	Process_Not_Found,
-	Unknown,
+	Access_Denied             = int(os.EACCES),
+	Invalid_Event             = int(os.EFAULT),
+	Invalid_Descriptor        = int(os.EBADF),
+	Signal                    = int(os.EINTR),
+	Invalid_Timeout_Or_Filter = int(os.EINVAL),
+	Event_Not_Found           = int(os.ENOENT),
+	Out_Of_Memory             = int(os.ENOMEM),
+	Process_Not_Found         = int(os.ESRCH),
 }
 
 kevent :: proc(
 	kq: os.Handle,
 	change_list: []KEvent,
 	event_list: []KEvent,
-	timeout: ^Time_Spec,
+	timeout: ^os.Unix_File_Time,
 ) -> (
 	n_events: int,
 	err: Event_Error,
@@ -62,78 +57,98 @@ kevent :: proc(
 		),
 	)
 	if n_events == -1 {
-		switch os.Errno(os.get_last_error()) {
-		case os.EACCES:
-			err = .Access_Denied
-		case os.EFAULT:
-			err = .Invalid_Event
-		case os.EBADF:
-			err = .Invalid_Descriptor
-		case os.EINTR:
-			err = .Signal
-		case os.EINVAL:
-			err = .Invalid_Timeout_Or_Filter
-		case os.ENOENT:
-			err = .Event_Not_Found
-		case os.ENOMEM:
-			err = .Out_Of_Memory
-		case os.ESRCH:
-			err = .Process_Not_Found
-		case:
-			err = .Unknown
-		}
+		err = Event_Error(os.get_last_error())
 	}
 	return
 }
 
 KEvent :: struct {
-	ident:  c.uintptr_t,
-	filter: c.int16_t,
-	flags:  c.uint16_t,
-	fflags: c.uint32_t,
-	data:   c.intptr_t,
+	// Value used to identify this event.  The exact interpretation
+	// is determined by the attached filter, but often is a file
+	// descriptor.
+	ident:  uintptr,
+	filter: Filter,
+	// Actions to perform on the event.
+	flags:  Flags,
+	// Filter specific flags.
+	fflags: struct #raw_union {
+		read:   RW_Flags,
+		write:  RW_Flags,
+		vnode:  VNode_Flags,
+		fproc:   u32, // TODO: weird flag values.
+	},
+	// Filter specific data.
+	// read:  on connected sockets this is the listen backlog, otherwise the amount of bytes.
+	// write: the amount of bytes ready to write without blocking.
+	// vnode: nothing.
+	// proc:  nothing.
+	data:   int,
+	// Opaque user data passed through the kernel unchanged.
 	udata:  rawptr,
 }
 
-Time_Spec :: struct {
-	sec:  c.long,
-	nsec: c.long,
+Flag :: enum {
+	Add,            // Add event to kq (implies .Enable).
+	Delete,         // Delete event from kq.
+	Enable,         // Enable event.
+	Disable,        // Disable event (not reported).
+	One_Shot,       // Only report one occurrence.
+	Clear,          // Clear event state after reporting.
+	Dispatch,       // Disable event after reporting.
+	Udata_Specific, // Unique event per udata value.
+	Fanished,       // Report that source has vanished.
+	Sys_Flags,      // Reserved by system.
+	Flag0,          // Filter-specific flag.
+	Flag1,          // Filter-specific flag.
+	Error,          // Error, data contains errno.
+	EOF,            // EOF detected.
 }
 
-EV_ADD :: 0x0001 /* add event to kq (implies enable) */
-EV_DELETE :: 0x0002 /* delete event from kq */
-EV_ENABLE :: 0x0004 /* enable event */
-EV_DISABLE :: 0x0008 /* disable event (not reported) */
-EV_ONESHOT :: 0x0010 /* only report one occurrence */
-EV_CLEAR :: 0x0020 /* clear event state after reporting */
-EV_RECEIPT :: 0x0040 /* force immediate event output */
-EV_DISPATCH :: 0x0080 /* disable event after reporting */
-EV_UDATA_SPECIFIC :: 0x0100 /* unique kevent per udata value */
-EV_FANISHED :: 0x0200 /* report that source has vanished  */
-EV_SYSFLAGS :: 0xF000 /* reserved by system */
-EV_FLAG0 :: 0x1000 /* filter-specific flag */
-EV_FLAG1 :: 0x2000 /* filter-specific flag */
-EV_ERROR :: 0x4000 /* error, data contains errno */
-EV_EOF :: 0x8000 /* EOF detected */
-EV_DISPATCH2 :: (EV_DISPATCH | EV_UDATA_SPECIFIC)
+Flags :: bit_set[Flag; u16]
 
-EVFILT_READ :: -1
-EVFILT_WRITE :: -2
-EVFILT_AIO :: -3
-EVFILT_VNODE :: -4
-EVFILT_PROC :: -5
-EVFILT_SIGNAL :: -6
-EVFILT_TIMER :: -7
-EVFILT_MACHPORT :: -8
-EVFILT_FS :: -9
-EVFILT_USER :: -10
-EVFILT_VM :: -12
-EVFILT_EXCEPT :: -15
+DISPATCH_2 :: Flags{ .Dispatch, .Udata_Specific }
 
-@(default_calling_convention = "c")
-foreign _ {
+Filter :: enum i16 {
+	// Check for read availability on the file descriptor.
+	Read      = -1,
+	// Check for write availability on the file descriptor.
+	Write     = -2,
+	// AIO       = -3,
+	// Check for changes to the subject file.
+	VNode     = -4,
+	// Check for changes to the subject process.
+	Proc      = -5,
+	// Check for signals delivered to the process.
+	Signal    = -6,
+	// Timer     = -7,
+	// Mach_Port = -8,
+	// FS        = -9,
+	// User      = -10,
+	// VM        = -12,
+	// Except    = -15,
+}
+
+RW_Flag :: enum {
+	Low_Water_Mark,
+	Out_Of_Bounds,
+}
+RW_Flags :: bit_set[RW_Flag; u32]
+
+VNode_Flag :: enum {
+	Delete, // Deleted.
+	Write,  // Contents changed.
+	Extend, // Size increased.
+	Attrib, // Attributes changed.
+	Link,   // Link count changed.
+	Rename, // Renamed.
+	Revoke, // Access was revoked.
+}
+VNode_Flags :: bit_set[VNode_Flag; u32]
+
+@(private)
+foreign lib {
 	@(link_name = "kqueue")
 	_kqueue :: proc() -> c.int ---
 	@(link_name = "kevent")
-	_kevent :: proc(kq: c.int, change_list: [^]KEvent, n_changes: c.int, event_list: [^]KEvent, n_events: c.int, timeout: ^Time_Spec) -> c.int ---
+	_kevent :: proc(kq: c.int, change_list: [^]KEvent, n_changes: c.int, event_list: [^]KEvent, n_events: c.int, timeout: ^os.Unix_File_Time) -> c.int ---
 }

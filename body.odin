@@ -255,6 +255,8 @@ _body_chunked :: proc(sub: ^Has_Body, max_length: int = -1, user_data: rawptr, c
 		scanner_scan(s.sub._scanner, s, on_scan_empty_line)
 	}
 
+	// TODO: this needs changing to accomedate the client.
+
 	on_scan_trailer :: proc(s: ^Chunked_State, line: string, err: bufio.Scanner_Error) {
 		// Headers are done, success.
 		if err != nil || len(line) == 0 {
@@ -272,7 +274,7 @@ _body_chunked :: proc(sub: ^Has_Body, max_length: int = -1, user_data: rawptr, c
 			return
 		}
 
-		key, ok := header_parse(&s.sub.headers, string(line))
+		key, ok := header_parse(&s.sub.headers, string(line), context.temp_allocator)
 		if !ok {
 			log.infof("Invalid header when decoding chunked body: %q", string(line))
 			s.cb(s.user_data, "", .Unknown)

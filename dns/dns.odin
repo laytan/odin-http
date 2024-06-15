@@ -139,7 +139,7 @@ cache_clear :: proc(c: ^Client) {
 
         delete(hostname, c.allocator)
         delete_key(&c.cache, hostname)
-        nbio.timeout_remove(c.io, entry.evictor)
+        nbio.remove(c.io, entry.evictor)
     }
 }
 
@@ -149,7 +149,7 @@ cache_evict :: proc(c: ^Client, hostname: string) {
         log.debugf("DNS of %q has been evicted", hostname)
         delete_key(&c.cache, hostname)
         delete(hostname, c.allocator)
-        nbio.timeout_remove(c.io, entry.evictor)
+        nbio.remove(c.io, entry.evictor)
     }
 }
 

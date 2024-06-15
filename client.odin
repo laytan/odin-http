@@ -66,6 +66,16 @@ client_init :: proc(c: ^Client, io: ^nbio.IO, allocator := context.allocator) {
 	_client_init(c, io, allocator)
 }
 
+client_destroy :: proc(c: ^Client) {
+	_client_destroy(c)
+}
+
+// TODO: accept a different allocator, on which the response is allocated.
+
 client_request :: proc(c: ^Client, req: Client_Request, user: rawptr, cb: On_Response) {
 	_client_request(c, req, user, cb)
+}
+
+response_destroy :: proc(c: ^Client, res: Client_Response) {
+	_response_destroy(c, res)
 }

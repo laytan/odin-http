@@ -4,8 +4,6 @@ package http
 import "base:runtime"
 
 import "core:log"
-import "core:net"
-import "core:strconv"
 import "core:strings"
 import "core:text/match"
 

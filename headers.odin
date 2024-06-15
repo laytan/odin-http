@@ -8,11 +8,11 @@ Headers :: struct {
 	readonly: bool,
 }
 
-headers_init :: proc(h: ^Headers, allocator := context.temp_allocator) {
+headers_init :: proc(h: ^Headers, allocator := context.allocator) {
 	h._kv.allocator = allocator
 }
 
-headers_destroy :: proc(h: ^Headers) {
+headers_destroy :: proc(h: Headers) {
 	delete(h._kv)
 }
 
@@ -97,7 +97,7 @@ Escapes any newlines and converts ASCII to lowercase.
 */
 @(private="file")
 sanitize_key :: proc(h: Headers, k: string) -> string {
-    allocator := h._kv.allocator if h._kv.allocator.procedure != nil else context.temp_allocator
+    allocator := h._kv.allocator
 
 	// general +4 in rare case of newlines, so we might not need to reallocate.
 	b := strings.builder_make(0, len(k)+4, allocator)

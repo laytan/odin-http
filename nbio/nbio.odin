@@ -97,18 +97,25 @@ next_tick :: proc {
 	next_tick3,
 }
 
+/*
+Removes the given target from the event loop.
+
+Common use would be to cancel a timeout, remove a polling, or remove an `accept` before calling `close` on it's socket.
+*/
+remove :: proc(io: ^IO, target: ^Completion) {
+	if target == nil {
+		return
+	}
+
+	_remove(io, target)
+}
+
 // TODO: document.
 with_timeout :: proc(io: ^IO, dur: time.Duration, target: ^Completion, loc := #caller_location) -> ^Completion {
 	if target == nil do return nil
 	if dur == 0 do return nil
 
 	return _timeout_completion(io, dur, target)
-}
-
-// TODO: document.
-timeout_remove :: proc(io: ^IO, timeout: ^Completion) {
-	if timeout == nil do return
-	_timeout_remove(io, timeout)
 }
 
 MAX_USER_ARGUMENTS :: size_of(rawptr) * 5

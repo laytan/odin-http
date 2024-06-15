@@ -63,16 +63,11 @@ Default_Server_Opts := Server_Opts {
 
 @(init, private)
 server_opts_init :: proc() {
-	when ODIN_OS == .Linux || ODIN_OS == .Darwin {
-		Default_Server_Opts.thread_count = os.processor_core_count()
-	} else {
-		Default_Server_Opts.thread_count = 1
-	}
+	Default_Server_Opts.thread_count = os.processor_core_count()
 }
 
 Server_State :: enum {
 	Uninitialized,
-	Idle,
 	Listening,
 	Serving,
 	Running,
@@ -105,9 +100,13 @@ Server :: struct {
 }
 
 Server_Thread :: struct {
-	conns: map[net.TCP_Socket]^Connection,
-	state: Server_State,
-	io:    nbio.IO,
+	conns:       map[net.TCP_Socket]^Connection,
+	state:       Server_State,
+	io:          nbio.IO,
+
+	// Need to keep track of this, if the server socket is closed (during shutdown) we need to manually cancel
+	// operations on it.
+	curr_accept: ^nbio.Completion,
 
 	// free_temp_blocks:       map[int]queue.Queue(^Block),
 	// free_temp_blocks_count: int,
@@ -125,7 +124,6 @@ td: Server_Thread
 io :: proc(loc := #caller_location) -> ^nbio.IO {
 	assert_has_td(loc)
 	return &td.io
-
 }
 
 Default_Endpoint := net.Endpoint {
@@ -149,7 +147,12 @@ listen :: proc(
 	assert(errno == os.ERROR_NONE)
 
 	s.tcp_sock, err = nbio.open_and_listen_tcp(&td.io, endpoint)
-	if err != nil { server_shutdown(s) }
+	if err != nil {
+		nbio.destroy(&td.io)
+		return
+	}
+
+	td.state = .Listening
 	return
 }
 
@@ -202,7 +205,7 @@ _server_thread_init :: proc(s: ^Server) {
 
 	log.debug("accepting connections")
 
-	nbio.accept(&td.io, s.tcp_sock, s, on_accept)
+	td.curr_accept = nbio.accept(&td.io, s.tcp_sock, s, on_accept)
 
 	log.debug("starting event loop")
 	td.state = .Serving
@@ -253,8 +256,7 @@ _server_thread_shutdown :: proc(s: ^Server, loc := #caller_location) {
 
 	td.state = .Closing
 	defer delete(td.conns)
-	// defer {
-	// 	blocks: int
+	// defer { blocks: int
 	// 	for _, &bucket in td.free_temp_blocks {
 	// 		for block in queue.pop_front_safe(&bucket) {
 	// 			blocks += 1
@@ -265,6 +267,15 @@ _server_thread_shutdown :: proc(s: ^Server, loc := #caller_location) {
 	// 	delete(td.free_temp_blocks)
 	// 	log.infof("had %i temp blocks to spare", blocks)
 	// }
+
+	if sync.current_thread_id() == s.main_thread {
+		nbio.close(&td.io, s.tcp_sock, rawptr(nil), proc(_: rawptr, ok: bool) {
+			assert(ok)
+		})
+	}
+
+	nbio.remove(&td.io, td.curr_accept)
+	td.curr_accept = nil
 
 	for i := 0; ; i += 1 {
 		for sock, conn in td.conns {
@@ -291,6 +302,9 @@ _server_thread_shutdown :: proc(s: ^Server, loc := #caller_location) {
 	}
 
 	td.state = .Cleaning
+	log.debug("running out remaining events")
+	nbio.run(&td.io)
+	log.debug("destroying")
 	nbio.destroy(&td.io)
 	td.state = .Closed
 
@@ -366,6 +380,11 @@ Connection :: struct {
 	scanner:        Scanner,
 	temp_allocator: virtual.Arena,
 	loop:           Loop,
+
+	// Need to keep track of this, if (during shutdown) the socket is closed we need to manually cancel
+	// operations on it.
+	curr_recv:      ^nbio.Completion,
+
 	ud:             rawptr,
 }
 
@@ -381,11 +400,11 @@ _connection_close :: proc(c: ^Connection, loc := #caller_location) {
 	assert_has_td(loc)
 
 	if c.state >= .Closing {
-		log.infof("connection %i already closing/closed", c.socket)
+		log.infof("[%i] connection already closing/closed", c.socket)
 		return
 	}
 
-	log.debugf("closing connection: %i", c.socket)
+	log.debugf("[%i] closing connection", c.socket)
 
 	c.state = .Closing
 
@@ -395,16 +414,19 @@ _connection_close :: proc(c: ^Connection, loc := #caller_location) {
 	// to process the closing and receive any remaining data.
 	net.shutdown(c.socket, net.Shutdown_Manner.Send)
 
-	scanner_destroy(&c.scanner)
-
 	nbio.timeout(&td.io, Conn_Close_Delay, c, proc(c: rawptr) {
 		c := cast(^Connection)c
+
+		nbio.remove(&td.io, c.curr_recv)
+
 		nbio.close(&td.io, c.socket, c, proc(c: rawptr, ok: bool) {
 			c := cast(^Connection)c
 
 			log.infof("[%i] closed connection", c.socket)
 
 			c.state = .Closed
+
+			scanner_destroy(&c.scanner)
 
 			// allocator_destroy(&c.temp_allocator)
 			virtual.arena_destroy(&c.temp_allocator)
@@ -431,7 +453,7 @@ on_accept :: proc(server: rawptr, sock: net.TCP_Socket, source: net.Endpoint, er
 				log.error("Connection limit reached, trying again in a bit")
 				nbio.timeout(&td.io, time.Second, server, proc(server: rawptr) {
 					server := cast(^Server)server
-					nbio.accept(&td.io, server.tcp_sock, server, on_accept)
+					td.curr_accept = nbio.accept(&td.io, server.tcp_sock, server, on_accept)
 				})
 				return
 			}
@@ -441,7 +463,7 @@ on_accept :: proc(server: rawptr, sock: net.TCP_Socket, source: net.Endpoint, er
 	}
 
 	// Accept next connection.
-	nbio.accept(&td.io, server.tcp_sock, server, on_accept)
+	td.curr_accept = nbio.accept(&td.io, server.tcp_sock, server, on_accept)
 
 	c := new(Connection, server.conn_allocator)
 	c.state = .New
@@ -461,7 +483,8 @@ conn_handle_reqs :: proc(c: ^Connection) {
 		assert_has_td()
 
 		context.user_ptr = rawptr(callback)
-		nbio.with_timeout(
+
+		c.curr_recv = nbio.with_timeout(
 			&td.io, s.timeout,
 			nbio.recv(&td.io, c.socket, buf, s, on_recv),
 		)
@@ -473,8 +496,8 @@ conn_handle_reqs :: proc(c: ^Connection) {
 		}
 	}
 
-	// TODO/PERF: not sure why this is allocated on the connections allocator, can't it use the arena?
 	scanner_init(&c.scanner, c, scanner_recv, c.server.conn_allocator)
+	c.scanner.timeout = time.Minute // TODO: configurable
 
 	// allocator_init(&c.temp_allocator, c.server.conn_allocator)
 	// context.temp_allocator = allocator(&c.temp_allocator)
@@ -486,8 +509,18 @@ conn_handle_reqs :: proc(c: ^Connection) {
 
 @(private)
 conn_handle_req :: proc(c: ^Connection, allocator := context.temp_allocator) {
+	c.loop.conn = c
+	c.loop.res._conn = c
+	headers_init(&c.loop.req.headers, allocator)
+	response_init(&c.loop.res, allocator)
+
+	c.scanner.max_token_size = c.server.opts.limit_request_line
+	scanner_scan(&c.scanner, &c.loop, on_rline1)
+
 	on_rline1 :: proc(l: ^Loop, token: string, err: bufio.Scanner_Error) {
 		if !connection_set_state(l.conn, .Active) do return
+
+		// TODO: handle all scanner callbacks the same way as here:
 
 		if err != nil {
 			if err == .EOF {
@@ -563,7 +596,7 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.temp_allocator) {
 			return
 		}
 
-		if _, ok := header_parse(&l.req.headers, token); !ok {
+		if _, ok := header_parse(&l.req.headers, token, context.temp_allocator); !ok {
 			log.warnf("header-line %s is invalid", token)
 			headers_set_close(&l.res.headers)
 			l.res.status = .Bad_Request
@@ -627,14 +660,6 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.temp_allocator) {
 			l.conn.server.handler.handle(&l.conn.server.handler, &l.req, &l.res)
 		}
 	}
-
-	c.loop.conn = c
-	c.loop.res._conn = c
-	headers_init(&c.loop.req.headers, allocator)
-	response_init(&c.loop.res, allocator)
-
-	c.scanner.max_token_size = c.server.opts.limit_request_line
-	scanner_scan(&c.scanner, &c.loop, on_rline1)
 }
 
 // A buffer that will contain the date header for the current second.
@@ -655,6 +680,10 @@ server_date_start :: proc(s: ^Server) {
 @(private)
 server_date_update :: proc(s: rawptr) {
 	s := cast(^Server)s
+	if sync.atomic_load(&s.closing) {
+		return
+	}
+
 	nbio.timeout(&td.io, time.Second, s, server_date_update)
 
 	bytes.buffer_reset(&s.date.buf)

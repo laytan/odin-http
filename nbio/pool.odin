@@ -12,6 +12,7 @@ Pool :: struct($T: typeid) {
 	arena:             virtual.Arena,
 	objects_allocator: mem.Allocator,
 	objects:           queue.Queue(^T),
+	// waiting:           map[^T]struct{},
 	num_waiting:       int,
 }
 
@@ -43,12 +44,16 @@ pool_get :: proc(p: ^Pool($T)) -> (^T, mem.Allocator_Error) #optional_allocator_
 		return new(T, p.objects_allocator)
 	}
 
+	// p.waiting[elem] = {}
+
 	mem.zero_item(elem)
 	return elem, nil
 }
 
 pool_put :: proc(p: ^Pool($T), elem: ^T) -> mem.Allocator_Error {
 	p.num_waiting -= 1
+
+	// delete_key(&p.waiting, elem)
 
 	_, err := queue.push_back(&p.objects, elem)
 	return err

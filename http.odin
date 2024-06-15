@@ -1,15 +1,12 @@
 package http
 
-import "base:runtime"
-
+import "core:fmt"
 import "core:io"
 import "core:path/filepath"
 import "core:slice"
 import "core:strconv"
 import "core:strings"
-import "core:sync"
 import "core:time"
-import "core:fmt"
 
 Requestline_Error :: enum {
 	None,
@@ -148,7 +145,7 @@ method_parse :: proc(m: string) -> (method: Method, ok: bool) #no_bounds_check {
 }
 
 // Parses the header and adds it to the headers if valid. The given string is copied.
-header_parse :: proc(headers: ^Headers, line: string, allocator := context.temp_allocator) -> (key: string, ok: bool) {
+header_parse :: proc(headers: ^Headers, line: string, allocator := context.allocator) -> (key: string, ok: bool) {
 	// Preceding spaces should not be allowed.
 	(len(line) > 0 && line[0] != ' ') or_return
 
@@ -158,6 +155,7 @@ header_parse :: proc(headers: ^Headers, line: string, allocator := context.temp_
 	// There must not be a space before the colon.
 	(line[colon - 1] != ' ') or_return
 
+	// TODO: see if we can do this only if these are given.
 	has_host   := headers_has_unsafe(headers^, "host")
 	cl, has_cl := headers_get_unsafe(headers^, "content-length")
 
