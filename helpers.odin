@@ -5,6 +5,26 @@ import "base:runtime"
 
 import "core:io"
 
+// NOTE: `to` is assumed lowercase!
+@(private)
+ascii_case_insensitive_eq :: proc(cmp: string, to: string) -> bool {
+	if cmp == to           do return true
+	if len(cmp) != len(to) do return false
+
+	to := to
+	for c, i in transmute([]byte)cmp {
+		switch c {
+		case 'A'..='Z':
+			DIFF :: 'a' - 'A'
+			if c + DIFF != to[i] do return false
+		case:
+			if c != to[i] do return false
+		}
+	}
+
+	return true
+}
+
 @(private)
 dynamic_unwritten :: proc(d: [dynamic]$E) -> []E  {
 	return (cast([^]E)raw_data(d))[len(d):cap(d)]

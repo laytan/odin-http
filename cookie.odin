@@ -87,10 +87,7 @@ cookie_string :: proc(c: Cookie, allocator := context.allocator) -> string {
 }
 
 // TODO: check specific whitespace requirements in RFC.
-//
-// Allocations are done to check case-insensitive attributes but they are deleted right after.
-// So, all the returned strings (inside cookie) are slices into the given value string.
-cookie_parse :: proc(value: string, allocator := context.allocator) -> (cookie: Cookie, ok: bool) {
+cookie_parse :: proc(value: string) -> (cookie: Cookie, ok: bool) {
 	value := value
 
 	eq := strings.index_byte(value, '=')
@@ -112,19 +109,16 @@ cookie_parse :: proc(value: string, allocator := context.allocator) -> (cookie: 
 		value = value[semi + 1:]
 	}
 
-	parse_part :: proc(cookie: ^Cookie, part: string, allocator := context.allocator) -> (ok: bool) {
+	parse_part :: proc(cookie: ^Cookie, part: string) -> (ok: bool) {
 		eq := strings.index_byte(part, '=')
 		switch eq {
 		case -1:
-			key := strings.to_lower(part, allocator)
-			defer delete(key)
-
-			switch key {
-			case "httponly":
+			switch {
+			case ascii_case_insensitive_eq(part, "httponly"):
 				cookie.http_only = true
-			case "partitioned":
+			case ascii_case_insensitive_eq(part, "partitioned"):
 				cookie.partitioned = true
-			case "secure":
+			case ascii_case_insensitive_eq(part, "secure"):
 				cookie.secure = true
 			case:
 				return
@@ -132,21 +126,19 @@ cookie_parse :: proc(value: string, allocator := context.allocator) -> (cookie: 
 		case 0:
 			return
 		case:
-			key := strings.to_lower(part[:eq], allocator)
-			defer delete(key)
-
+			key   := part[:eq]
 			value := part[eq + 1:]
 
-			switch key {
-			case "domain":
+			switch {
+			case ascii_case_insensitive_eq(key, "domain"):
 				cookie.domain = value
-			case "expires":
+			case ascii_case_insensitive_eq(key, "expires"):
 				cookie.expires_gmt = date_parse(value) or_return
-			case "max-age":
+			case ascii_case_insensitive_eq(key, "max-age"):
 				cookie.max_age_secs = strconv.parse_int(value, 10) or_return
-			case "path":
+			case ascii_case_insensitive_eq(key, "path"):
 				cookie.path = value
-			case "samesite":
+			case ascii_case_insensitive_eq(key, "samesite"):
 				switch value {
 				case "lax", "Lax", "LAX":
 					cookie.same_site = .Lax
@@ -167,7 +159,7 @@ cookie_parse :: proc(value: string, allocator := context.allocator) -> (cookie: 
 	for semi = strings.index_byte(value, ';'); semi != -1; semi = strings.index_byte(value, ';') {
 		part := strings.trim_left_space(value[:semi])
 		value = value[semi + 1:]
-		parse_part(&cookie, part, allocator) or_return
+		parse_part(&cookie, part) or_return
 	}
 
 	part := strings.trim_left_space(value)
@@ -176,7 +168,7 @@ cookie_parse :: proc(value: string, allocator := context.allocator) -> (cookie: 
 		return
 	}
 
-	parse_part(&cookie, part, allocator) or_return
+	parse_part(&cookie, part) or_return
 	ok = true
 	return
 }

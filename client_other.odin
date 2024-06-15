@@ -626,7 +626,7 @@ _client_request :: proc(c: ^Client, req: Client_Request, user: rawptr, cb: On_Re
 				headers_delete_unsafe(&r.conn.headers, "set-cookie")
 				delete(key, r.c.allocator)
 
-				cookie, cok := cookie_parse(cookie_str, r.c.allocator) // NOTE: this allocator is used for temp allocations.
+				cookie, cok := cookie_parse(cookie_str)
 				if !cok {
 					log.errorf("invalid cookie %q in header %q", cookie_str, token)
 					handle_net_err(r, net.TCP_Recv_Error.Aborted) // TODO: a proper error.
