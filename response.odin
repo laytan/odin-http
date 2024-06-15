@@ -129,9 +129,9 @@ response_writer_init :: proc(rw: ^Response_Writer, r: ^Response, buffer: []byte)
 				log.debugf("response_writer chunk of size: %i", plen)
 
 				bytes.buffer_grow(b, 16)
-				size_buf := _dynamic_unwritten(b.buf)
+				size_buf := dynamic_unwritten(b.buf)
 				size := strconv.append_int(size_buf, plen, 16)
-				_dynamic_add_len(&b.buf, len(size))
+				dynamic_add_len(&b.buf, len(size))
 
 				ws(b, "\r\n")
 				bytes.buffer_write(b, chunk)
@@ -313,7 +313,7 @@ response_send :: proc(r: ^Response, conn: ^Connection, loc := #caller_location) 
 	if !response_must_close(&conn.loop.req, r) {
 
 		// Body has been drained during handling.
-		if _, got_body := conn.loop.req.body_ok.?; got_body {
+		if _, got_body := conn.loop.req._body_ok.?; got_body {
 			response_send_got_body(r, false)
 		} else {
 			body(&conn.loop.req, Max_Post_Handler_Discard_Bytes, r, check_body)
@@ -415,7 +415,7 @@ response_must_close :: proc(req: ^Request, res: ^Response) -> bool {
 	}
 
 	// If the body was tried to be received, but failed, close.
-	if body_ok, got_body := req.body_ok.?; got_body && !body_ok {
+	if body_ok, got_body := req._body_ok.?; got_body && !body_ok {
 		headers_set_close(&res.headers)
 		return true
 	}

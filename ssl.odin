@@ -1,12 +1,12 @@
-package client
+package http
 
 import "core:net"
 
 @(private)
-ssl_implementation: SSL
+client_ssl: Client_SSL
 
-set_ssl_implementation :: proc(ssl: SSL) {
-	ssl_implementation = ssl
+set_client_ssl :: proc(ssl: Client_SSL) {
+	client_ssl = ssl
 }
 
 SSL_Client     :: distinct rawptr
@@ -20,7 +20,7 @@ SSL_Result :: enum {
 	Fatal,
 }
 
-SSL :: struct {
+Client_SSL :: struct {
 	implemented:       bool,
 	client_create:     proc() -> SSL_Client,
 	connection_create: proc(client: SSL_Client, socket: net.TCP_Socket, host: cstring) -> SSL_Connection,

@@ -1,8 +1,7 @@
 // package client provides a HTTP/1.1 client.
-package client
+package http
 
-import http ".."
-import      "../nbio"
+import "nbio"
 
 // TODO: Implement a proper cookie jar per client, see rfc.
 // it should take response cookies, add it to the jar and automatically add them to matching requests again.
@@ -12,15 +11,14 @@ import      "../nbio"
 
 Client :: _Client
 
-On_Response :: #type proc(r: Response, user_data: rawptr, err: Request_Error)
+On_Response :: #type proc(r: Client_Response, user_data: rawptr, err: Request_Error)
 
-
-Request :: struct {
-	method:  http.Method,
-	url:     http.URL,
-	cookies: []http.Cookie,
+Client_Request :: struct {
+	method:  Method,
+	url:     URL,
+	cookies: []Cookie,
 	body:    []byte,
-	headers: http.Headers,
+	headers: Headers,
 
 	// TODO: implement on native.
 	ignore_redirects: bool,
@@ -39,15 +37,16 @@ Request_Error :: enum {
 	Timeout,
 	Aborted,
 	Unknown,
+	DNS,
 }
 
-Response :: struct {
-	status:  http.Status,
+Client_Response :: struct {
+	status:  Status,
 	body:    []byte,
-	headers: http.Headers,
+	headers: Headers,
 
 	// NOTE: unused on JS targets, use the `js_credentials` option to configure cookies there.
-	cookies: [dynamic]http.Cookie,
+	cookies: [dynamic]Cookie,
 }
 
 JS_CORS_Mode :: enum {
@@ -63,10 +62,10 @@ JS_Credentials :: enum {
 	Omit,        // Never include credentials.
 }
 
-init :: proc(c: ^Client, io: ^nbio.IO, allocator := context.allocator) {
-	_init(c, io, allocator)
+client_init :: proc(c: ^Client, io: ^nbio.IO, allocator := context.allocator) {
+	_client_init(c, io, allocator)
 }
 
-request :: proc(c: ^Client, req: Request, user: rawptr, cb: On_Response) {
-	_request(c, req, user, cb)
+client_request :: proc(c: ^Client, req: Client_Request, user: rawptr, cb: On_Response) {
+	_client_request(c, req, user, cb)
 }

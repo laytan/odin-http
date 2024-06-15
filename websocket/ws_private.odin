@@ -11,6 +11,7 @@ import "core:net"
 import "core:sync"
 import "core:time"
 import "core:unicode/utf8"
+import "core:slice"
 
 import http ".."
 import nbio "../nbio/poly"
@@ -238,11 +239,18 @@ recv_message :: proc(c: ^_Connection) {
 		}
 
 		assert(u64(len(buf)) == size_of(u32) + c.frame.payload_len)
+		#no_bounds_check {
+			c.frame.mask = (^[4]byte)(raw_data(buf))^
+			c.frame.payload_data = buf[4:]
 
-		c.frame.mask = (^[4]byte)(raw_data(buf))^
-		c.frame.payload_data = buf[4:]
-		for &b, i in c.frame.payload_data {
-			b = b ~ c.frame.mask[i % 4]
+			mask := transmute(u32)c.frame.mask
+			u32s := slice.reinterpret([]u32, c.frame.payload_data)
+			for &part in u32s {
+				part = part ~ mask
+			}
+			for &b, i in c.frame.payload_data[len(u32s)*size_of(u32):] {
+				b = b ~ c.frame.mask[i % 4]
+			}
 		}
 
 		log.debugf("[%i][ws] <- %v of %m", c.http.socket, c.frame.opcode, c.frame.payload_len)
@@ -321,6 +329,7 @@ recv_message :: proc(c: ^_Connection) {
 					append(&c.fragmented_buf, ..c.frame.payload_data)
 					log.debugf("[%i][ws] start of fragmented %v message", c.http.socket, opcode)
 				} else {
+					// TODO: a faster `utf8.valid_string`.
 					if opcode == .Text && !utf8.valid_string(string(c.frame.payload_data)) {
 						initiate_close(c, .Inconsistent_Data, "invalid UTF-8 text")
 						return
@@ -360,6 +369,7 @@ recv_message :: proc(c: ^_Connection) {
 			if c.frame.fin {
 				log.debugf("[%i][ws] fragmented message complete", c.http.socket)
 
+				// TODO: a faster `utf8.valid_string`.
 				if c.fragmented_op == .Text && !utf8.valid_string(string(c.fragmented_buf[:])) {
 					initiate_close(c, .Inconsistent_Data, "invalid UTF-8 text")
 					return

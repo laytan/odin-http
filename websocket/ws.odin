@@ -85,7 +85,7 @@ is_valid_status :: proc(s: Status) -> bool {
 DEFAULT_MAX_PAYLOAD_BYTES :: mem.Megabyte * 16
 DEFAULT_IDLE_TIMEOUT      :: time.Minute  * 5
 
-Server_Opts :: struct {
+Options :: struct {
 	// Time after a receive will time out and close the connection.
 	idle_timeout: time.Duration,
 	// Connection is closed when a message comes in that is bigger than this.
@@ -97,6 +97,20 @@ Message_Type :: enum {
 	Binary = 2,
 }
 
+// WebSocket :: struct {
+// 	opts:       Options,
+// 	on_message: proc(w: ^WebSocket, type: Message_Type, message: []byte),
+// 	on_open:    proc(w: ^WebSocket),
+// 	on_close:   proc(w: ^WebSocket, code: Status, reason: []byte),
+// 	user:       rawptr,
+// }
+//
+// send :: proc(w: ^WebSocket, type: Message_Type, message: []byte) {
+// }
+//
+// close :: proc(w: ^WebSocket, code: Status) {
+// }
+
 // A WebSocket server.
 //
 // Upgrade HTTP connection onto the control of this server by using the `upgrade` procedure.
@@ -105,7 +119,7 @@ Message_Type :: enum {
 // Note that the connections are not, they should be used by one thread at a time, which under
 // normal conditions will be the case.
 Server :: struct {
-	opts:       Server_Opts,
+	opts:       Options,
 	on_message: proc(s: ^Server, c: Connection, user: rawptr, type: Message_Type, message: []byte),
 	on_open:    proc(s: ^Server, c: Connection, user: rawptr),
 	on_close:   proc(s: ^Server, c: Connection, user: rawptr, code: Status, reason: []byte),

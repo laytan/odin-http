@@ -25,7 +25,7 @@ Sets a header, given key is first sanitized, final (sanitized) key is returned.
 */
 headers_set :: proc(h: ^Headers, k: string, v: string, loc := #caller_location) -> string {
 	if h.readonly {
-		panic("these headers are readonly, did you accidentally try to set a header on the request?", loc)
+		panic("these headers are readonly, did you accidentally try to set a header on the server request or client response?", loc)
 	}
 
     l := sanitize_key(h^, k)
@@ -36,7 +36,7 @@ headers_set :: proc(h: ^Headers, k: string, v: string, loc := #caller_location) 
 /*
 Unsafely set header, given key is assumed to be a lowercase string and to be without newlines. */
 headers_set_unsafe :: #force_inline proc(h: ^Headers, k: string, v: string, loc := #caller_location) {
-	assert(!h.readonly, "these headers are readonly, did you accidentally try to set a header on the request?", loc)
+	assert(!h.readonly, "these headers are readonly, did you accidentally try to set a header on the server request or client response?", loc)
 	h._kv[k] = v
 }
 

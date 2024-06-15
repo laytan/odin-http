@@ -1,18 +1,6 @@
 /*
 package nbio implements a non blocking IO abstraction layer over several platform specific APIs.
 
-This package implements an event loop based abstraction.
-
-APIs:
-- Windows: [[IOCP IO Completion Ports;https://en.wikipedia.org/wiki/Input/output_completion_port]]
-- Linux:   [[io_uring;https://en.wikipedia.org/wiki/Io_uring]]
-- Darwin:  [[KQueue;https://en.wikipedia.org/wiki/Kqueue]]
-
-How to read the code:
-
-The file nbio.odin can be read a little bit like a header file,
-it has all the procedures heavily explained and commented and dispatches them to platform specific code.
-
 You can also have a look at the tests for more general usages.
 
 Example:
@@ -26,8 +14,7 @@ Example:
 	import "core:fmt"
 	import "core:net"
 	import "core:os"
-
-	import nbio "nbio/poly"
+	import "core:nbio"
 
 	Echo_Server :: struct {
 		io:          nbio.IO,
@@ -55,11 +42,7 @@ Example:
 		nbio.accept(&server.io, sock, &server, echo_on_accept)
 
 		// Start the event loop.
-		errno: os.Errno
-		for errno == os.ERROR_NONE {
-			errno = nbio.tick(&server.io)
-		}
-
+		errno := nbio.run(&server.io)
 		fmt.assertf(errno == os.ERROR_NONE, "Server stopped with error code: %v", errno)
 	}
 

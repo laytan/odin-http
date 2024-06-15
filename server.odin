@@ -94,7 +94,7 @@ Server :: struct {
 	//
 	// NOTE: This is only ever set from false to true, and checked repeatedly,
 	// so it doesn't have to be atomic, this is purely to keep the thread sanitizer happy.
-	closing:        Atomic(bool),
+	closing:        bool, // atomic.
 	// Threads will decrement the wait group when they have fully closed/shutdown.
 	// The main thread waits on this to clean up global data and return.
 	threads_closed: sync.Wait_Group,
@@ -207,7 +207,7 @@ _server_thread_init :: proc(s: ^Server) {
 	log.debug("starting event loop")
 	td.state = .Serving
 	for {
-		if atomic_load(&s.closing) do _server_thread_shutdown(s)
+		if sync.atomic_load(&s.closing) do _server_thread_shutdown(s)
 		if td.state == .Closed do break
 		if td.state == .Cleaning do continue
 
@@ -245,7 +245,7 @@ SHUTDOWN_INTERVAL :: time.Millisecond * 100
 // 4. Close the main socket.
 // 5. Signal 'server_start' it can return.
 server_shutdown :: proc(s: ^Server) {
-	atomic_store(&s.closing, true)
+	sync.atomic_store(&s.closing, true)
 }
 
 _server_thread_shutdown :: proc(s: ^Server, loc := #caller_location) {
@@ -584,7 +584,7 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.temp_allocator) {
 	}
 
 	on_headers_end :: proc(l: ^Loop) {
-		if !headers_validate_for_server(&l.req.headers) {
+		if !headers_sanitize_for_server(&l.req.headers) {
 			log.warn("request headers are invalid")
 			headers_set_close(&l.res.headers)
 			l.res.status = .Bad_Request
@@ -606,7 +606,7 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.temp_allocator) {
 			return
 		}
 
-		l.req.scanner = &l.conn.scanner
+		l.req._scanner = &l.conn.scanner
 
 		rline := &l.req.line.(Requestline)
 		// An options request with the "*" is a no-op/ping request to
@@ -630,7 +630,7 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.temp_allocator) {
 
 	c.loop.conn = c
 	c.loop.res._conn = c
-	request_init(&c.loop.req, allocator)
+	headers_init(&c.loop.req.headers, allocator)
 	response_init(&c.loop.res, allocator)
 
 	c.scanner.max_token_size = c.server.opts.limit_request_line

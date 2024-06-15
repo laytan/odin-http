@@ -22,26 +22,20 @@ Request :: struct {
 	using _: Has_Body,
 }
 
-request_init :: proc(r: ^Request, allocator := context.allocator) {
-	headers_init(&r.headers, allocator)
-}
-
-// TODO: call it headers_sanitize because it modifies the headers.
-
 // Validates the headers of a request, from the pov of the server.
-headers_validate_for_server :: proc(headers: ^Headers) -> bool {
+headers_sanitize_for_server :: proc(headers: ^Headers) -> bool {
 	// RFC 7230 5.4: A server MUST respond with a 400 (Bad Request) status code to any
 	// HTTP/1.1 request message that lacks a Host header field.
 	if !headers_has_unsafe(headers^, "host") {
 		return false
 	}
 
-	return headers_validate(headers)
+	return headers_sanitize(headers)
 }
 
 // Validates the headers, use `headers_validate_for_server` if these are request headers
 // that should be validated from the server side.
-headers_validate :: proc(headers: ^Headers) -> bool {
+headers_sanitize :: proc(headers: ^Headers) -> bool {
 	// RFC 7230 3.3.3: If a Transfer-Encoding header field
 	// is present in a request and the chunked transfer coding is not
 	// the final encoding, the message body length cannot be determined

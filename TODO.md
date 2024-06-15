@@ -23,7 +23,7 @@
 - [ ] Poly API
 - [ ] Testing
 	- [ ] Big requests > 16kb (a TLS packet)
-- [ ] Consider move into main package, but may be confusing?
+- [x] Consider move into main package, but may be confusing?
 - [ ] Each host has multiple connections, when a request is made, get an available connection or make a new connection.
 
 ## DNS Client
@@ -35,10 +35,12 @@
 - [ ] Implement `with_timeout` everywhere
 - [ ] Make sure all procs are implemented everywhere (UDP & TCP, all platforms)
 - [ ] Make `with_timeout` more efficient
-- [ ] Move the sub /poly package into the main one
-- [ ] Remove toggling the poly API
-- [ ] `#no_bounds_check` the poly API
-- [ ] JS implementation
+- [x] Move the sub /poly package into the main one
+- [x] Remove toggling the poly API
+- [x] JS implementation
+- [x] nbio.run that loops a tick, and returns when the event loop has nothing going on
+- [ ] remove `read` and `write` and force the offset, document why (Windows)
+- [ ] do `time.now` at most once a tick (cache it)
 
 ## WebSocket Server
 

@@ -1,151 +1,120 @@
 package nbio
 
+import "base:runtime"
+
 import "core:os"
-import "core:net"
 import "core:time"
 
-_IO :: struct {}
+foreign import "odin_io"
+
+_IO :: struct #no_copy {
+	// NOTE: num_waiting is also changed in JS.
+	num_waiting: int,
+	allocator:   runtime.Allocator,
+	// TODO: priority queue, or that other sorted list.
+	pending:     [dynamic]^Completion,
+	done:        [dynamic]^Completion,
+	free_list:   [dynamic]^Completion,
+}
+#assert(offset_of(_IO, num_waiting) == 0, "Relied upon in JS")
+
+@(private)
+_Completion :: struct {
+	ctx:     runtime.Context,
+	cb:      proc(user: rawptr),
+	timeout: time.Time,
+}
 
 _init :: proc(io: ^IO, allocator := context.allocator) -> (err: os.Errno) {
-	// panic("TODO")
-	return
+	io.allocator = allocator
+	io.pending.allocator = allocator
+	io.done.allocator = allocator
+	io.free_list.allocator = allocator
+	return os.ERROR_NONE
 }
 
 _num_waiting :: #force_inline proc(io: ^IO) -> int {
-	panic("TODO")
+	return io.num_waiting
 }
 
 _destroy :: proc(io: ^IO) {
-	panic("TODO")
+	context.allocator = io.allocator
+	for c in io.pending {
+		free(c)
+	}
+	delete(io.pending)
+
+	for c in io.done {
+		free(c)
+	}
+	delete(io.done)
+
+	for c in io.free_list {
+		free(c)
+	}
+	delete(io.free_list)
 }
 
 _tick :: proc(io: ^IO) -> os.Errno {
-	panic("TODO")
+	if len(io.pending) > 0 {
+		now := time.now()
+		#reverse for c, i in io.pending {
+			if time.diff(now, c.timeout) <= 0 {
+				ordered_remove(&io.pending, i)
+				append(&io.done, c)
+			}
+		}
+	}
+
+	for {
+		completion := pop_safe(&io.done) or_break
+		context = completion.ctx
+		completion.cb(completion.user_data)
+		io.num_waiting -= 1
+		append(&io.free_list, completion)
+	}
+
+	return os.ERROR_NONE
 }
 
 // Runs the callback after the timeout, using the kqueue.
 _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout) -> ^Completion {
-	panic("TODO")
-}
+	completion, ok := pop_safe(&io.free_list)
+	if !ok {
+		completion = new(Completion, io.allocator)
+	}
 
-// TODO: We could have completions hold a pointer to the IO so it doesn't need to be passed here.
-_timeout_completion :: proc(io: ^IO, dur: time.Duration, target: ^Completion) -> ^Completion {
-	panic("TODO")
-}
+	completion.ctx = context
+	completion.user_data = user
+	completion.cb = callback
+	completion.timeout = time.time_add(time.now(), dur)
 
-_timeout_remove :: proc(io: ^IO, timeout: ^Completion) {
-	panic("TODO")
+	io.num_waiting += 1
+	append(&io.pending, completion)
+	return completion
 }
 
 _next_tick :: proc(io: ^IO, user: rawptr, callback: On_Next_Tick) -> ^Completion {
-	panic("TODO")
+	completion, ok := pop_safe(&io.free_list)
+	if !ok {
+		completion = new(Completion, io.allocator)
+	}
+
+	completion.ctx = context
+	completion.user_data = user
+	completion.cb = callback
+
+	io.num_waiting += 1
+	append(&io.done, completion)
+	return completion
 }
 
-_listen :: proc(socket: net.TCP_Socket, backlog := 1000) -> net.Network_Error {
-	panic("core:nbio procedure not supported on js target")
+_timeout_completion :: proc(io: ^IO, dur: time.Duration, target: ^Completion) -> ^Completion {
+	// NOTE: none of the operations we support for JS, are able to timeout on other targets.
+	panic("trying to add a timeout to an operation that can't timeout")
 }
 
-_accept :: proc(io: ^IO, socket: net.TCP_Socket, user: rawptr, callback: On_Accept) -> ^Completion {
-	panic("core:nbio procedure not supported on js target")
+_timeout_remove :: proc(io: ^IO, timeout: ^Completion) {
+	// NOTE: none of the operations we support for JS, are able to timeout on other targets.
+	panic("trying to add a timeout to an operation that can't timeout")
 }
-
-_close :: proc(io: ^IO, fd: Closable, user: rawptr, callback: On_Close) -> ^Completion {
-	panic("core:nbio procedure not supported on js target")
-}
-
-_connect :: proc(io: ^IO, endpoint: net.Endpoint, user: rawptr, callback: On_Connect) -> (^Completion, net.Network_Error) {
-	panic("core:nbio procedure not supported on js target")
-}
-
-_read :: proc(
-	io: ^IO,
-	fd: os.Handle,
-	offset: Maybe(int),
-	buf: []byte,
-	user: rawptr,
-	callback: On_Read,
-	all := false,
-) -> ^Completion {
-	panic("core:nbio procedure not supported on js target")
-}
-
-_recv :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, callback: On_Recv, all := false) -> ^Completion {
-	panic("core:nbio procedure not supported on js target")
-}
-
-_send :: proc(
-	io: ^IO,
-	socket: net.Any_Socket,
-	buf: []byte,
-	user: rawptr,
-	callback: On_Sent,
-	endpoint: Maybe(net.Endpoint) = nil,
-	all := false,
-) -> ^Completion {
-	panic("core:nbio procedure not supported on js target")
-}
-
-_write :: proc(
-	io: ^IO,
-	fd: os.Handle,
-	offset: Maybe(int),
-	buf: []byte,
-	user: rawptr,
-	callback: On_Write,
-	all := false,
-) -> ^Completion {
-	panic("core:nbio procedure not supported on js target")
-}
-
-_poll :: proc(io: ^IO, fd: os.Handle, event: Poll_Event, multi: bool, user: rawptr, callback: On_Poll) -> ^Completion {
-	panic("core:nbio procedure not supported on js target")
-}
-
-_poll_remove :: proc(io: ^IO, fd: os.Handle, event: Poll_Event) -> ^Completion {
-	panic("core:nbio procedure not supported on js target")
-}
-
-_seek :: proc(_: ^IO, fd: os.Handle, offset: int, whence: Whence) -> (int, os.Errno) {
-	panic("core:nbio procedure not supported on js target")
-}
-
-_open :: proc(_: ^IO, path: string, mode, perm: int) -> (handle: os.Handle, errno: os.Errno) {
-	panic("core:nbio procedure not supported on js target")
-}
-
-_open_socket :: proc(
-	_: ^IO,
-	family: net.Address_Family,
-	protocol: net.Socket_Protocol,
-) -> (
-	socket: net.Any_Socket,
-	err: net.Network_Error,
-) {
-	panic("core:nbio procedure not supported on js target")
-}
-
-Op_Accept :: struct { }
-
-Op_Close :: struct {}
-
-Op_Connect :: struct {}
-
-Op_Recv :: struct {}
-
-Op_Send :: struct {}
-
-Op_Read :: struct {}
-
-Op_Write :: struct {}
-
-Op_Timeout :: struct {}
-
-Op_Next_Tick :: struct {}
-
-Op_Poll :: struct {}
-
-Op_Poll_Remove :: struct {}
-
-Op_Remove :: struct {}
-
-_Completion :: struct {}

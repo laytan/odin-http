@@ -8,7 +8,7 @@ import "core:os"
 import "core:strings"
 import "core:time"
 
-import nbio "../../nbio/poly"
+import nbio "../nbio"
 
 // TODO: Windows.
 
@@ -486,7 +486,7 @@ load_name_servers :: proc(c: ^Client) {
 		return
 	}
 
-	on_resolv_conf_content :: proc(c: ^Client, fd: os.Handle, buf: []byte, read: int, err: os.Errno) {
+	on_resolv_conf_content :: proc(c: ^Client, fd: os.Handle, buf: []byte, err: os.Errno) {
 		nbio.close(c.io, fd)
 		defer delete(buf, c.allocator)
 
@@ -523,7 +523,7 @@ load_hosts :: proc(c: ^Client) {
 		return
 	}
 
-	on_hosts_content :: proc(c: ^Client, fd: os.Handle, buf: []byte, read: int, err: os.Errno) {
+	on_hosts_content :: proc(c: ^Client, fd: os.Handle, buf: []byte, err: os.Errno) {
 		nbio.close(c.io, fd)
 		defer delete(buf, c.allocator)
 

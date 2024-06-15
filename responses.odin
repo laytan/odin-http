@@ -76,13 +76,13 @@ respond_file :: proc(r: ^Response, path: string, content_type: Maybe(Mime_Type) 
 	_response_write_heading(r, size)
 
 	bytes.buffer_grow(&r._buf, size)
-	buf := _dynamic_unwritten(r._buf.buf)[:size]
+	buf := dynamic_unwritten(r._buf.buf)[:size]
 
 	on_read :: proc(user: rawptr, read: int, err: os.Errno) {
 		r      := cast(^Response)user
 		handle := os.Handle(uintptr(context.user_ptr))
 
-		_dynamic_add_len(&r._buf.buf, read)
+		dynamic_add_len(&r._buf.buf, read)
 
 		if err != os.ERROR_NONE {
 			log.errorf("Reading file from respond_file failed, error number: %i", err)
