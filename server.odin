@@ -157,6 +157,7 @@ listen :: proc(
 }
 
 serve :: proc(s: ^Server, h: Handler) -> (err: net.Network_Error) {
+	assert(td.state == .Listening)
 	s.handler = h
 
 	thread_count := max(0, s.opts.thread_count - 1)
@@ -486,13 +487,14 @@ conn_handle_reqs :: proc(c: ^Connection) {
 
 		c.curr_recv = nbio.with_timeout(
 			&td.io, s.timeout,
-			nbio.recv(&td.io, c.socket, buf, s, on_recv),
+			nbio.recv(&td.io, c.socket, buf, c, on_recv),
 		)
 
-		on_recv :: proc(s: rawptr, n: int, _: Maybe(net.Endpoint), err: net.Network_Error) {
-			s := (^Scanner)(s)
+		on_recv :: proc(c: rawptr, n: int, _: Maybe(net.Endpoint), err: net.Network_Error) {
+			c := (^Connection)(c)
+			c.curr_recv = nil
 			callback := (On_Scanner_Read)(context.user_ptr)
-			callback(s, n, err)
+			callback(&c.scanner, n, err)
 		}
 	}
 

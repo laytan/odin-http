@@ -7,6 +7,7 @@ import "core:os"
 import "core:sync"
 import "core:testing"
 import "core:time"
+import "core:thread"
 
 import "../../nbio"
 
@@ -247,4 +248,38 @@ close_errors_send :: proc(t: ^testing.T) {
 	})
 
 	ev(t, nbio.run(&io), os.ERROR_NONE)
+}
+
+@(test)
+usage_across_threads :: proc(t: ^testing.T) {
+	handle: os.Handle
+	thread_done: sync.One_Shot_Event
+
+	open_thread := thread.create_and_start_with_poly_data3(t, &handle, &thread_done, proc(t: ^testing.T, handle: ^os.Handle, thread_done: ^sync.One_Shot_Event) {
+		io: nbio.IO
+		ev(t, nbio.init(&io), os.ERROR_NONE)
+		defer nbio.destroy(&io)
+
+		fd, errno := nbio.open(&io, #file)
+		ev(t, errno, os.ERROR_NONE)
+
+		handle^ = fd
+
+		sync.one_shot_event_signal(thread_done)
+	}, init_context=context)
+
+	sync.one_shot_event_wait(&thread_done)
+	thread.destroy(open_thread)
+
+	io: nbio.IO
+	ev(t, nbio.init(&io), os.ERROR_NONE)
+	defer nbio.destroy(&io)
+
+	buf: [128]byte
+	nbio.read(&io, handle, buf[:], t, proc(t: ^testing.T, read: int, errno: os.Errno) {
+		ev(t, errno, os.ERROR_NONE)
+		e(t, read > 0)
+	})
+
+	nbio.run(&io)
 }

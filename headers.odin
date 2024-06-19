@@ -2,6 +2,10 @@ package http
 
 import "core:strings"
 
+// I want custom hash functions on maps :((((((
+
+// PERF: could make a custom hash map that does a case-insensitive (ASCII) hash & compare.
+
 // A case-insensitive ASCII map for storing headers.
 Headers :: struct {
 	_kv:      map[string]string,
@@ -101,41 +105,12 @@ sanitize_key :: proc(h: Headers, k: string) -> string {
 
 	// general +4 in rare case of newlines, so we might not need to reallocate.
 	b := strings.builder_make(0, len(k)+4, allocator)
-	for c in k {
+	for c in transmute([]byte)k {
 		switch c {
-		case 'A'..='Z': strings.write_rune(&b, c + 32)
+		case 'A'..='Z': strings.write_byte(&b, c + 32)
 		case '\n':      strings.write_string(&b, "\\n")
-		case:           strings.write_rune(&b, c)
+		case:           strings.write_byte(&b, c)
 		}
 	}
 	return strings.to_string(b)
-
-    // NOTE: implementation that only allocates if needed, but we use arena's anyway so just allocating
-    // some space should be about as fast?
-    //
-	// b: strings.Builder = ---
-	// i: int
-	// for c in v {
-	// 	if c == '\n' || (c >= 'A' && c <= 'Z') {
-	// 		b = strings.builder_make(0, len(v)+4, allocator)
-	// 		strings.write_string(&b, v[:i])
-	// 		alloc = true
-	// 		break
-	// 	}
-	// 	i+=1
-	// }
-	//
-	// if !alloc {
-	// 	return v, false
-	// }
-	//
-	// for c in v[i:] {
-	//  switch c {
-	//  case 'A'..='Z': strings.write_rune(&b, c + 32)
-	//  case '\n':      strings.write_string(&b, "\\n")
-	//  case:           strings.write_rune(&b, c)
-	//  }
-	// }
-	//
-	// return strings.to_string(b), true
 }

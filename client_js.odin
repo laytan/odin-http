@@ -52,7 +52,7 @@ _client_request :: proc(c: ^Client, req: Client_Request, user: rawptr, cb: On_Re
 	r.ctx = context
 
 	r.method  = method_string(req.method)
-	r.url = req.url.raw
+	r.url = req.url
 	// AFAIK iterating a map in JS land is pretty much impossible (without much work).
 	r.headers, _ = slice.map_entries(req.headers._kv, /* allocator */)
 	r.body = req.body

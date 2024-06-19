@@ -15,7 +15,7 @@ On_Response :: #type proc(r: Client_Response, user_data: rawptr, err: Request_Er
 
 Client_Request :: struct {
 	method:  Method,
-	url:     URL,
+	url:     string,
 	cookies: []Cookie,
 	body:    []byte,
 	headers: Headers,
