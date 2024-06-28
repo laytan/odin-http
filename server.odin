@@ -341,12 +341,13 @@ server_shutdown_on_interrupt :: proc(s: ^Server) {
 // Taken from Go's implementation,
 // The maximum amount of bytes we will read (if handler did not)
 // in order to get the connection ready for the next request.
+// TODO: UPPER CASE
 @(private)
 Max_Post_Handler_Discard_Bytes :: 256 << 10
 
 // How long to wait before actually closing a connection.
 // This is to make sure the client can fully receive the response.
-@(private)
+// TODO: UPPER CASE
 Conn_Close_Delay :: time.Millisecond * 500
 
 Connection_State :: enum {

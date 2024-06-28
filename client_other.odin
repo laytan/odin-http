@@ -12,6 +12,7 @@ import      "core:os"
 import      "core:strconv"
 import      "core:strings"
 import      "core:slice"
+import cio  "core:io"
 
 import      "dns"
 import      "nbio"
@@ -593,16 +594,35 @@ _client_request :: proc(c: ^Client, req: Client_Request, user: rawptr, cb: On_Re
 			}
 		}
 
-		log.debug("scanner scannnn")
+		log.debug("scanning response")
 		scanner_scan(&r.conn.scanner, r, on_rline1)
 
 		handle_scanner_err :: proc(r: ^In_Flight, err: bufio.Scanner_Error, ctx := "") {
-			panic("NOOOOOOOOOO")
+
+			#partial switch e in err {
+			case cio.Error:
+				#partial switch e {
+				case .EOF:
+					log.warnf("server closed connection, reconnecting")
+
+					// TODO: clean up all things that will be allocated anew.
+					// TODO: don't do this infinitely, after x (maybe just 1) retry give this error back to the user.
+
+					nbio.close(r.c.io, r.conn.socket)
+					// TODO: maybe set this to .Closed and in `connect` do cleanup.
+					r.conn.state = .Pending
+					connect(r)
+					return
+				}
+			}
+
+			// TODO: call callback.
+			log.panicf("%v: receiving failed: %v", err, ctx)
 		}
 
 		//
 		handle_bad_response :: proc(r: ^In_Flight, ctx := "") {
-			log.warnf("bad response: %s", ctx)
+			log.panicf("bad response: %s", ctx)
 
 			// free everything, close connection,
 		}

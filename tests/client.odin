@@ -11,6 +11,8 @@ import "core:thread"
 import http ".."
 import      "../nbio"
 
+@(require) import _ "nbio"
+
 ev :: testing.expect_value
 
 require_value :: proc(t: ^testing.T, val: $T, test: T, format := "", args: ..any, loc := #caller_location) {
@@ -35,6 +37,7 @@ get_endpoint :: proc() -> net.Endpoint {
 	return {net.IP4_Loopback, port}
 }
 
+// Send a simple request and expect OK.
 @(test)
 test_ok :: proc(tt: ^testing.T) {
 	@static s: http.Server
@@ -83,6 +86,8 @@ test_ok :: proc(tt: ^testing.T) {
 	ev(t, http.serve(&s, handler), nil)
 }
 
+// Send two requests, assert two connections are opened, then send two more requests, assert the same
+// two connections are reused.
 @(test)
 connection_pool :: proc(t: ^testing.T) {
 	s: http.Server
@@ -139,4 +144,83 @@ connection_pool :: proc(t: ^testing.T) {
 	ev(t, nbio.run(&io), os.ERROR_NONE)
 
 	http.server_shutdown(&s)
+}
+
+// Send a request, server closes the connection after successfully responding, client sends another
+// request, make sure that all goes well.
+@(test)
+test_server_closes_after_ok :: proc(t: ^testing.T) {
+	State :: struct {
+		s: http.Server,
+		t: ^testing.T,
+		client: http.Client,
+		req: http.Client_Request,
+		sent_second_request: bool,
+	}
+	@static state: State
+	state = State{
+		t = t,
+	}
+
+	opts := http.Default_Server_Opts
+	opts.thread_count = 0
+
+	ep := get_endpoint()
+
+	rv(t, http.listen(&state.s, ep, opts), nil)
+
+	///
+
+	http.client_init(&state.client, http.io())
+
+	state.req = http.Client_Request{
+		url = net.endpoint_to_string(ep),
+	}
+
+	http.client_request(&state.client, state.req, rawptr(nil), proc(res: http.Client_Response, user: rawptr, err: http.Request_Error) {
+		ev(state.t, err, nil)
+		ev(state.t, res.status, http.Status.OK)
+		ev(state.t, http.headers_has_unsafe(res.headers, "date"), true)
+		ev(state.t, http.headers_has_unsafe(res.headers, "content-length"), true)
+		ev(state.t, len(res.body), 0)
+		log.info("Got first response")
+
+		http.response_destroy(&state.client, res)
+	})
+
+	send_second_request :: proc(_: rawptr) {
+		http.client_request(&state.client, state.req, rawptr(nil), proc(res: http.Client_Response, user: rawptr, err: http.Request_Error) {
+			ev(state.t, err, nil)
+			ev(state.t, res.status, http.Status.OK)
+			ev(state.t, http.headers_has_unsafe(res.headers, "date"), true)
+			ev(state.t, http.headers_has_unsafe(res.headers, "content-length"), true)
+			ev(state.t, len(res.body), 0)
+			log.info("Got second response")
+
+			http.response_destroy(&state.client, res)
+			http.client_destroy(&state.client)
+			http.server_shutdown(&state.s) // NOTE: this takes a bit because of the close delay.
+		})
+	}
+
+	///
+
+	handler := http.handler(proc(_: ^http.Request, res: ^http.Response) {
+		res.status = .OK
+
+		res.on_sent = proc(c: ^http.Connection, ud: rawptr) {
+			if state.sent_second_request {
+				return
+			}
+			state.sent_second_request = true
+
+			http._connection_close(c)
+
+			// NOTE: On a timeout send the next request, closing a connection takes time.
+			nbio.timeout(http.io(), http.Conn_Close_Delay, rawptr(nil), send_second_request)
+		}
+
+		http.respond(res)
+	})
+	ev(t, http.serve(&state.s, handler), nil)
 }

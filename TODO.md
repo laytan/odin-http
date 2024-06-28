@@ -7,6 +7,8 @@
 - [ ] Consider switching the temp allocator back again to the custom `allocator.odin`, or remove it
 - [ ] Set (more) timeouts
 - [x] `http.io()` that returns `&http.td.io` or errors if it isn't one of the handler threads
+- [ ] `panic` when user does `free_all` on the given temp ally
+- [ ] in `http.respond`, set the `context.temp_allocator` back to the current connection's, so a user changing it doesn't fuck it up
 
 ## HTTP Client
 
