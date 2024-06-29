@@ -218,10 +218,10 @@ _open_socket :: proc(
 	err: net.Network_Error,
 ) {
 	socket, err = net.create_socket(family, protocol)
-	if err != nil do return
+	if err != nil { return }
 
 	err = prepare_socket(io, socket)
-	if err != nil do net.close(socket)
+	if err != nil { net.close(socket) }
 	return
 }
 
@@ -293,7 +293,7 @@ _write :: proc(
 
 _recv :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, user: rawptr, callback: On_Recv, all := false) -> ^Completion {
 	// TODO: implement UDP.
-	if _, ok := socket.(net.UDP_Socket); ok do unimplemented("nbio.recv with UDP sockets is not yet implemented")
+	if _, ok := socket.(net.UDP_Socket); ok { unimplemented("nbio.recv with UDP sockets is not yet implemented") }
 
 	return submit(
 		io,
@@ -318,7 +318,7 @@ _send :: proc(
 	all := false,
 ) -> ^Completion {
 	// TODO: implement UDP.
-	if _, ok := socket.(net.UDP_Socket); ok do unimplemented("nbio.send with UDP sockets is not yet implemented")
+	if _, ok := socket.(net.UDP_Socket); ok { unimplemented("nbio.send with UDP sockets is not yet implemented") }
 
 	return submit(
 		io,

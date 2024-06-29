@@ -131,6 +131,8 @@ Server :: struct {
 
 	// Private fields:
 
+	// TODO: why are these pointers, we are using handles?
+
 	conns:    [dynamic]^_Connection,
 	conns_mu: sync.RW_Mutex,
 
@@ -161,9 +163,9 @@ connections_iter :: proc(s: ^Server, i: ^int) -> (Connection, bool) {
 // connection handle, this can happen when IO is queued on a connection, and then it is closed,
 // if the IO then completes we have to know if we should be sending things back over the
 // connection.
-Connection :: bit_field u64 {
-	idx: int | 32,
-	gen: int | 32,
+Connection :: struct {
+	idx: u32,
+	gen: u32,
 }
 
 // Send a UTF-8 encoded text message.

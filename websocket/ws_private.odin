@@ -153,7 +153,7 @@ recv_message :: proc(c: ^_Connection) {
 
 	on_frame_header :: proc(s: ^Server, ch: Connection, token: string, err: bufio.Scanner_Error) {
 		c, has_c := get_conn(s, ch)
-		if !has_c do return
+		if !has_c { return }
 
 		buf := transmute([]byte)token
 
@@ -198,7 +198,7 @@ recv_message :: proc(c: ^_Connection) {
 
 	on_payload_len :: proc(s: ^Server, ch: Connection, token: string, err: bufio.Scanner_Error) {
 		c, has_c := get_conn(s, ch)
-		if !has_c do return
+		if !has_c { return }
 
 		buf := transmute([]byte)token
 
@@ -230,7 +230,7 @@ recv_message :: proc(c: ^_Connection) {
 
 	on_masked_payload :: proc(s: ^Server, ch: Connection, token: string, err: bufio.Scanner_Error) {
 		c, has_c := get_conn(s, ch)
-		if !has_c do return
+		if !has_c { return }
 
 		buf := transmute([]byte)token
 
@@ -462,7 +462,7 @@ _send :: proc(c: ^_Connection, opcode: Opcode, data: []byte, cb: proc(^_Connecti
 
 	on_sent :: proc(s: ^Server, ch: Connection, cb: proc(^_Connection), sent: int, err: net.Network_Error) {
 		c, has_c := get_conn(s, ch)
-		if !has_c do return
+		if !has_c { return }
 
 		log.debugf("[%i][ws] sent %m", c.http.socket, sent)
 
@@ -617,17 +617,17 @@ handle_scanner_err :: proc(c: ^_Connection, err: bufio.Scanner_Error) -> bool {
 
 // NOTE: `to` is assumed lowercase!
 ascii_case_insensitive_eq :: proc(cmp: string, to: string) -> bool {
-	if cmp == to           do return true
-	if len(cmp) != len(to) do return false
+	if cmp == to           { return true }
+	if len(cmp) != len(to) { return false }
 
 	to := to
 	for c, i in transmute([]byte)cmp {
 		switch c {
 		case 'A'..='Z':
 			DIFF :: 'a' - 'A'
-			if c + DIFF != to[i] do return false
+			if c + DIFF != to[i] { return false }
 		case:
-			if c != to[i] do return false
+			if c != to[i] { return false }
 		}
 	}
 

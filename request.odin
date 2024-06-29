@@ -31,7 +31,7 @@ request_cookie_get :: proc(r: ^Request, key: string) -> (value: string, ok: bool
 	cookies := headers_get_unsafe(r.headers, "cookie") or_return
 
 	for k, v in request_cookies_iter(&cookies) {
-		if key == k do return v, true
+		if key == k { return v, true }
 	}
 
 	return
@@ -48,7 +48,7 @@ request_cookies :: proc(r: ^Request, allocator := context.temp_allocator) -> (re
 	cookies := headers_get_unsafe(r.headers, "cookie") or_else ""
 	for k, v in request_cookies_iter(&cookies) {
 		// Don't overwrite, the iterator goes from right to left and we want the last.
-		if k in res do continue
+		if k in res { continue }
 
 		res[k] = v
 	}

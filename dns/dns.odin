@@ -134,7 +134,7 @@ destroy_cb :: proc(c: ^Client, user: rawptr, cb: proc(user: rawptr)) {
 // Removes any cache entries that aren't currently being resolved.
 cache_clear :: proc(c: ^Client) {
     for hostname, entry in c.cache {
-        if entry.resolving do continue
+        if entry.resolving { continue }
         log.debugf("DNS of %q has been evicted", hostname)
 
         delete(hostname, c.allocator)

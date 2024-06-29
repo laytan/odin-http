@@ -81,7 +81,7 @@ cookie_parse :: proc(value: string) -> (cookie: Cookie, ok: bool) {
 	value := value
 
 	eq := strings.index_byte(value, '=')
-	if eq < 1 do return
+	if eq < 1 { return }
 
 	cookie.name = value[:eq]
 	value = value[eq + 1:]

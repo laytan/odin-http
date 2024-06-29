@@ -72,7 +72,7 @@ body_set :: proc{
 Sets the status code with the safety of being able to do this after writing (part of) the body.
 */
 response_status :: proc(r: ^Response, status: Status) {
-	if r.status == status do return
+	if r.status == status { return }
 
 	r.status = status
 
@@ -125,7 +125,7 @@ response_writer_init :: proc(rw: ^Response_Writer, r: ^Response, buffer: []byte)
 			ws :: bytes.buffer_write_string
 			write_chunk :: proc(b: ^bytes.Buffer, chunk: []byte) {
 				plen := i64(len(chunk))
-				if plen == 0 do return
+				if plen == 0 { return }
 
 				log.debugf("response_writer chunk of size: %i", plen)
 
@@ -217,7 +217,7 @@ You can pass `content_length < 0` to omit the content-length header, note that t
 required on most responses, but there are things like transfer-encodings that could leave it out.
 */
 _response_write_heading :: proc(r: ^Response, content_length: int) {
-	if r._heading_written do return
+	if r._heading_written { return }
 	r._heading_written = true
 
 	ws   :: bytes.buffer_write_string
@@ -330,7 +330,7 @@ response_send_got_body :: proc(r: ^Response, will_close: bool) {
 	conn := r._conn
 
 	if will_close {
-		if !connection_set_state(r._conn, .Will_Close) do return
+		if !connection_set_state(r._conn, .Will_Close) { return }
 	}
 
 	if bytes.buffer_length(&r._buf) == 0 {
@@ -348,7 +348,7 @@ on_response_sent :: proc(conn_: rawptr, sent: int, err: net.Network_Error) {
 
 	if err != nil {
 		log.errorf("could not send response: %v", err)
-		if !connection_set_state(conn, .Will_Close) do return
+		if !connection_set_state(conn, .Will_Close) { return }
 	}
 
 	clean_request_loop(conn)
@@ -379,7 +379,7 @@ clean_request_loop :: proc(conn: ^Connection, close: Maybe(bool) = nil) {
 	if c, ok := close.?; (ok && c) || conn.state == .Will_Close {
 		_connection_close(conn)
 	} else {
-		if !connection_set_state(conn, .Idle) do return
+		if !connection_set_state(conn, .Idle) { return }
 		conn_handle_req(conn, context.temp_allocator)
 	}
 }

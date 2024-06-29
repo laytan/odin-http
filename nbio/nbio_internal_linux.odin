@@ -113,16 +113,15 @@ Op_Poll_Remove :: struct {
 
 flush :: proc(io: ^IO, wait_nr: u32, timeouts: ^uint, etime: ^bool) -> os.Errno {
 	err := flush_submissions(io, wait_nr, timeouts, etime)
-	if err != os.ERROR_NONE do return err
+	if err != os.ERROR_NONE { return err }
 
 	err = flush_completions(io, 0, timeouts, etime)
-	if err != os.ERROR_NONE do return err
+	if err != os.ERROR_NONE { return err }
 
 	// Store length at this time, so we don't infinite loop if any of the enqueue
 	// procs below then add to the queue again.
 	n := queue.len(io.unqueued)
 
-	// odinfmt: disable
 	for _ in 0..<n {
 		unqueued := queue.pop_front(&io.unqueued)
 		switch &op in unqueued.operation {
@@ -160,7 +159,6 @@ flush :: proc(io: ^IO, wait_nr: u32, timeouts: ^uint, etime: ^bool) -> os.Errno 
 		case: unreachable()
 		}
 	}
-	// odinfmt: enable
 
 	return os.ERROR_NONE
 }
@@ -170,7 +168,7 @@ flush_completions :: proc(io: ^IO, wait_nr: u32, timeouts: ^uint, etime: ^bool) 
 	wait_remaining := wait_nr
 	for {
 		completed, err := io_uring.copy_cqes(&io.ring, cqes[:], wait_remaining)
-		if err != .None do return ring_err_to_os_err(err)
+		if err != .None { return ring_err_to_os_err(err) }
 
 		wait_remaining = max(0, wait_remaining - completed)
 
@@ -195,7 +193,7 @@ flush_completions :: proc(io: ^IO, wait_nr: u32, timeouts: ^uint, etime: ^bool) 
 			}
 		}
 
-		if completed < len(cqes) do break
+		if completed < len(cqes) { break }
 	}
 
 	return os.ERROR_NONE
@@ -211,7 +209,7 @@ flush_submissions :: proc(io: ^IO, wait_nr: u32, timeouts: ^uint, etime: ^bool) 
 			continue
 		case .Completion_Queue_Overcommitted, .System_Resources:
 			ferr := flush_completions(io, 1, timeouts, etime)
-			if ferr != os.ERROR_NONE do return ferr
+			if ferr != os.ERROR_NONE { return ferr }
 			continue
 		case:
 			return ring_err_to_os_err(err)

@@ -3,10 +3,6 @@ package http
 
 import "nbio"
 
-// TODO: Implement a proper cookie jar per client, see rfc.
-// it should take response cookies, add it to the jar and automatically add them to matching requests again.
-// we can then make use of `js_credentials` on native too.
-
 // TODO: timeouts
 
 Client :: _Client
@@ -46,6 +42,9 @@ Client_Response :: struct {
 	headers: Headers,
 
 	// NOTE: unused on JS targets, use the `js_credentials` option to configure cookies there.
+	// TODO: Implement a proper cookie jar per client, see rfc.
+	// it should take response cookies, add it to the jar and automatically add them to matching requests again.
+	// we can then make use of `js_credentials` on native too.
 	cookies: [dynamic]Cookie,
 }
 
