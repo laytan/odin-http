@@ -2,7 +2,6 @@
 package http
 
 import "base:runtime"
-import "core:fmt"
 
 import "core:slice"
 
@@ -20,6 +19,14 @@ _Client :: struct {
 _client_init :: proc(c: ^Client, io: ^nbio.IO, allocator := context.allocator) {
 	c.io = io
 	c.allocator = allocator
+}
+
+_client_destroy :: proc(c: ^Client) {
+	unimplemented()
+}
+
+_response_destroy :: proc(c: ^Client, res: Client_Response) {
+	unimplemented()
 }
 
 @(private="file")

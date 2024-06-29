@@ -1,6 +1,7 @@
 //+private
 package http
 
+@(require)
 import "base:runtime"
 
 import "core:io"

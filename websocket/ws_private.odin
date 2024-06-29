@@ -14,7 +14,7 @@ import "core:unicode/utf8"
 import "core:slice"
 
 import http ".."
-import nbio "../nbio/poly"
+import      "../nbio"
 
 // GUID for the WebSocket protocol.
 @(rodata)

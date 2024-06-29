@@ -670,6 +670,7 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.temp_allocator) {
 Server_Date :: struct {
 	buf_backing: [DATE_LENGTH]byte,
 	buf:         bytes.Buffer,
+	// TODO: load from future `nbio.now()`.
 	now:         time.Time,
 }
 

@@ -21,6 +21,7 @@ Response :: struct {
 	// NOTE: use `http.response_status` if the response body might have been set already.
 	status:           Status,
 
+	// When set, the callback is called once the response has been sent.
 	on_sent: proc(c: ^Connection, user: rawptr),
 	on_sent_ud: rawptr,
 

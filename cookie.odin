@@ -25,9 +25,8 @@ Cookie :: struct {
 	secure:       bool,
 }
 
-// Builds the Set-Cookie header string representation of the given cookie.
+// Writes the `Set-Cookie` header string representation of the given cookie.
 cookie_write :: proc(w: io.Writer, c: Cookie) -> io.Error {
-	// odinfmt:disable
 	io.write_string(w, "set-cookie: ") or_return
 	write_escaped_newlines(w, c.name)  or_return
 	io.write_byte(w, '=')              or_return
@@ -59,7 +58,6 @@ cookie_write :: proc(w: io.Writer, c: Cookie) -> io.Error {
 	case .Strict: io.write_string(w, "; SameSite=Strict") or_return
 	case .Unspecified: // no-op.
 	}
-	// odinfmt:enable
 
 	if c.secure {
 		io.write_string(w, "; Secure") or_return
@@ -76,16 +74,8 @@ cookie_write :: proc(w: io.Writer, c: Cookie) -> io.Error {
 	return nil
 }
 
-// Builds the Set-Cookie header string representation of the given cookie.
-cookie_string :: proc(c: Cookie, allocator := context.allocator) -> string {
-	b: strings.Builder
-	strings.builder_init(&b, 0, 20, allocator)
-
-	cookie_write(strings.to_writer(&b), c)
-
-	return strings.to_string(b)
-}
-
+// Parses a `Set-Cookie` header value.
+//
 // TODO: check specific whitespace requirements in RFC.
 cookie_parse :: proc(value: string) -> (cookie: Cookie, ok: bool) {
 	value := value

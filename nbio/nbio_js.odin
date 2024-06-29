@@ -118,3 +118,7 @@ _timeout_remove :: proc(io: ^IO, timeout: ^Completion) {
 	// NOTE: none of the operations we support for JS, are able to timeout on other targets.
 	panic("trying to add a timeout to an operation that can't timeout")
 }
+
+_remove :: proc(io: ^IO, target: ^Completion) {
+	unimplemented()
+}

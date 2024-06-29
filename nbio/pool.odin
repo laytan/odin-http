@@ -6,9 +6,10 @@ import "core:container/queue"
 import "core:mem"
 import "core:mem/virtual"
 
+// TODO: this is a dumb thrown together pool, we should add a good one to `core` and use that.
+
 // An object pool where the objects are allocated on a growing arena.
 Pool :: struct($T: typeid) {
-	allocator:         mem.Allocator,
 	arena:             virtual.Arena,
 	objects_allocator: mem.Allocator,
 	objects:           queue.Queue(^T),
@@ -22,7 +23,6 @@ pool_init :: proc(p: ^Pool($T), cap := DEFAULT_STARTING_CAP, allocator := contex
 	virtual.arena_init_growing(&p.arena) or_return
 	p.objects_allocator = virtual.arena_allocator(&p.arena)
 
-	p.allocator = allocator
 	queue.init(&p.objects, cap, allocator) or_return
 	for _ in 0 ..< cap {
 		_ = queue.push_back(&p.objects, new(T, p.objects_allocator)) or_return

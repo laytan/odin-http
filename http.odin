@@ -54,7 +54,6 @@ requestline_parse :: proc(s: string, allocator := context.temp_allocator) -> (li
 }
 
 requestline_write :: proc(w: io.Writer, rline: Requestline) -> io.Error {
-	// odinfmt:disable
 	io.write_string(w, method_string(rline.method)) or_return // <METHOD>
 	io.write_byte(w, ' ')                           or_return // <METHOD> <SP>
 
@@ -66,7 +65,6 @@ requestline_write :: proc(w: io.Writer, rline: Requestline) -> io.Error {
 	io.write_byte(w, ' ')                           or_return // <METHOD> <SP> <TARGET> <SP>
 	version_write(w, rline.version)                 or_return // <METHOD> <SP> <TARGET> <SP> <VERSION>
 	io.write_string(w, "\r\n")                      or_return // <METHOD> <SP> <TARGET> <SP> <VERSION> <CRLF>
-	// odinfmt:enable
 
 	return nil
 }
@@ -482,7 +480,6 @@ Mime_Type :: enum {
 }
 
 mime_from_extension :: proc(s: string) -> Mime_Type {
-	//odinfmt:disable
 	switch filepath.ext(s) {
 	case ".html": return .Html
 	case ".js":   return .Js
@@ -499,7 +496,6 @@ mime_from_extension :: proc(s: string) -> Mime_Type {
 	case ".wasm": return .Wasm
 	case:         return .Plain
 	}
-	//odinfmt:enable
 }
 
 @(private="file")
