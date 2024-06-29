@@ -15,7 +15,8 @@
 - [ ] Proper error propagation
 	- [ ] Dispose of a connection where an error happened (network error or 500 error (double check in RFC))
 	- [ ] If there are queued requests, spawn a new connection for them
-	- [ ] If a connection is closed by the server, how does it get handled, retry configuration?
+	- [x] If a connection is closed by the server, how does it get handled, retry configuration?
+		- [ ] Make sure this doesn't infinitely loops, ie try this once and then error the request
 - [ ] Expand configuration
     - [ ] Max response size
 	- [ ] Timeouts
@@ -42,7 +43,7 @@
 - [x] JS implementation
 - [x] nbio.run that loops a tick, and returns when the event loop has nothing going on
 - [ ] remove `read` and `write` and force the offset, document why (Windows)
-- [ ] do `time.now` at most once a tick (cache it)
+- [ ] do `time.now` at most once a tick (cache it), can probably add a `nbio.now(nbio.IO) -> time.Time` too
 
 ## WebSocket Server
 

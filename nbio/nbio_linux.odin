@@ -109,13 +109,12 @@ _close :: proc(io: ^IO, fd: Closable, user: rawptr, callback: On_Close) -> ^Comp
 	completion.user_data = user
 
 	handle: os.Handle
-	//odinfmt:disable
 	switch h in fd {
 	case net.TCP_Socket: handle = os.Handle(h)
 	case net.UDP_Socket: handle = os.Handle(h)
 	case net.Socket:     handle = os.Handle(h)
 	case os.Handle:      handle = h
-	} //odinfmt:enable
+	}
 
 	completion.operation = Op_Close {
 		callback = callback,

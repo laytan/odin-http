@@ -1,10 +1,8 @@
 package tests_nbio
 
-import "core:log"
 import "core:net"
 import "core:os"
 import "core:testing"
-import "core:time"
 
 import "../../nbio"
 

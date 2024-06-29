@@ -326,6 +326,7 @@ _send2 :: proc(io: ^IO, socket: net.Any_Socket, buf: []byte, p: $T, p2: $T2, cal
 		cb  := (^C) (rawptr(ptr))^
 		p   := (^T) (rawptr(ptr + size_of(C)))^
 		p2  := (^T2)(rawptr(ptr + size_of(C) + size_of(T)))^
+		cb(p, p2, sent, err)
 	}, endpoint, all)
 
 	callback, p, p2 := callback, p, p2

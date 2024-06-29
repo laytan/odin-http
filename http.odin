@@ -221,7 +221,6 @@ date_write :: proc(w: io.Writer, t: time.Time) -> io.Error {
 	hour, minute, second := time.clock_from_time(t)
 	wday := time.weekday(t)
 
-	// odinfmt:disable
 	io.write_string(w, DAYS[wday])    or_return // 'Fri, '
 	write_padded_int(w, day)          or_return // 'Fri, 05'
 	io.write_string(w, MONTHS[month]) or_return // 'Fri, 05 Feb '
@@ -233,7 +232,6 @@ date_write :: proc(w: io.Writer, t: time.Time) -> io.Error {
 	io.write_byte(w, ':')             or_return // 'Fri, 05 Feb 2023 09:01:'
 	write_padded_int(w, second)       or_return // 'Fri, 05 Feb 2023 09:01:10'
 	io.write_string(w, " GMT")        or_return // 'Fri, 05 Feb 2023 09:01:10 GMT'
-	// odinfmt:enable
 
 	return nil
 }

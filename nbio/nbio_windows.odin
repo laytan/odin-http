@@ -118,13 +118,11 @@ _open :: proc(io: ^IO, path: string, mode, perm: int) -> (os.Handle, os.Errno) {
 	}
 
 	access: u32
-	//odinfmt:disable
 	switch mode & (os.O_RDONLY | os.O_WRONLY | os.O_RDWR) {
 	case os.O_RDONLY: access = win.FILE_GENERIC_READ
 	case os.O_WRONLY: access = win.FILE_GENERIC_WRITE
 	case os.O_RDWR:   access = win.FILE_GENERIC_READ | win.FILE_GENERIC_WRITE
 	}
-	//odinfmt:enable
 
 	if mode & os.O_CREATE != 0 {
 		access |= win.FILE_GENERIC_WRITE
