@@ -3,13 +3,7 @@ package openssl
 import "core:c"
 import "core:c/libc"
 
-// odinfmt:disable
-when ODIN_OS == .Darwin && ODIN_ARCH == .arm64 {
-	foreign import lib {
-		"./includes/darwin/libssl.a",
-		"./includes/darwin/libcrypto.a",
-	}
-} else when ODIN_OS == .Windows {
+when ODIN_OS == .Windows {
 	foreign import lib {
 		"./includes/windows/libssl.lib",
 		"./includes/windows/libcrypto.lib",
@@ -20,7 +14,6 @@ when ODIN_OS == .Darwin && ODIN_ARCH == .arm64 {
 		"system:crypto",
 	}
 }
-// odinfmt:enable
 
 SSL_METHOD :: struct {}
 SSL_CTX :: struct {}
