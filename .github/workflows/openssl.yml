@@ -1,0 +1,106 @@
+name: OpenSSL
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: 0 20 * * *
+
+env:
+  FORCE_COLOR: "1"
+
+concurrency:
+  group: "openssl"
+  cancel-in-progress: true
+
+jobs:
+  check-updates:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: current-release
+        shell: bash
+        run: |
+          VERSION=$(cat openssl/.version)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "current version is $VERSION"
+
+      - uses: actions/github-script@v7
+        id: latest-release
+        with:
+          script: |
+            const latestRelease = await github.rest.repos.getLatestRelease({
+              owner: 'openssl',
+              repo: 'openssl',
+            });
+            core.setOutput('version', latestRelease.data.tag_name);
+
+            const asset = latestRelease.data.assets.find(asset => asset.name.endsWith('.tar.gz'));
+            if (asset) {
+              core.setOutput('url', asset.browser_download_url);
+              core.setOutput('version', latestRelease.data.tag_name);
+              core.info('latest version is ' + latestRelease.data.tag_name);
+            } else {
+              core.setFailed('No .tar.gz asset found in the latest release.');
+            }
+
+      - name: update .version
+        if: ${{ steps.current-release.outputs.version != steps.latest-release.outputs.version }}
+        shell: bash
+        run: |
+          echo "${{ steps.latest-release.outputs.version }}" > openssl/.version
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: ${{ steps.current-release.outputs.version != steps.latest-release.outputs.version }}
+
+      - uses: ilammy/setup-nasm@v1
+        if: ${{ steps.current-release.outputs.version != steps.latest-release.outputs.version }}
+
+      - name: download release
+        if: ${{ steps.current-release.outputs.version != steps.latest-release.outputs.version }}
+        shell: bash
+        run: |
+          curl -L -o openssl.tar.gz ${{ steps.latest-release.outputs.url }}
+          file openssl.tar.gz
+
+      - name: unzip release
+        if: ${{ steps.current-release.outputs.version != steps.latest-release.outputs.version }}
+        shell: bash
+        run: |
+          tar -xzf openssl.tar.gz
+
+      - name: configure
+        if: ${{ steps.current-release.outputs.version != steps.latest-release.outputs.version }}
+        run: |
+          cd ${{ steps.latest-release.outputs.version }}
+          perl Configure no-shared no-legacy no-deprecated --release
+
+      - name: compile
+        if: ${{ steps.current-release.outputs.version != steps.latest-release.outputs.version }}
+        run: |
+          cd ${{ steps.latest-release.outputs.version }}
+          nmake
+
+      - name: test
+        if: ${{ steps.current-release.outputs.version != steps.latest-release.outputs.version }}
+        run: |
+          cd ${{ steps.latest-release.outputs.version }}
+          nmake test
+
+      - name: copy & clean
+        if: ${{ steps.current-release.outputs.version != steps.latest-release.outputs.version }}
+        shell: bash
+        run: |
+          rm -rf openssl/includes/windows
+
+          cd ${{ steps.latest-release.outputs.version }}
+          dir
+          cp libcrypto.lib ../openssl/includes/windows/libcrypto.lib
+          cp libssl.lib ../openssl/includes/windows/libssl.lib
+
+          cd ..
+          rm -rf openssl.tar.gz
+          rm -rf ${{ steps.latest-release.outputs.version }}
+
+      - name: pr
+        if: ${{ steps.current-release.outputs.version != steps.latest-release.outputs.version }}
+        uses: peter-evans/create-pull-request@v6
