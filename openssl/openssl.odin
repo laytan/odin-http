@@ -94,8 +94,11 @@ http_client_ssl_implementation :: proc() -> http.Client_SSL {
 		connection_create = proc(c: http.SSL_Client, socket: net.TCP_Socket, host: cstring) -> http.SSL_Connection {
 			conn := SSL_new((^SSL_CTX)(c))
 			assert(conn != nil)
-			assert(SSL_set_tlsext_host_name(conn, host) == 1)
-			assert(SSL_set_fd(conn, i32(socket)) == 1)
+			ret: i32
+			ret = SSL_set_tlsext_host_name(conn, host)
+			assert(ret == 1)
+			ret = SSL_set_fd(conn, i32(socket))
+			assert(ret == 1)
 			return http.SSL_Connection(conn)
 		},
 		connection_destroy = proc(c: http.SSL_Client, conn: http.SSL_Connection) {

@@ -18,7 +18,8 @@ _init :: proc(io: ^IO, allocator := context.allocator) -> (err: os.Errno) {
 
 	win.ensure_winsock_initialized()
 	defer if err != win.NO_ERROR {
-		assert(win.WSACleanup() == win.NO_ERROR)
+		clean_err := win.WSACleanup()
+		assert(clean_err == win.NO_ERROR)
 	}
 
 	io.iocp = win.CreateIoCompletionPort(win.INVALID_HANDLE_VALUE, nil, nil, 0)
