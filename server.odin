@@ -449,7 +449,8 @@ conn_handle_reqs :: proc(c: ^Connection) {
 
 	// allocator_init(&c.temp_allocator, c.server.conn_allocator)
 	// context.temp_allocator = allocator(&c.temp_allocator)
-	assert(virtual.arena_init_growing(&c.temp_allocator) == nil)
+	err := virtual.arena_init_growing(&c.temp_allocator)
+    assert(err == nil)
 	context.temp_allocator = virtual.arena_allocator(&c.temp_allocator)
 
 	conn_handle_req(c, context.temp_allocator)
