@@ -35,16 +35,19 @@ when ODIN_OS == .Windows {
 	}
 }
 
+Version :: bit_field u32 {
+	pre_release: uint | 4,
+	patch:       uint | 16,
+	minor:       uint | 8,
+	major:       uint | 4,
+}
+
+VERSION: Version
+
 @(private, init)
 version_check :: proc() {
-    Version :: bit_field u32 {
-        pre_release: uint | 4,
-        patch:       uint | 16,
-        minor:       uint | 8,
-        major:       uint | 4,
-    }
-    version := Version(OpenSSL_version_num())
-    assert(version.major == 3, "invalid OpenSSL library version, expected 3.x")
+    VERSION = Version(OpenSSL_version_num())
+    assert(VERSION.major == 3, "invalid OpenSSL library version, expected 3.x")
 }
 
 SSL_METHOD :: struct {}
