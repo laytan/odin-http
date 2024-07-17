@@ -90,7 +90,7 @@ jobs:
         if: ${{ steps.current-release.outputs.version != steps.latest-release.outputs.version }}
         shell: bash
         run: |
-          rm -rf openssl/includes/windows
+          rm -rf openssl/includes/windows/*
 
           cd ${{ steps.latest-release.outputs.version }}
           dir
