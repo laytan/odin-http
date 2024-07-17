@@ -3,10 +3,25 @@ package openssl
 import "core:c"
 import "core:c/libc"
 
+SHARED :: #config(OPENSSL_SHARED, false)
+
 when ODIN_OS == .Windows {
-	foreign import lib {
-		"./includes/windows/libssl.lib",
-		"./includes/windows/libcrypto.lib",
+	when SHARED {
+		foreign import lib {
+			"./includes/windows/libssl.lib",
+			"./includes/windows/libcrypto.lib",
+		}
+	} else {
+		@(extra_linker_flags="/nodefaultlib:libcmt")
+		foreign import lib {
+			"./includes/windows/libssl_static.lib",
+			"./includes/windows/libcrypto_static.lib",
+			"system:ws2_32.lib",
+			"system:gdi32.lib",
+			"system:advapi32.lib",
+			"system:crypt32.lib",
+			"system:user32.lib",
+		}
 	}
 } else {
 	foreign import lib {

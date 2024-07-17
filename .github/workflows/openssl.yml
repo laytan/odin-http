@@ -1,5 +1,8 @@
 name: OpenSSL
 on:
+  push:
+    paths: [".github/workflows/openssl.yml"]
+    branches: ["main"]
   workflow_dispatch:
   schedule:
     - cron: 0 20 * * *
@@ -72,7 +75,7 @@ jobs:
         if: ${{ steps.current-release.outputs.version != steps.latest-release.outputs.version }}
         run: |
           cd ${{ steps.latest-release.outputs.version }}
-          perl Configure no-shared no-legacy no-deprecated --release
+          perl Configure no-legacy no-deprecated --release
 
       - name: compile
         if: ${{ steps.current-release.outputs.version != steps.latest-release.outputs.version }}
@@ -94,8 +97,10 @@ jobs:
 
           cd ${{ steps.latest-release.outputs.version }}
           dir
-          cp libcrypto.lib ../openssl/includes/windows/libcrypto.lib
-          cp libssl.lib ../openssl/includes/windows/libssl.lib
+          cp libcrypto.lib ../openssl/includes/windows
+          cp libssl.lib ../openssl/includes/windows
+          cp libcrypto_static.lib ../openssl/includes/windows
+          cp libssl_static.lib ../openssl/includes/windows
 
           cd ..
           rm -rf openssl.tar.gz
