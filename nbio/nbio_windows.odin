@@ -87,7 +87,7 @@ _tick :: proc(io: ^IO) -> (err: os.Errno) {
 
 			// This is actually pointing at the Completion.over field, but because it is the first field
 			// It is also a valid pointer to the Completion struct.
-			completion := transmute(^Completion)event.lpOverlapped
+			completion := cast(^Completion)event.lpOverlapped
 			queue.push_back(&io.completed, completion)
 		}
 	}
