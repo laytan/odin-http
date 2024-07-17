@@ -23,11 +23,28 @@ when ODIN_OS == .Windows {
 			"system:user32.lib",
 		}
 	}
-} else {
+} else when ODIN_OS == .Darwin {
 	foreign import lib {
 		"system:ssl.3",
 		"system:crypto.3",
 	}
+} else {
+	foreign import lib {
+		"system:ssl",
+		"system:crypto",
+	}
+}
+
+@(private, init)
+version_check :: proc() {
+    Version :: bit_field u32 {
+        pre_release: uint | 4,
+        patch:       uint | 16,
+        minor:       uint | 8,
+        major:       uint | 4,
+    }
+    version := Version(OpenSSL_version_num())
+    assert(version.major == 3, "invalid OpenSSL library version, expected 3.x")
 }
 
 SSL_METHOD :: struct {}
@@ -51,6 +68,7 @@ foreign lib {
 	SSL_CTX_free :: proc(ctx: ^SSL_CTX) ---
 	ERR_print_errors_fp :: proc(fp: ^libc.FILE) ---
 	SSL_ctrl :: proc(ssl: ^SSL, cmd: c.int, larg: c.long, parg: rawptr) -> c.long ---
+    OpenSSL_version_num :: proc() -> c.ulong ---
 }
 
 // This is a macro in c land.
