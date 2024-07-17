@@ -25,8 +25,8 @@ when ODIN_OS == .Windows {
 	}
 } else {
 	foreign import lib {
-		"system:ssl",
-		"system:crypto",
+		"system:ssl.3",
+		"system:crypto.3",
 	}
 }
 
