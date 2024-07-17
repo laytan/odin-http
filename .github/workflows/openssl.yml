@@ -104,3 +104,8 @@ jobs:
       - name: pr
         if: ${{ steps.current-release.outputs.version != steps.latest-release.outputs.version }}
         uses: peter-evans/create-pull-request@v6
+        with:
+          title: |
+            Update bundled OpenSSL libraries to ${{ steps.latest-release.outputs.version }}
+          commit-message: |
+            openssl: update bundled libraries to ${{ steps.latest-release.outputs.version }}
