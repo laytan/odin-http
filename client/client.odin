@@ -149,7 +149,8 @@ response_destroy :: proc(res: ^Response, body: Maybe(Body_Type) = nil, was_alloc
 	// NOTE: this is fine because we don't add any headers with `headers_set_unsafe()`.
 	// If we did, we wouldn't know if the key was allocated or a literal.
 	// We also set the headers to readonly before giving them to the user so they can't add any either.
-	for k in res.headers._kv {
+	for k, v in res.headers._kv {
+		delete(v, res.headers._kv.allocator)
 		delete(k, res.headers._kv.allocator)
 	}
 
