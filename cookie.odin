@@ -308,14 +308,14 @@ cookie_date_parse :: proc(value: string) -> (t: time.Time, ok: bool) {
 	value := value
 	for token in iter_delim(&value) {
 		if _, has_time := clock.?; !has_time {
-			if t, ok := parse_time(token); ok {
+			if t, tok := parse_time(token); tok {
 				clock = t
 				continue
 			}
 		}
 
 		if _, has_day_of_month := day_of_month.?; !has_day_of_month {
-			if dom, ok := parse_digits(token, 1, 2, true); ok {
+			if dom, dok := parse_digits(token, 1, 2, true); dok {
 				day_of_month = dom
 				continue
 			}
@@ -329,7 +329,7 @@ cookie_date_parse :: proc(value: string) -> (t: time.Time, ok: bool) {
 		}
 
 		if _, has_year := year.?; !has_year {
-			if yr, ok := parse_digits(token, 2, 4, true); ok {
+			if yr, yrok := parse_digits(token, 2, 4, true); yrok {
 
 				if yr >= 70 && yr <= 99 {
 					yr += 1900
