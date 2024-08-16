@@ -23,7 +23,7 @@ _init :: proc(io: ^IO, allocator := context.allocator) -> (err: os.Errno) {
 
 	io.iocp = win.CreateIoCompletionPort(win.INVALID_HANDLE_VALUE, nil, 0, 0)
 	if io.iocp == nil {
-		err = os.Errno(win.GetLastError())
+		err = os.Platform_Error(win.GetLastError())
 		return
 	}
 
@@ -65,7 +65,7 @@ _tick :: proc(io: ^IO) -> (err: os.Errno) {
 		entries_removed: win.ULONG
 		if !win.GetQueuedCompletionStatusEx(io.iocp, &events[0], len(events), &entries_removed, wait_ms, false) {
 			if terr := win.GetLastError(); terr != win.WAIT_TIMEOUT {
-				err = os.Errno(terr)
+				err = os.Platform_Error(terr)
 				return
 			}
 		}
@@ -168,7 +168,7 @@ _open :: proc(io: ^IO, path: string, mode, perm: int) -> (os.Handle, os.Errno) {
 	handle := os.Handle(win.CreateFileW(wide_path, access, share_mode, sa, create_mode, flags, nil))
 
 	if handle == os.INVALID_HANDLE {
-		err := os.Errno(win.GetLastError())
+		err := os.Platform_Error(win.GetLastError())
 		return os.INVALID_HANDLE, err
 	}
 
@@ -182,7 +182,7 @@ _open :: proc(io: ^IO, path: string, mode, perm: int) -> (os.Handle, os.Errno) {
 	cmode |= FILE_SKIP_SET_EVENT_ON_HANDLE
 	if !win.SetFileCompletionNotificationModes(win.HANDLE(handle), cmode) {
 		win.CloseHandle(win.HANDLE(handle))
-		return os.INVALID_HANDLE, os.Errno(win.GetLastError())
+		return os.INVALID_HANDLE, os.Platform_Error(win.GetLastError())
 	}
 
 	if mode & os.O_APPEND != 0 {
@@ -202,7 +202,7 @@ _seek :: proc(io: ^IO, fd: os.Handle, offset: int, whence: Whence) -> (int, os.E
 		size: win.LARGE_INTEGER
 		ok := win.GetFileSizeEx(win.HANDLE(fd), &size)
 		if !ok {
-			return 0, os.Errno(win.GetLastError())
+			return 0, os.Platform_Error(win.GetLastError())
 		}
 
 		io.offsets[fd] = u32(size) + u32(offset)

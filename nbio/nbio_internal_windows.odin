@@ -208,7 +208,7 @@ handle_completion :: proc(io: ^IO, completion: ^Completion) {
 		op.read += int(read)
 
 		if err != win.NO_ERROR {
-			op.callback(completion.user_data, op.read, os.Errno(err))
+			op.callback(completion.user_data, op.read, os.Platform_Error.READ_FAULT)
 		} else if op.all && op.read < op.len {
 			op.buf = op.buf[read:]
 
@@ -233,7 +233,7 @@ handle_completion :: proc(io: ^IO, completion: ^Completion) {
 
 		op.written += int(written)
 
-		oerr := os.Errno(err)
+		oerr := os.Platform_Error.WRITE_FAULT
 		if oerr != os.ERROR_NONE {
 			op.callback(completion.user_data, op.written, oerr)
 		} else if op.all && op.written < op.len {
@@ -323,7 +323,7 @@ accept_callback :: proc(io: ^IO, comp: ^Completion, op: ^Op_Accept) -> (source: 
 
 		oclient, oerr := open_socket(io, .IP4, .TCP)
 
-		err = win.c_int(net_err_to_code(oerr))
+		err = win.c_int(net_err_to_code(oerr).(runtime.Allocator_Error))
 		if err != win.NO_ERROR do return
 
 		op.client = win.SOCKET(net.any_socket_to_socket(oclient))
@@ -368,7 +368,7 @@ connect_callback :: proc(io: ^IO, comp: ^Completion, op: ^Op_Connect) -> (err: w
 
 		osocket, oerr := open_socket(io, .IP4, .TCP)
 
-		err = win.c_int(net_err_to_code(oerr))
+		err = win.c_int(net_err_to_code(oerr).(runtime.Allocator_Error))
 		if err != win.NO_ERROR do return
 
 		op.socket = win.SOCKET(net.any_socket_to_socket(osocket))
@@ -578,42 +578,42 @@ endpoint_to_sockaddr :: proc(ep: net.Endpoint) -> (sockaddr: win.SOCKADDR_STORAG
 	unreachable()
 }
 
-net_err_to_code :: proc(err: net.Network_Error) -> os.Errno {
+net_err_to_code :: proc(err: net.Network_Error) -> os.Error {
 	switch e in err {
 	case net.Create_Socket_Error:
-		return os.Errno(e)
+		return os.Platform_Error(e)
 	case net.Socket_Option_Error:
-		return os.Errno(e)
+		return os.Platform_Error(e)
 	case net.General_Error:
-		return os.Errno(e)
+		return os.Platform_Error(e)
 	case net.Platform_Error:
-		return os.Errno(e)
+		return os.Platform_Error(e)
 	case net.Dial_Error:
-		return os.Errno(e)
+		return os.Platform_Error(e)
 	case net.Listen_Error:
-		return os.Errno(e)
+		return os.Platform_Error(e)
 	case net.Accept_Error:
-		return os.Errno(e)
+		return os.Platform_Error(e)
 	case net.Bind_Error:
-		return os.Errno(e)
+		return os.Platform_Error(e)
 	case net.TCP_Send_Error:
-		return os.Errno(e)
+		return os.Platform_Error(e)
 	case net.UDP_Send_Error:
-		return os.Errno(e)
+		return os.Platform_Error(e)
 	case net.TCP_Recv_Error:
-		return os.Errno(e)
+		return os.Platform_Error(e)
 	case net.UDP_Recv_Error:
-		return os.Errno(e)
+		return os.Platform_Error(e)
 	case net.Shutdown_Error:
-		return os.Errno(e)
+		return os.Platform_Error(e)
 	case net.Set_Blocking_Error:
-		return os.Errno(e)
+		return os.Platform_Error(e)
 	case net.Parse_Endpoint_Error:
-		return os.Errno(e)
+		return os.Platform_Error(e)
 	case net.Resolve_Error:
-		return os.Errno(e)
+		return os.Platform_Error(e)
 	case net.DNS_Error:
-		return os.Errno(e)
+		return os.Platform_Error(e)
 	case:
 		return os.ERROR_NONE
 	}
