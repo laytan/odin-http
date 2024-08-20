@@ -24,8 +24,8 @@ headers_set :: proc(h: ^Headers, k: string, v: string, loc := #caller_location) 
 		panic("these headers are readonly, did you accidentally try to set a header on the request?", loc)
 	}
 
-    l := sanitize_key(h^, k)
-    h._kv[l] = v
+	l := sanitize_key(h^, k)
+	h._kv[l] = v
 	return l
 }
 
@@ -94,7 +94,7 @@ Escapes any newlines and converts ASCII to lowercase.
 */
 @(private="file")
 sanitize_key :: proc(h: Headers, k: string) -> string {
-    allocator := h._kv.allocator if h._kv.allocator.procedure != nil else context.temp_allocator
+	allocator := h._kv.allocator if h._kv.allocator.procedure != nil else context.temp_allocator
 
 	// general +4 in rare case of newlines, so we might not need to reallocate.
 	b := strings.builder_make(0, len(k)+4, allocator)
@@ -107,9 +107,9 @@ sanitize_key :: proc(h: Headers, k: string) -> string {
 	}
 	return strings.to_string(b)
 
-    // NOTE: implementation that only allocates if needed, but we use arena's anyway so just allocating
-    // some space should be about as fast?
-    //
+	// NOTE: implementation that only allocates if needed, but we use arena's anyway so just allocating
+	// some space should be about as fast?
+	//
 	// b: strings.Builder = ---
 	// i: int
 	// for c in v {

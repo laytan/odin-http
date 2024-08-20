@@ -40,7 +40,7 @@ url_parse :: proc(raw: string) -> (url: URL) {
 		url.path = s[i:]
 	}
 
-    return
+	return
 }
 
 Query_Entry :: struct {
@@ -55,7 +55,7 @@ query_iter :: proc(query: ^string) -> (entry: Query_Entry, ok: bool) {
 	i := strings.index(query^, "=")
 	if i < 0 {
 		entry.key = query^
-        query^ = ""
+		query^ = ""
 		return
 	}
 
@@ -90,28 +90,28 @@ query_get_percent_decoded :: proc(url: URL, key: string, allocator := context.te
 }
 
 query_get_bool :: proc(url: URL, key: string) -> (result, set: bool) #optional_ok {
-    str := query_get(url, key) or_return
-    set = true
-    switch str {
-    case "", "false", "0", "no":
-    case:
-        result = true
-    }
-    return
+	str := query_get(url, key) or_return
+	set = true
+	switch str {
+	case "", "false", "0", "no":
+	case:
+		result = true
+	}
+	return
 }
 
 query_get_int :: proc(url: URL, key: string, base := 0) -> (result: int, ok: bool, set: bool) {
-    str := query_get(url, key) or_return
-    set = true
-    result, ok = strconv.parse_int(str, base)
-    return
+	str := query_get(url, key) or_return
+	set = true
+	result, ok = strconv.parse_int(str, base)
+	return
 }
 
 query_get_uint :: proc(url: URL, key: string, base := 0) -> (result: uint, ok: bool, set: bool) {
-    str := query_get(url, key) or_return
-    set = true
-    result, ok = strconv.parse_uint(str, base)
-    return
+	str := query_get(url, key) or_return
+	set = true
+	result, ok = strconv.parse_uint(str, base)
+	return
 }
 
 Route :: struct {
