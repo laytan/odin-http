@@ -208,7 +208,7 @@ handle_completion :: proc(io: ^IO, completion: ^Completion) {
 		op.read += int(read)
 
 		if err != win.NO_ERROR {
-			op.callback(completion.user_data, op.read, os.Platform_Error.READ_FAULT)
+			op.callback(completion.user_data, op.read, os.Platform_Error(err))
 		} else if op.all && op.read < op.len {
 			op.buf = op.buf[read:]
 
@@ -233,7 +233,7 @@ handle_completion :: proc(io: ^IO, completion: ^Completion) {
 
 		op.written += int(written)
 
-		oerr := os.Platform_Error.WRITE_FAULT
+		oerr := os.Platform_Error(err)
 		if oerr != os.ERROR_NONE {
 			op.callback(completion.user_data, op.written, oerr)
 		} else if op.all && op.written < op.len {
