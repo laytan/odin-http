@@ -28,6 +28,7 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           release: false
+          llvm-version: 17
       - name: Report
         run: odin report
       - name: Get commonmark
