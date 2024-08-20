@@ -196,39 +196,39 @@ header_parse :: proc(headers: ^Headers, line: string, allocator := context.temp_
 // Content-Encoding, Content-Type, Content-Range, and Trailer).
 header_allowed_trailer :: proc(key: string) -> bool {
 	// odinfmt:disable
-    return (
-        // Message framing:
-        key != "transfer-encoding" &&
-        key != "content-length" &&
-        // Routing:
-        key != "host" &&
-        // Request modifiers:
-        key != "if-match" &&
-        key != "if-none-match" &&
-        key != "if-modified-since" &&
-        key != "if-unmodified-since" &&
-        key != "if-range" &&
-        // Authentication:
-        key != "www-authenticate" &&
-        key != "authorization" &&
-        key != "proxy-authenticate" &&
-        key != "proxy-authorization" &&
-        key != "cookie" &&
-        key != "set-cookie" &&
-        // Control data:
-        key != "age" &&
-        key != "cache-control" &&
-        key != "expires" &&
-        key != "date" &&
-        key != "location" &&
-        key != "retry-after" &&
-        key != "vary" &&
-        key != "warning" &&
-        // How to process:
-        key != "content-encoding" &&
-        key != "content-type" &&
-        key != "content-range" &&
-        key != "trailer")
+	return (
+		// Message framing:
+		key != "transfer-encoding" &&
+		key != "content-length" &&
+		// Routing:
+		key != "host" &&
+		// Request modifiers:
+		key != "if-match" &&
+		key != "if-none-match" &&
+		key != "if-modified-since" &&
+		key != "if-unmodified-since" &&
+		key != "if-range" &&
+		// Authentication:
+		key != "www-authenticate" &&
+		key != "authorization" &&
+		key != "proxy-authenticate" &&
+		key != "proxy-authorization" &&
+		key != "cookie" &&
+		key != "set-cookie" &&
+		// Control data:
+		key != "age" &&
+		key != "cache-control" &&
+		key != "expires" &&
+		key != "date" &&
+		key != "location" &&
+		key != "retry-after" &&
+		key != "vary" &&
+		key != "warning" &&
+		// How to process:
+		key != "content-encoding" &&
+		key != "content-type" &&
+		key != "content-range" &&
+		key != "trailer")
 	// odinfmt:enable
 }
 
