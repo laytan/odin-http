@@ -17,7 +17,7 @@ _init :: proc(io: ^IO, allocator := context.allocator) -> (err: os.Errno) {
 	io.offsets = make(map[os.Handle]u32, allocator = allocator)
 
 	win.ensure_winsock_initialized()
-	defer if err != win.NO_ERROR {
+	defer if err != nil {
 		assert(win.WSACleanup() == win.NO_ERROR)
 	}
 
