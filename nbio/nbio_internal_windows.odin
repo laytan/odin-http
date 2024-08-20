@@ -323,7 +323,7 @@ accept_callback :: proc(io: ^IO, comp: ^Completion, op: ^Op_Accept) -> (source: 
 
 		oclient, oerr := open_socket(io, .IP4, .TCP)
 
-		err = win.c_int(net_err_to_code(oerr).(runtime.Allocator_Error))
+		err = win.c_int(net_err_to_code(oerr))
 		if err != win.NO_ERROR do return
 
 		op.client = win.SOCKET(net.any_socket_to_socket(oclient))
@@ -368,7 +368,7 @@ connect_callback :: proc(io: ^IO, comp: ^Completion, op: ^Op_Connect) -> (err: w
 
 		osocket, oerr := open_socket(io, .IP4, .TCP)
 
-		err = win.c_int(net_err_to_code(oerr).(runtime.Allocator_Error))
+		err = win.c_int(net_err_to_code(oerr))
 		if err != win.NO_ERROR do return
 
 		op.socket = win.SOCKET(net.any_socket_to_socket(osocket))
@@ -578,7 +578,7 @@ endpoint_to_sockaddr :: proc(ep: net.Endpoint) -> (sockaddr: win.SOCKADDR_STORAG
 	unreachable()
 }
 
-net_err_to_code :: proc(err: net.Network_Error) -> os.Error {
+net_err_to_code :: proc(err: net.Network_Error) -> os.Platform_Error {
 	switch e in err {
 	case net.Create_Socket_Error:
 		return os.Platform_Error(e)
@@ -615,7 +615,7 @@ net_err_to_code :: proc(err: net.Network_Error) -> os.Error {
 	case net.DNS_Error:
 		return os.Platform_Error(e)
 	case:
-		return os.ERROR_NONE
+		return nil
 	}
 }
 
