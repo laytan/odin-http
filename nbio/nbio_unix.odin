@@ -22,7 +22,7 @@ _seek :: proc(_: ^IO, fd: os.Handle, offset: int, whence: Whence) -> (int, os.Er
 _prepare_handle :: proc(fd: os.Handle) -> os.Errno {
 	// NOTE: TCP_Socket gets cast to int right away in net, so this is safe to do.
 	if err := net.set_blocking(net.TCP_Socket(fd), false); err != nil {
-		return os.Errno(err.(net.Set_Blocking_Error))
+		return os.Platform_Error((^i32)(&err)^)
 	}
 	return os.ERROR_NONE
 }

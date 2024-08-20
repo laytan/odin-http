@@ -63,25 +63,25 @@ io_uring_init :: proc(ring: ^IO_Uring, entries: u32, params: ^io_uring_params) -
 
 	res := sys_io_uring_setup(entries, params)
 	if res < 0 {
-		switch os.Errno(-res) {
-		case os.EFAULT:
+		#partial switch os.Platform_Error(-res) {
+		case .EFAULT:
 			return .Params_Outside_Accessible_Address_Space
 		// The resv array contains non-zero data, p.flags contains an unsupported flag,
 		// entries out of bounds, IORING_SETUP_SQ_AFF was specified without IORING_SETUP_SQPOLL,
 		// or IORING_SETUP_CQSIZE was specified but linux.io_uring_params.cq_entries was invalid:
-		case os.EINVAL:
+		case .EINVAL:
 			return .Arguments_Invalid
-		case os.EMFILE:
+		case .EMFILE:
 			return .Process_Fd_Quota_Exceeded
-		case os.ENFILE:
+		case .ENFILE:
 			return .System_Fd_Quota_Exceeded
-		case os.ENOMEM:
+		case .ENOMEM:
 			return .System_Resources
 		// IORING_SETUP_SQPOLL was specified but effective user ID lacks sufficient privileges,
 		// or a container seccomp policy prohibits io_uring syscalls:
-		case os.EPERM:
+		case .EPERM:
 			return .Permission_Denied
-		case os.ENOSYS:
+		case .ENOSYS:
 			return .System_Outdated
 		case:
 			return .Unexpected
@@ -177,32 +177,32 @@ enter :: proc(
 	assert(ring.fd >= 0)
 	ns := sys_io_uring_enter(u32(ring.fd), n_to_submit, min_complete, flags, nil)
 	if ns < 0 {
-		switch os.Errno(-ns) {
-		case os.ERROR_NONE:
+		#partial switch os.Platform_Error(-ns) {
+		case .NONE:
 			err = .None
-		case os.EAGAIN:
+		case .EAGAIN:
 			// The kernel was unable to allocate memory or ran out of resources for the request. (try again)
 			err = .System_Resources
-		case os.EBADF:
+		case .EBADF:
 			// The SQE `fd` is invalid, or `IOSQE_FIXED_FILE` was set but no files were registered
 			err = .File_Descriptor_Invalid
 		// case os.EBUSY: // TODO: why is this not in os_linux
 		// 	// Attempted to overcommit the number of requests it can have pending. Should wait for some completions and try again.
 		// 	err = .Completion_Queue_Overcommitted
-		case os.EINVAL:
+		case .EINVAL:
 			// The SQE is invalid, or valid but the ring was setup with `IORING_SETUP_IOPOLL`
 			err = .Submission_Queue_Entry_Invalid
-		case os.EFAULT:
+		case .EFAULT:
 			// The buffer is outside the process' accessible address space, or `IORING_OP_READ_FIXED`
 			// or `IORING_OP_WRITE_FIXED` was specified but no buffers were registered, or the range
 			// described by `addr` and `len` is not within the buffer registered at `buf_index`
 			err = .Buffer_Invalid
-		case os.ENXIO:
+		case .ENXIO:
 			err = .Ring_Shutting_Down
-		case os.EOPNOTSUPP:
+		case .EOPNOTSUPP:
 			// The kernel believes the `fd` doesn't refer to an `io_uring`, or the opcode isn't supported by this kernel (more likely)
 			err = .Opcode_Not_Supported
-		case os.EINTR:
+		case .EINTR:
 			// The op was interrupted by a delivery of a signal before it could complete.This can happen while waiting for events with `IORING_ENTER_GETEVENTS`
 			err = .Signal_Interrupt
 		case:
@@ -517,7 +517,7 @@ close :: proc(ring: ^IO_Uring, user_data: u64, fd: os.Handle) -> (sqe: ^io_uring
 timeout :: proc(
 	ring: ^IO_Uring,
 	user_data: u64,
-	ts: ^unix.timespec,
+	ts: ^linux.Time_Spec,
 	count: u32,
 	flags: u32,
 ) -> (

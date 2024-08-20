@@ -3,7 +3,7 @@ package nbio
 import "core:container/queue"
 import "core:net"
 import "core:os"
-import "core:sys/unix"
+import "core:sys/linux"
 import "core:time"
 
 import io_uring "_io_uring"
@@ -51,9 +51,8 @@ _tick :: proc(io: ^IO) -> os.Errno {
 	timeouts: uint = 0
 	etime := false
 
-	t: unix.timespec
-	unix.clock_gettime(unix.CLOCK_MONOTONIC, &t)
-	t.tv_nsec += i64(time.Millisecond * 10)
+	t, _ := linux.clock_gettime(.MONOTONIC_RAW)
+	t.time_nsec += uint(time.Millisecond * 10)
 
 	for !etime {
 		// Queue the timeout, if there is an error, flush (cause its probably full) and try again.
@@ -84,7 +83,10 @@ _tick :: proc(io: ^IO) -> os.Errno {
 
 _listen :: proc(socket: net.TCP_Socket, backlog := 1000) -> net.Network_Error {
 	errno := os.listen(os.Socket(socket), backlog)
-	return net.Listen_Error(errno)
+	if errno != nil {
+		return net.Listen_Error(errno.(os.Platform_Error))
+	}
+	return nil
 }
 
 _accept :: proc(io: ^IO, socket: net.TCP_Socket, user: rawptr, callback: On_Accept) -> ^Completion {
@@ -259,9 +261,9 @@ _timeout :: proc(io: ^IO, dur: time.Duration, user: rawptr, callback: On_Timeout
 	nsec := time.duration_nanoseconds(dur)
 	completion.operation = Op_Timeout {
 		callback = callback,
-		expires = unix.timespec{
-			tv_sec = nsec / NANOSECONDS_PER_SECOND,
-			tv_nsec = nsec % NANOSECONDS_PER_SECOND,
+		expires = linux.Time_Spec{
+			time_sec  = uint(nsec / NANOSECONDS_PER_SECOND),
+			time_nsec = uint(nsec % NANOSECONDS_PER_SECOND),
 		},
 	}
 

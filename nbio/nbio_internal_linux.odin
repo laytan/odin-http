@@ -10,7 +10,6 @@ import "core:mem"
 import "core:net"
 import "core:os"
 import "core:sys/linux"
-import "core:sys/unix"
 
 import io_uring "_io_uring"
 
@@ -92,7 +91,7 @@ Op_Recv :: struct {
 
 Op_Timeout :: struct {
 	callback: On_Timeout,
-	expires:  unix.timespec,
+	expires:  linux.Time_Spec,
 }
 
 Op_Next_Tick :: struct {
@@ -243,9 +242,9 @@ accept_enqueue :: proc(io: ^IO, completion: ^Completion, op: ^Op_Accept) {
 
 accept_callback :: proc(io: ^IO, completion: ^Completion, op: ^Op_Accept) {
 	if completion.result < 0 {
-		errno := os.Errno(-completion.result)
-		switch errno {
-		case os.EINTR, os.EWOULDBLOCK:
+		errno := os.Platform_Error(-completion.result)
+		#partial switch errno {
+		case .EINTR, .EWOULDBLOCK:
 			accept_enqueue(io, completion, op)
 		case:
 			op.callback(completion.user_data, 0, {}, net.Accept_Error(errno))
@@ -273,11 +272,11 @@ close_enqueue :: proc(io: ^IO, completion: ^Completion, op: ^Op_Close) {
 }
 
 close_callback :: proc(io: ^IO, completion: ^Completion, op: ^Op_Close) {
-	errno := os.Errno(-completion.result)
+	errno := os.Platform_Error(-completion.result)
 
 	// In particular close() should not be retried after an EINTR
 	// since this may cause a reused descriptor from another thread to be closed.
-	op.callback(completion.user_data, errno == os.ERROR_NONE || errno == os.EINTR)
+	op.callback(completion.user_data, errno == .NONE || errno == .EINTR)
 	pool_put(&io.completion_pool, completion)
 }
 
@@ -298,12 +297,12 @@ connect_enqueue :: proc(io: ^IO, completion: ^Completion, op: ^Op_Connect) {
 }
 
 connect_callback :: proc(io: ^IO, completion: ^Completion, op: ^Op_Connect) {
-	errno := os.Errno(-completion.result)
-	switch errno {
-	case os.EINTR, os.EWOULDBLOCK:
+	errno := os.Platform_Error(-completion.result)
+	#partial switch errno {
+	case .EINTR, .EWOULDBLOCK:
 		connect_enqueue(io, completion, op)
 		return
-	case os.ERROR_NONE:
+	case .NONE:
 		op.callback(completion.user_data, op.socket, nil)
 	case:
 		net.close(op.socket)
@@ -327,9 +326,9 @@ read_enqueue :: proc(io: ^IO, completion: ^Completion, op: ^Op_Read) {
 
 read_callback :: proc(io: ^IO, completion: ^Completion, op: ^Op_Read) {
 	if completion.result < 0 {
-		errno := os.Errno(-completion.result)
-		switch errno {
-		case os.EINTR, os.EWOULDBLOCK:
+		errno := os.Platform_Error(-completion.result)
+		#partial switch errno {
+		case .EINTR, .EWOULDBLOCK:
 			read_enqueue(io, completion, op)
 		case:
 			op.callback(completion.user_data, op.read, errno)
@@ -369,9 +368,9 @@ recv_enqueue :: proc(io: ^IO, completion: ^Completion, op: ^Op_Recv) {
 
 recv_callback :: proc(io: ^IO, completion: ^Completion, op: ^Op_Recv) {
 	if completion.result < 0 {
-		errno := os.Errno(-completion.result)
-		switch errno {
-		case os.EINTR, os.EWOULDBLOCK:
+		errno := os.Platform_Error(-completion.result)
+		#partial switch errno {
+		case .EINTR, .EWOULDBLOCK:
 			recv_enqueue(io, completion, op)
 		case:
 			op.callback(completion.user_data, op.received, {}, net.TCP_Recv_Error(errno))
@@ -410,9 +409,9 @@ send_enqueue :: proc(io: ^IO, completion: ^Completion, op: ^Op_Send) {
 
 send_callback :: proc(io: ^IO, completion: ^Completion, op: ^Op_Send) {
 	if completion.result < 0 {
-		errno := os.Errno(-completion.result)
-		switch errno {
-		case os.EINTR, os.EWOULDBLOCK:
+		errno := os.Platform_Error(-completion.result)
+		#partial switch errno {
+		case .EINTR, .EWOULDBLOCK:
 			send_enqueue(io, completion, op)
 		case:
 			op.callback(completion.user_data, op.sent, net.TCP_Send_Error(errno))
@@ -448,9 +447,9 @@ write_enqueue :: proc(io: ^IO, completion: ^Completion, op: ^Op_Write) {
 
 write_callback :: proc(io: ^IO, completion: ^Completion, op: ^Op_Write) {
 	if completion.result < 0 {
-		errno := os.Errno(-completion.result)
-		switch errno {
-		case os.EINTR, os.EWOULDBLOCK:
+		errno := os.Platform_Error(-completion.result)
+		#partial switch errno {
+		case .EINTR, .EWOULDBLOCK:
 			write_enqueue(io, completion, op)
 		case:
 			op.callback(completion.user_data, op.written, errno)
@@ -488,10 +487,10 @@ timeout_enqueue :: proc(io: ^IO, completion: ^Completion, op: ^Op_Timeout) {
 
 timeout_callback :: proc(io: ^IO, completion: ^Completion, op: ^Op_Timeout) {
 	if completion.result < 0 {
-		errno := os.Errno(-completion.result)
-		switch errno {
-		case os.ETIME: // OK.
-		case os.EINTR, os.EWOULDBLOCK:
+		errno := os.Platform_Error(-completion.result)
+		#partial switch errno {
+		case .ETIME: // OK.
+		case .EINTR, .EWOULDBLOCK:
 			timeout_enqueue(io, completion, op)
 			return
 		case:
@@ -581,7 +580,7 @@ ring_err_to_os_err :: proc(err: io_uring.IO_Uring_Error) -> os.Errno {
 	case .Unexpected:
 		fallthrough
 	case:
-		return -1
+		return os.Platform_Error(-1)
 	}
 }
 
