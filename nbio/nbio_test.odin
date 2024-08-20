@@ -1,6 +1,7 @@
 package nbio
 
 import "core:fmt"
+import "core:log"
 import "core:mem"
 import "core:net"
 import "core:os"
@@ -9,8 +10,6 @@ import "core:testing"
 import "core:time"
 
 expect :: testing.expect
-log    :: testing.log
-logf   :: testing.logf
 
 @(test)
 test_timeout :: proc(t: ^testing.T) {
@@ -213,7 +212,7 @@ test_client_and_server_send_recv :: proc(t: ^testing.T) {
 			// I believe this is because we are connecting in the same tick as accepting
 			// and it goes wrong, might actually be a bug though, can't find anything.
 			if err != nil {
-				log(ctx.t, "connect err, trying again", err)
+				log.info("connect err, trying again", err)
 				connect(ctx.io, ctx.ep, ctx, connect_callback)
 				return
 			}
@@ -339,7 +338,7 @@ test_send_all :: proc(t: ^testing.T) {
 		ctx.received += received
 		if ctx.received < mem.Megabyte * 50 {
 			recv(ctx.io, ctx.accepted_sock.?, ctx.recv_buf[ctx.received:], ctx, recv_callback)
-			logf(ctx.t, "received %.0M", received)
+			log.infof("received %.0M", received)
 		} else {
 			ctx.done = true
 		}
