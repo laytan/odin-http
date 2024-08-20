@@ -273,8 +273,8 @@ _response_write_heading :: proc(r: ^Response, content_length: int) {
 		ws(b, "\r\n")
 	}
 
-	for cookie in r.cookies {
-		cookie_write(bstream, cookie)
+	for &cookie in r.cookies {
+		cookie_write(bstream, &cookie)
 		ws(b, "\r\n")
 	}
 

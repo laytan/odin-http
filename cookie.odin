@@ -17,16 +17,16 @@ Cookie :: struct {
 	value:        string,
 	domain:       Maybe(string),
 	expires_gmt:  Maybe(time.Time),
-	http_only:    bool,
 	max_age_secs: Maybe(int),
-	partitioned:  bool,
 	path:         Maybe(string),
-	same_site:    Cookie_Same_Site,
+	http_only:    bool,
+	partitioned:  bool,
 	secure:       bool,
+	same_site:    Cookie_Same_Site,
 }
 
 // Builds the Set-Cookie header string representation of the given cookie.
-cookie_write :: proc(w: io.Writer, c: Cookie) -> io.Error {
+cookie_write :: proc(w: io.Writer, c: ^Cookie) -> io.Error {
 	// odinfmt:disable
 	io.write_string(w, "set-cookie: ") or_return
 	write_escaped_newlines(w, c.name)  or_return
@@ -77,7 +77,7 @@ cookie_write :: proc(w: io.Writer, c: Cookie) -> io.Error {
 }
 
 // Builds the Set-Cookie header string representation of the given cookie.
-cookie_string :: proc(c: Cookie, allocator := context.allocator) -> string {
+cookie_string :: proc(c: ^Cookie, allocator := context.allocator) -> string {
 	b: strings.Builder
 	strings.builder_init(&b, 0, 20, allocator)
 
