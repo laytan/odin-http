@@ -303,7 +303,7 @@ do_connect :: proc(io: ^IO, completion: ^Completion, op: ^Op_Connect) {
 
 	if err != os.ERROR_NONE {
 		net.close(op.socket)
-		op.callback(completion.user_data, {}, net.Dial_Error(err))
+		op.callback(completion.user_data, {}, net.Dial_Error(err.(os.Platform_Error)))
 	} else {
 		op.callback(completion.user_data, op.socket, nil)
 	}
@@ -398,12 +398,16 @@ do_send :: proc(io: ^IO, completion: ^Completion, op: ^Op_Send) {
 	switch sock in op.socket {
 	case net.TCP_Socket:
 		sent, errno = os.send(os.Socket(sock), op.buf, 0)
-		err = net.TCP_Send_Error(errno)
+		if errno != nil {
+			err = net.TCP_Send_Error(errno.(os.Platform_Error))
+		}
 
 	case net.UDP_Socket:
 		toaddr := _endpoint_to_sockaddr(op.endpoint.(net.Endpoint))
 		sent, errno = os.sendto(os.Socket(sock), op.buf, 0, cast(^os.SOCKADDR)&toaddr, i32(toaddr.len))
-		err = net.UDP_Send_Error(errno)
+		if errno != nil {
+			err = net.UDP_Send_Error(errno.(os.Platform_Error))
+		}
 	}
 
 	op.sent += int(sent)
