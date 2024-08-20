@@ -17,12 +17,12 @@ Cookie :: struct {
 	value:        string,
 	domain:       Maybe(string),
 	expires_gmt:  Maybe(time.Time),
-	http_only:    bool,
 	max_age_secs: Maybe(int),
-	partitioned:  bool,
 	path:         Maybe(string),
-	same_site:    Cookie_Same_Site,
+	http_only:    bool,
+	partitioned:  bool,
 	secure:       bool,
+	same_site:    Cookie_Same_Site,
 }
 
 // Builds the Set-Cookie header string representation of the given cookie.
