@@ -108,7 +108,7 @@ Op_Poll_Remove :: struct {
 flush :: proc(io: ^IO) -> os.Errno {
 	events: [MAX_EVENTS]kqueue.KEvent
 
-	_ = flush_timeouts(io)
+	min_timeout := flush_timeouts(io)
 	change_events := flush_io(io, events[:])
 
 	if (change_events > 0 || queue.len(io.completed) == 0) {
@@ -116,7 +116,9 @@ flush :: proc(io: ^IO) -> os.Errno {
 			return os.ERROR_NONE
 		}
 
+		max_timeout := time.Millisecond * 10
 		ts: kqueue.Time_Spec
+		ts.nsec = min(min_timeout.? or_else i64(max_timeout), i64(max_timeout))
 		new_events, err := kqueue.kevent(io.kq, events[:change_events], events[:], &ts)
 		if err != .None do return ev_err_to_os_err(err)
 
