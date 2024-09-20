@@ -1,5 +1,5 @@
-// +build darwin, linux
-// +private
+#+build darwin, linux
+#+private
 package nbio
 
 import "core:net"
