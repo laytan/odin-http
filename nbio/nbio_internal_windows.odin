@@ -1,4 +1,4 @@
-//+private
+#+private
 package nbio
 
 import "base:runtime"

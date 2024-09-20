@@ -1,4 +1,4 @@
-//+build darwin
+#+build darwin
 package kqueue
 
 import "core:c"

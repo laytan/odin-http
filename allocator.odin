@@ -1,5 +1,5 @@
-//+private
-//+build ignore
+#+private
+#+build ignore
 package http
 
 // NOTE: currently not in use, had a strange crash I can't figure out.

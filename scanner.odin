@@ -1,4 +1,4 @@
-//+private
+#+private
 package http
 
 import "base:intrinsics"
