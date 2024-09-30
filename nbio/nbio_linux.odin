@@ -51,18 +51,18 @@ _tick :: proc(io: ^IO) -> os.Errno {
 	timeouts: uint = 0
 	etime := false
 
-	t, _ := linux.clock_gettime(.MONOTONIC_RAW)
+	t: linux.Time_Spec
 	t.time_nsec += uint(time.Millisecond * 10)
 
 	for !etime {
 		// Queue the timeout, if there is an error, flush (cause its probably full) and try again.
-		sqe, err := io_uring.timeout(&io.ring, 0, &t, 1, io_uring.IORING_TIMEOUT_ABS)
+		sqe, err := io_uring.timeout(&io.ring, 0, &t, 1, 0)
 		if err != nil {
 			if errno := flush_submissions(io, 0, &timeouts, &etime); errno != os.ERROR_NONE {
 				return errno
 			}
 
-			sqe, err = io_uring.timeout(&io.ring, 0, &t, 1, io_uring.IORING_TIMEOUT_ABS)
+			sqe, err = io_uring.timeout(&io.ring, 0, &t, 1, 0)
 		}
 		if err != nil do return ring_err_to_os_err(err)
 
