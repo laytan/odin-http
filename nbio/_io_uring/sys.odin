@@ -1,4 +1,4 @@
-//+build linux
+#+build linux
 package io_uring
 
 import "base:intrinsics"
