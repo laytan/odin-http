@@ -12,7 +12,7 @@ import "nbio"
 
 // Sets the response to one that sends the given HTML.
 respond_html :: proc(r: ^Response, html: string, status: Status = .OK, loc := #caller_location) {
-	r.status = .OK
+	r.status = status
 	headers_set_content_type(&r.headers, mime_to_content_type(Mime_Type.Html))
 	body_set(r, html, loc)
 	respond(r, loc)
@@ -20,7 +20,7 @@ respond_html :: proc(r: ^Response, html: string, status: Status = .OK, loc := #c
 
 // Sets the response to one that sends the given plain text.
 respond_plain :: proc(r: ^Response, text: string, status: Status = .OK, loc := #caller_location) {
-	r.status = .OK
+	r.status = status
 	headers_set_content_type(&r.headers, mime_to_content_type(Mime_Type.Plain))
 	body_set(r, text, loc)
 	respond(r, loc)
