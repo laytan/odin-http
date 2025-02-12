@@ -27,8 +27,6 @@ jobs:
       - uses: laytan/setup-odin@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          release: false
-          llvm-version: 17
       - name: Report
         run: odin report
       - name: Get commonmark
@@ -48,5 +46,5 @@ jobs:
       - uses: actions/upload-pages-artifact@v2
         with:
           path: ./docs/build
-      - uses: actions/deploy-pages@v2
+      - uses: actions/deploy-pages@v4
         id: deployment
