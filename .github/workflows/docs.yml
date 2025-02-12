@@ -30,7 +30,7 @@ jobs:
       - name: Report
         run: odin report
       - name: Get commonmark
-        run: sudo apt-fast install libcmark-dev
+        run: sudo apt-get install libcmark-dev
       - name: Get and build Odin docs generator
         run: |
           cd /home/runner
