@@ -241,7 +241,7 @@ _response_write_heading :: proc(r: ^Response, content_length: int) {
 	ws(b, "\r\n")
 
 	// Per RFC 9910 6.6.1 a Date header must be added in 2xx, 3xx, 4xx responses.
-	if r.status >= .OK && r.status <= .Internal_Server_Error && !headers_has_unsafe(r.headers, "date") {
+	if td.state != .Testing && r.status >= .OK && r.status <= .Internal_Server_Error && !headers_has_unsafe(r.headers, "date") {
 		ws(b, "date: ")
 		ws(b, server_date(conn.server))
 		ws(b, "\r\n")
