@@ -75,7 +75,7 @@ jobs:
         if: ${{ steps.current-release.outputs.version != steps.latest-release.outputs.version }}
         run: |
           cd ${{ steps.latest-release.outputs.version }}
-          perl Configure no-legacy no-deprecated --release
+          perl Configure VC-WIN64A-HYBRIDCRT no-legacy no-deprecated --release
 
       - name: compile
         if: ${{ steps.current-release.outputs.version != steps.latest-release.outputs.version }}
