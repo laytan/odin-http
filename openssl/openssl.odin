@@ -12,7 +12,7 @@ when ODIN_OS == .Windows {
 			"./includes/windows/libcrypto.lib",
 		}
 	} else {
-		@(extra_linker_flags="/nodefaultlib:libcmt")
+		// @(extra_linker_flags="/nodefaultlib:libcmt")
 		foreign import lib {
 			"./includes/windows/libssl_static.lib",
 			"./includes/windows/libcrypto_static.lib",
