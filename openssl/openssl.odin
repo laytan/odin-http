@@ -71,7 +71,7 @@ foreign lib {
 	SSL_CTX_free :: proc(ctx: ^SSL_CTX) ---
 	ERR_print_errors_fp :: proc(fp: ^libc.FILE) ---
 	SSL_ctrl :: proc(ssl: ^SSL, cmd: c.int, larg: c.long, parg: rawptr) -> c.long ---
-    OpenSSL_version_num :: proc() -> c.ulong ---
+	OpenSSL_version_num :: proc() -> c.ulong ---
 }
 
 // This is a macro in c land.
