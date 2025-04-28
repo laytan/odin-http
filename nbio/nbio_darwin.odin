@@ -10,7 +10,7 @@ import kqueue "_kqueue"
 _init :: proc(io: ^IO, allocator := context.allocator) -> (err: os.Errno) {
 	qerr: kqueue.Queue_Error
 	io.kq, qerr = kqueue.kqueue()
-	if qerr != .None do return kq_err_to_os_err(qerr)
+	if qerr != .None { return kq_err_to_os_err(qerr) }
 
 	pool_init(&io.completion_pool, allocator = allocator)
 

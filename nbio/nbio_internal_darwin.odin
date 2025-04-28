@@ -120,7 +120,7 @@ flush :: proc(io: ^IO) -> os.Errno {
 		ts: kqueue.Time_Spec
 		ts.nsec = min(min_timeout.? or_else i64(max_timeout), i64(max_timeout))
 		new_events, err := kqueue.kevent(io.kq, events[:change_events], events[:], &ts)
-		if err != .None do return ev_err_to_os_err(err)
+		if err != .None { return ev_err_to_os_err(err) }
 
 		// PERF: this is ordered and O(N), can this be made unordered?
 		remove_range(&io.io_pending, 0, change_events)
@@ -165,7 +165,7 @@ flush :: proc(io: ^IO) -> os.Errno {
 flush_io :: proc(io: ^IO, events: []kqueue.KEvent) -> int {
 	events := events
 	events_loop: for &event, i in events {
-		if len(io.io_pending) <= i do return i
+		if len(io.io_pending) <= i { return i }
 		completion := io.io_pending[i]
 
 		switch op in completion.operation {
@@ -228,15 +228,14 @@ flush_io :: proc(io: ^IO, events: []kqueue.KEvent) -> int {
 }
 
 flush_timeouts :: proc(io: ^IO) -> (min_timeout: Maybe(i64)) {
-	now: time.Time
 	// PERF: is there a faster way to compare time? Or time since program start and compare that?
-	if len(io.timeouts) > 0 do now = time.now()
+	now := time.now() if len(io.timeouts) > 0 else time.Time{}
 
 	for i := len(io.timeouts) - 1; i >= 0; i -= 1 {
 		completion := io.timeouts[i]
 
 		timeout, ok := &completion.operation.(Op_Timeout)
-		if !ok do panic("non-timeout operation found in the timeouts queue")
+		if !ok { panic("non-timeout operation found in the timeouts queue") }
 
 		unow := time.to_unix_nanoseconds(now)
 		expires := time.to_unix_nanoseconds(timeout.expires)
