@@ -48,7 +48,7 @@ Query_Entry :: struct {
 }
 
 query_iter :: proc(query: ^string) -> (entry: Query_Entry, ok: bool) {
-	if len(query) == 0 do return
+	if len(query) == 0 { return }
 
 	ok = true
 

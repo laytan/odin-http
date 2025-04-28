@@ -60,7 +60,7 @@ body_url_encoded :: proc(plain: Body, allocator := context.temp_allocator) -> (r
 
 	count := 1
 	for b in plain {
-		if b == '&' do count += 1
+		count += 1 if b == '&' else 0
 	}
 
 	queries := make(map[string]string, count, allocator)

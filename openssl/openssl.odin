@@ -46,8 +46,8 @@ VERSION: Version
 
 @(private, init)
 version_check :: proc() {
-    VERSION = Version(OpenSSL_version_num())
-    assert(VERSION.major == 3, "invalid OpenSSL library version, expected 3.x")
+	VERSION = Version(OpenSSL_version_num())
+	assert(VERSION.major == 3, "invalid OpenSSL library version, expected 3.x")
 }
 
 SSL_METHOD :: struct {}

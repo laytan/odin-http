@@ -166,7 +166,9 @@ serve :: proc(s: ^Server, h: Handler) -> (err: net.Network_Error) {
 	log.debug("server threads are done, shutting down")
 
 	net.close(s.tcp_sock)
-	for t in s.threads do thread.destroy(t)
+	for t in s.threads {
+		thread.destroy(t)
+	}
 	delete(s.threads)
 
 	return nil
@@ -199,16 +201,20 @@ _server_thread_init :: proc(s: ^Server) {
 	log.debug("starting event loop")
 	td.state = .Serving
 	for {
-		if atomic_load(&s.closing) do _server_thread_shutdown(s)
-		if td.state == .Closed do break
-		if td.state == .Cleaning do continue
+		if atomic_load(&s.closing) {
+			_server_thread_shutdown(s)
+		}
+		if td.state == .Closed   { break }
+		if td.state == .Cleaning { continue }
 
 		errno := nbio.tick(&td.io)
 		if errno != os.ERROR_NONE {
 			// TODO: check how this behaves on Windows.
-			when ODIN_OS != .Windows do if errno == os.EINTR {
-				server_shutdown(s)
-				continue
+			when ODIN_OS != .Windows {
+				if errno == os.EINTR {
+					server_shutdown(s)
+					continue
+				}
 			}
 
 			log.errorf("non-blocking io tick error: %v", errno)
@@ -268,7 +274,9 @@ _server_thread_shutdown :: proc(s: ^Server, loc := #caller_location) {
 				connection_close(conn)
 			case .Closing:
 				// Only logging this every 10_000 calls to avoid spam.
-				if i % 10_000 == 0 do log.debugf("shutdown: connection %i is closing", sock)
+				if i % 10_000 == 0 {
+					log.debugf("shutdown: connection %i is closing", sock)
+				}
 			case .Closed:
 				log.warn("closed connection in connections map, maybe a race or logic error")
 			}
@@ -461,7 +469,9 @@ conn_handle_req :: proc(c: ^Connection, allocator := context.temp_allocator) {
 	on_rline1 :: proc(loop: rawptr, token: string, err: bufio.Scanner_Error) {
 		l := cast(^Loop)loop
 
-		if !connection_set_state(l.conn, .Active) do return
+		if !connection_set_state(l.conn, .Active) {
+			return
+		}
 
 		if err != nil {
 			if err == .EOF {

@@ -5,7 +5,7 @@ import "core:bufio"
 import "core:bytes"
 import "core:c"
 import "core:io"
-import "core:log"
+@(require) import "core:log"
 import "core:net"
 import "core:strconv"
 import "core:strings"
@@ -85,7 +85,7 @@ format_request :: proc(target: http.URL, request: ^Request, allocator := context
 		// Escape newlines in headers, if we don't, an attacker can find an endpoint
 		// that returns a header with user input, and inject headers into the response.
 		esc_value, was_allocation := strings.replace_all(value, "\n", "\\n", allocator)
-		defer if was_allocation do delete(esc_value)
+		defer if was_allocation { delete(esc_value) }
 
 		bytes.buffer_write_string(&buf, esc_value)
 		bytes.buffer_write_string(&buf, "\r\n")
@@ -176,7 +176,7 @@ parse_response :: proc(socket: Communication, allocator := context.allocator) ->
 
 		line := bufio.scanner_text(&scanner)
 		// Empty line means end of headers.
-		if line == "" do break
+		if line == "" { break }
 
 		key, hok := http.header_parse(&res.headers, line, allocator)
 		if !hok {
@@ -270,22 +270,15 @@ _socket_stream_proc :: proc(
 		received, recv_err := net.recv_tcp(sock, p)
 		n = i64(received)
 
-		#partial switch ex in recv_err {
-		case net.TCP_Recv_Error:
-			#partial switch ex {
-			case .None:
-				err = .None
-			case .Shutdown, .Not_Connected, .Aborted, .Connection_Closed, .Host_Unreachable, .Timeout:
-				log.errorf("unexpected error reading tcp: %s", ex)
-				err = .Unexpected_EOF
-			case:
-				log.errorf("unexpected error reading tcp: %s", ex)
-				err = .Unknown
-			}
-		case nil:
+		#partial switch recv_err {
+		case .None:
 			err = .None
+		case .Network_Unreachable, .Insufficient_Resources, .Invalid_Argument, .Not_Connected, .Connection_Closed, .Timeout, .Would_Block, .Interrupted:
+			log.errorf("unexpected error reading tcp: %s", recv_err)
+			err = .Unexpected_EOF
 		case:
-			assert(false, "recv_tcp only returns TCP_Recv_Error or nil")
+			log.errorf("unexpected error reading tcp: %s", recv_err)
+			err = .Unknown
 		}
 	case:
 		err = .Empty
