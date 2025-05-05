@@ -147,7 +147,7 @@ prepare_socket :: proc(io: ^IO, socket: net.Any_Socket) -> net.Network_Error {
 	mode |= FILE_SKIP_COMPLETION_PORT_ON_SUCCESS
 	mode |= FILE_SKIP_SET_EVENT_ON_HANDLE
 	if !win.SetFileCompletionNotificationModes(handle, mode) {
-		return net.Socket_Option_Error(win.GetLastError())
+		return net._socket_option_error()
 	}
 
 	return nil
@@ -174,10 +174,9 @@ handle_completion :: proc(io: ^IO, completion: ^Completion) {
 			return
 		}
 
-		rerr := net.Accept_Error(err)
-		if rerr != nil do win.closesocket(op.client)
+		if err != nil do win.closesocket(op.client)
 
-		op.callback(completion.user_data, net.TCP_Socket(op.client), source, rerr)
+		op.callback(completion.user_data, net.TCP_Socket(op.client), source, err)
 
 	case Op_Connect:
 		err := connect_callback(io, completion, &op)
@@ -186,10 +185,9 @@ handle_completion :: proc(io: ^IO, completion: ^Completion) {
 			return
 		}
 
-		rerr := net.Dial_Error(err)
-		if rerr != nil do win.closesocket(op.socket)
+		if err != nil do win.closesocket(op.socket)
 
-		op.callback(completion.user_data, net.TCP_Socket(op.socket), rerr)
+		op.callback(completion.user_data, net.TCP_Socket(op.socket), err)
 
 	case Op_Close:
 		op.callback(completion.user_data, close_callback(io, op))
@@ -260,9 +258,8 @@ handle_completion :: proc(io: ^IO, completion: ^Completion) {
 
 		op.received += int(received)
 
-		nerr := net.TCP_Recv_Error(err)
-		if nerr != nil {
-			op.callback(completion.user_data, op.received, {}, nerr)
+		if err != nil {
+			op.callback(completion.user_data, op.received, {}, err)
 		} else if op.all && op.received < op.len {
 			op.buf = win.WSABUF{
 				len = op.buf.len - win.ULONG(received),
@@ -285,9 +282,8 @@ handle_completion :: proc(io: ^IO, completion: ^Completion) {
 
 		op.sent += int(sent)
 
-		nerr := net.TCP_Send_Error(err)
-		if nerr != nil {
-			op.callback(completion.user_data, op.sent, nerr)
+		if err != nil {
+			op.callback(completion.user_data, op.sent, err)
 		} else if op.all && op.sent < op.len {
 			op.buf = win.WSABUF{
 				len = op.buf.len - win.ULONG(sent),
@@ -311,7 +307,7 @@ handle_completion :: proc(io: ^IO, completion: ^Completion) {
 	pool_put(&io.completion_pool, completion)
 }
 
-accept_callback :: proc(io: ^IO, comp: ^Completion, op: ^Op_Accept) -> (source: net.Endpoint, err: win.c_int) {
+accept_callback :: proc(io: ^IO, comp: ^Completion, op: ^Op_Accept) -> (source: net.Endpoint, err: net.Network_Error) {
 	ok: win.BOOL
 	if op.pending {
 		// Get status update, we've already initiated the accept.
@@ -321,10 +317,10 @@ accept_callback :: proc(io: ^IO, comp: ^Completion, op: ^Op_Accept) -> (source: 
 	} else {
 		op.pending = true
 
-		oclient, oerr := open_socket(io, .IP4, .TCP)
+		oclient: net.Any_Socket
+		oclient, err = open_socket(io, .IP4, .TCP)
 
-		err = win.c_int(net_err_to_code(oerr))
-		if err != win.NO_ERROR do return
+		if err != nil do return
 
 		op.client = win.SOCKET(net.any_socket_to_socket(oclient))
 
@@ -346,7 +342,7 @@ accept_callback :: proc(io: ^IO, comp: ^Completion, op: ^Op_Accept) -> (source: 
 	}
 
 	if !ok {
-		err = win.WSAGetLastError()
+		err = net._accept_error()
 		return
 	}
 
@@ -357,7 +353,7 @@ accept_callback :: proc(io: ^IO, comp: ^Completion, op: ^Op_Accept) -> (source: 
 	return
 }
 
-connect_callback :: proc(io: ^IO, comp: ^Completion, op: ^Op_Connect) -> (err: win.c_int) {
+connect_callback :: proc(io: ^IO, comp: ^Completion, op: ^Op_Connect) -> (err: net.Network_Error) {
 	transferred: win.DWORD
 	ok: win.BOOL
 	if op.pending {
@@ -366,23 +362,23 @@ connect_callback :: proc(io: ^IO, comp: ^Completion, op: ^Op_Connect) -> (err: w
 	} else {
 		op.pending = true
 
-		osocket, oerr := open_socket(io, .IP4, .TCP)
+		osocket: net.Any_Socket
+		osocket, err = open_socket(io, .IP4, .TCP)
 
-		err = win.c_int(net_err_to_code(oerr))
-		if err != win.NO_ERROR do return
+		if err != nil do return
 
 		op.socket = win.SOCKET(net.any_socket_to_socket(osocket))
 
 		sockaddr := endpoint_to_sockaddr({net.IP4_Any, 0})
 		res := win.bind(op.socket, &sockaddr, size_of(sockaddr))
-		if res < 0 do return win.WSAGetLastError()
+		if res < 0 do return net._bind_error()
 
 		connect_ex: LPFN_CONNECTEX
 		load_socket_fn(op.socket, WSAID_CONNECTEX, &connect_ex)
 		// TODO: size_of(win.sockaddr_in6) when ip6.
 		ok = connect_ex(op.socket, &op.addr, size_of(win.sockaddr_in) + 16, nil, 0, &transferred, &comp.over)
 	}
-	if !ok do return win.WSAGetLastError()
+	if !ok do return net._dial_error()
 
 	// enables getsockopt, setsockopt, getsockname, getpeername.
 	win.setsockopt(op.socket, win.SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, nil, 0)
@@ -420,7 +416,7 @@ read_callback :: proc(io: ^IO, comp: ^Completion, op: ^Op_Read) -> (read: win.DW
 		ok = win.ReadFile(win.HANDLE(op.fd), raw_data(op.buf), win.DWORD(len(op.buf)), &read, &comp.over)
 
 		// Not sure if this also happens with correctly set up handles some times.
-		if ok do log.info("non-blocking write returned immediately, is the handle set up correctly?")
+		if ok do log.info("non-blocking read returned immediately, is the handle set up correctly?")
 
 		op.pending = true
 	}
@@ -460,7 +456,7 @@ write_callback :: proc(io: ^IO, comp: ^Completion, op: ^Op_Write) -> (written: w
 	return
 }
 
-recv_callback :: proc(io: ^IO, comp: ^Completion, op: ^Op_Recv) -> (received: win.DWORD, err: win.c_int) {
+recv_callback :: proc(io: ^IO, comp: ^Completion, op: ^Op_Recv) -> (received: win.DWORD, err: net.TCP_Recv_Error) {
 	sock := win.SOCKET(net.any_socket_to_socket(op.socket))
 	ok: win.BOOL
 	if op.pending {
@@ -473,11 +469,11 @@ recv_callback :: proc(io: ^IO, comp: ^Completion, op: ^Op_Recv) -> (received: wi
 		op.pending = true
 	}
 
-	if !ok do err = win.WSAGetLastError()
+	if !ok do err = net._tcp_recv_error()
 	return
 }
 
-send_callback :: proc(io: ^IO, comp: ^Completion, op: ^Op_Send) -> (sent: win.DWORD, err: win.c_int) {
+send_callback :: proc(io: ^IO, comp: ^Completion, op: ^Op_Send) -> (sent: win.DWORD, err: net.TCP_Send_Error) {
 	sock := win.SOCKET(net.any_socket_to_socket(op.socket))
 	ok: win.BOOL
 	if op.pending {
@@ -489,7 +485,7 @@ send_callback :: proc(io: ^IO, comp: ^Completion, op: ^Op_Send) -> (sent: win.DW
 		op.pending = true
 	}
 
-	if !ok do err = win.WSAGetLastError()
+	if !ok do err = net._tcp_send_error()
 	return
 }
 
@@ -521,12 +517,25 @@ LPFN_ACCEPTEX :: #type proc "stdcall" (
 	overlapped: win.LPOVERLAPPED,
 ) -> win.BOOL
 
-wsa_err_incomplete :: proc(err: win.c_int) -> bool {
-	#partial switch win.System_Error(err) {
-	case .WSAEWOULDBLOCK, .IO_PENDING, .IO_INCOMPLETE, .WSAEALREADY:
-		return true
-	case:
-		return false
+wsa_err_incomplete :: proc(err: $T) -> bool {
+	when T == net.Dial_Error {
+		if err == .Already_Connecting {
+			return true
+		}
+	}
+
+	when T != net.Network_Error {
+		if err == .Would_Block {
+			return true
+		} else if err != .Unknown {
+			return false
+		}
+	}
+
+	last := win.System_Error(net.last_platform_error())
+	#partial switch last {
+	case .WSAEWOULDBLOCK, .IO_PENDING, .IO_INCOMPLETE, .WSAEALREADY: return true
+	case: return false
 	}
 }
 
@@ -576,47 +585,6 @@ endpoint_to_sockaddr :: proc(ep: net.Endpoint) -> (sockaddr: win.SOCKADDR_STORAG
 		return
 	}
 	unreachable()
-}
-
-net_err_to_code :: proc(err: net.Network_Error) -> os.Platform_Error {
-	switch e in err {
-	case net.Create_Socket_Error:
-		return os.Platform_Error(e)
-	case net.Socket_Option_Error:
-		return os.Platform_Error(e)
-	case net.General_Error:
-		return os.Platform_Error(e)
-	case net.Platform_Error:
-		return os.Platform_Error(e)
-	case net.Dial_Error:
-		return os.Platform_Error(e)
-	case net.Listen_Error:
-		return os.Platform_Error(e)
-	case net.Accept_Error:
-		return os.Platform_Error(e)
-	case net.Bind_Error:
-		return os.Platform_Error(e)
-	case net.TCP_Send_Error:
-		return os.Platform_Error(e)
-	case net.UDP_Send_Error:
-		return os.Platform_Error(e)
-	case net.TCP_Recv_Error:
-		return os.Platform_Error(e)
-	case net.UDP_Recv_Error:
-		return os.Platform_Error(e)
-	case net.Shutdown_Error:
-		return os.Platform_Error(e)
-	case net.Set_Blocking_Error:
-		return os.Platform_Error(e)
-	case net.Parse_Endpoint_Error:
-		return os.Platform_Error(e)
-	case net.Resolve_Error:
-		return os.Platform_Error(e)
-	case net.DNS_Error:
-		return os.Platform_Error(e)
-	case:
-		return nil
-	}
 }
 
 // TODO: loading this takes a overlapped parameter, maybe we can do this async?

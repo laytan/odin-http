@@ -260,10 +260,13 @@ flush_timeouts :: proc(io: ^IO) -> (min_timeout: Maybe(i64)) {
 }
 
 do_accept :: proc(io: ^IO, completion: ^Completion, op: ^Op_Accept) {
-	client, source, err := net.accept_tcp(op.sock)
-	if err == net.Accept_Error.Would_Block {
+	err: net.Network_Error
+	client, source, accept_err := net.accept_tcp(op.sock)
+	if accept_err == .Would_Block {
 		append(&io.io_pending, completion)
 		return
+	} else if accept_err != nil {
+		err = accept_err
 	}
 
 	if err == nil {
@@ -305,7 +308,7 @@ do_connect :: proc(io: ^IO, completion: ^Completion, op: ^Op_Connect) {
 
 	if err != os.ERROR_NONE {
 		net.close(op.socket)
-		op.callback(completion.user_data, {}, net.Dial_Error(err.(os.Platform_Error)))
+		op.callback(completion.user_data, {}, net._dial_error())
 	} else {
 		op.callback(completion.user_data, op.socket, nil)
 	}
@@ -359,16 +362,14 @@ do_recv :: proc(io: ^IO, completion: ^Completion, op: ^Op_Recv) {
 	case net.TCP_Socket:
 		received, err = net.recv_tcp(sock, op.buf)
 
-		// NOTE: Timeout is the name for EWOULDBLOCK in net package.
-		if err == net.TCP_Recv_Error.Timeout {
+		if err == net.TCP_Recv_Error.Would_Block {
 			append(&io.io_pending, completion)
 			return
 		}
 	case net.UDP_Socket:
 		received, remote_endpoint, err = net.recv_udp(sock, op.buf)
 
-		// NOTE: Timeout is the name for EWOULDBLOCK in net package.
-		if err == net.UDP_Recv_Error.Timeout {
+		if err == net.UDP_Recv_Error.Would_Block {
 			append(&io.io_pending, completion)
 			return
 		}
@@ -401,14 +402,14 @@ do_send :: proc(io: ^IO, completion: ^Completion, op: ^Op_Send) {
 	case net.TCP_Socket:
 		sent, errno = os.send(os.Socket(sock), op.buf, 0)
 		if errno != nil {
-			err = net.TCP_Send_Error(errno.(os.Platform_Error))
+			err = net._tcp_send_error()
 		}
 
 	case net.UDP_Socket:
 		toaddr := _endpoint_to_sockaddr(op.endpoint.(net.Endpoint))
 		sent, errno = os.sendto(os.Socket(sock), op.buf, 0, cast(^os.SOCKADDR)&toaddr, i32(toaddr.len))
 		if errno != nil {
-			err = net.UDP_Send_Error(errno.(os.Platform_Error))
+			err = net._udp_send_error()
 		}
 	}
 

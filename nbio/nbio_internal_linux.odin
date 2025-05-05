@@ -247,7 +247,7 @@ accept_callback :: proc(io: ^IO, completion: ^Completion, op: ^Op_Accept) {
 		case .EINTR, .EWOULDBLOCK:
 			accept_enqueue(io, completion, op)
 		case:
-			op.callback(completion.user_data, 0, {}, net.Accept_Error(errno))
+			op.callback(completion.user_data, 0, {}, net._accept_error(errno))
 			pool_put(&io.completion_pool, completion)
 		}
 		return
@@ -306,7 +306,7 @@ connect_callback :: proc(io: ^IO, completion: ^Completion, op: ^Op_Connect) {
 		op.callback(completion.user_data, op.socket, nil)
 	case:
 		net.close(op.socket)
-		op.callback(completion.user_data, {}, net.Dial_Error(errno))
+		op.callback(completion.user_data, {}, net._dial_error(errno))
 	}
 	pool_put(&io.completion_pool, completion)
 }
@@ -373,7 +373,7 @@ recv_callback :: proc(io: ^IO, completion: ^Completion, op: ^Op_Recv) {
 		case .EINTR, .EWOULDBLOCK:
 			recv_enqueue(io, completion, op)
 		case:
-			op.callback(completion.user_data, op.received, {}, net.TCP_Recv_Error(errno))
+			op.callback(completion.user_data, op.received, {}, net._tcp_recv_error(errno))
 			pool_put(&io.completion_pool, completion)
 		}
 		return
@@ -414,7 +414,7 @@ send_callback :: proc(io: ^IO, completion: ^Completion, op: ^Op_Send) {
 		case .EINTR, .EWOULDBLOCK:
 			send_enqueue(io, completion, op)
 		case:
-			op.callback(completion.user_data, op.sent, net.TCP_Send_Error(errno))
+			op.callback(completion.user_data, op.sent, net._tcp_send_error(errno))
 			pool_put(&io.completion_pool, completion)
 		}
 		return

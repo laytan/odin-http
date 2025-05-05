@@ -82,9 +82,9 @@ _tick :: proc(io: ^IO) -> os.Errno {
 }
 
 _listen :: proc(socket: net.TCP_Socket, backlog := 1000) -> net.Network_Error {
-	errno := os.listen(os.Socket(socket), backlog)
+	errno := linux.listen(linux.Fd(socket), i32(backlog))
 	if errno != nil {
-		return net.Listen_Error(errno.(os.Platform_Error))
+		return net._listen_error(errno)
 	}
 	return nil
 }

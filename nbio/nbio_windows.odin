@@ -105,7 +105,7 @@ _tick :: proc(io: ^IO) -> (err: os.Errno) {
 
 _listen :: proc(socket: net.TCP_Socket, backlog := 1000) -> (err: net.Network_Error) {
 	if res := win.listen(win.SOCKET(socket), i32(backlog)); res == win.SOCKET_ERROR {
-		err = net.Listen_Error(win.WSAGetLastError())
+		err = net._listen_error()
 	}
 	return
 }
