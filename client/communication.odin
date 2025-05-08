@@ -270,25 +270,20 @@ _socket_stream_proc :: proc(
 		received, recv_err := net.recv_tcp(sock, p)
 		n = i64(received)
 
-		#partial switch ex in recv_err {
-		case net.TCP_Recv_Error:
-			#partial switch ex {
-			case .None:
-				err = .None
-			case .Shutdown, .Not_Connected, .Aborted, .Connection_Closed, .Host_Unreachable, .Timeout:
-				log.errorf("unexpected error reading tcp: %s", ex)
-				err = .Unexpected_EOF
-			case:
-				log.errorf("unexpected error reading tcp: %s", ex)
-				err = .Unknown
-			}
+		#partial switch recv_err {
+		case .None:
+			err = .None
+		case .Network_Unreachable, .Insufficient_Resources, .Invalid_Argument, .Not_Connected, .Connection_Closed, .Timeout, .Would_Block, .Interrupted:
+			log.errorf("unexpected error reading tcp: %s", recv_err)
+			err = .Unexpected_EOF
+		case:
+			log.errorf("unexpected error reading tcp: %s", recv_err)
+			err = .Unknown
+		}
 		case nil:
 			err = .None
 		case:
 			assert(false, "recv_tcp only returns TCP_Recv_Error or nil")
 		}
-	case:
-		err = .Empty
-	}
 	return
 }
