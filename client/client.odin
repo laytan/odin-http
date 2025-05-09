@@ -75,6 +75,7 @@ Error :: union #shared_nil {
 	net.Dial_Error,
 	net.Parse_Endpoint_Error,
 	net.Network_Error,
+	net.TCP_Send_Error,
 	bufio.Scanner_Error,
 	Request_Error,
 	SSL_Error,
