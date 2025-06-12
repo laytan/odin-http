@@ -118,7 +118,7 @@ status_valid :: proc(s: Status) -> bool {
 }
 
 status_from_string :: proc(s: string) -> (Status, bool) {
-	if len(s) < 3 do return {}, false
+	if len(s) < 3 { return {}, false }
 
 	code_int := int(s[0]-'0')*100 + (int(s[1]-'0')*10) + int(s[2]-'0')
 

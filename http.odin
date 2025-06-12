@@ -35,21 +35,21 @@ requestline_parse :: proc(s: string, allocator := context.temp_allocator) -> (li
 	s := s
 
 	next_space := strings.index_byte(s, ' ')
-	if next_space == -1 do return line, .Not_Enough_Fields
+	if next_space == -1 { return line, .Not_Enough_Fields }
 
 	ok: bool
 	line.method, ok = method_parse(s[:next_space])
-	if !ok do return line, .Method_Not_Implemented
+	if !ok { return line, .Method_Not_Implemented }
 	s = s[next_space + 1:]
 
 	next_space = strings.index_byte(s, ' ')
-	if next_space == -1 do return line, .Not_Enough_Fields
+	if next_space == -1 { return line, .Not_Enough_Fields }
 
 	line.target = strings.clone(s[:next_space], allocator)
 	s = s[len(line.target.(string)) + 1:]
 
 	line.version, ok = version_parse(s)
-	if !ok do return line, .Invalid_Version_Format
+	if !ok { return line, .Invalid_Version_Format }
 
 	return
 }
@@ -131,7 +131,7 @@ Method :: enum {
 _method_strings := [?]string{"GET", "POST", "DELETE", "PATCH", "PUT", "HEAD", "CONNECT", "OPTIONS", "TRACE"}
 
 method_string :: proc(m: Method) -> string #no_bounds_check {
-	if m < .Get || m > .Trace do return ""
+	if m < .Get || m > .Trace { return "" }
 	return _method_strings[m]
 }
 
@@ -273,7 +273,7 @@ date_string :: proc(t: time.Time, allocator := context.allocator) -> string {
 }
 
 date_parse :: proc(value: string) -> (t: time.Time, ok: bool) #no_bounds_check {
-	if len(value) != DATE_LENGTH do return
+	if len(value) != DATE_LENGTH { return }
 
 	// Remove 'Fri, '
 	value := value
@@ -294,7 +294,7 @@ date_parse :: proc(value: string) -> (t: time.Time, ok: bool) #no_bounds_check {
 		}
 	}
 	month_index += 1
-	if month_index <= 0 do return
+	if month_index <= 0 { return }
 
 	year := strconv.parse_i64_of_base(value[:4], 10) or_return
 	value = value[4:]
@@ -309,7 +309,7 @@ date_parse :: proc(value: string) -> (t: time.Time, ok: bool) #no_bounds_check {
 	value = value[3:]
 
 	// Should have only 'GMT' left now.
-	if value != "GMT" do return
+	if value != "GMT" { return }
 
 	t = time.datetime_to_time(int(year), int(month_index), int(day), int(hour), int(minute), int(seconds)) or_return
 	ok = true
@@ -437,4 +437,3 @@ test_dynamic_unwritten :: proc(t: ^testing.T) {
 		testing.expect(t, len(du) == 0)
 	}
 }
-
