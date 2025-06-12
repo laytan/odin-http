@@ -94,7 +94,7 @@ cookie_parse :: proc(value: string, allocator := context.allocator) -> (cookie: 
 	value := value
 
 	eq := strings.index_byte(value, '=')
-	if eq < 1 do return
+	if eq < 1 { return }
 
 	cookie.name = value[:eq]
 	value = value[eq + 1:]
@@ -372,7 +372,7 @@ request_cookie_get :: proc(r: ^Request, key: string) -> (value: string, ok: bool
 	cookies := headers_get_unsafe(r.headers, "cookie") or_return
 
 	for k, v in request_cookies_iter(&cookies) {
-		if key == k do return v, true
+		if key == k { return v, true }
 	}
 
 	return
@@ -389,7 +389,7 @@ request_cookies :: proc(r: ^Request, allocator := context.temp_allocator) -> (re
 	cookies := headers_get_unsafe(r.headers, "cookie") or_else ""
 	for k, v in request_cookies_iter(&cookies) {
 		// Don't overwrite, the iterator goes from right to left and we want the last.
-		if k in res do continue
+		if k in res { continue }
 
 		res[k] = v
 	}

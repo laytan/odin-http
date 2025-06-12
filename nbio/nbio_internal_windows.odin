@@ -110,7 +110,7 @@ flush_timeouts :: proc(io: ^IO) -> (expires: Maybe(time.Duration)) {
 	timeout_len := len(io.timeouts)
 
 	// PERF: could use a faster clock, is getting time since program start fast?
-	if timeout_len > 0 do curr = time.now()
+	if timeout_len > 0 { curr = time.now() }
 
 	for i := 0; i < timeout_len; {
 		completion := io.timeouts[i]
@@ -174,7 +174,7 @@ handle_completion :: proc(io: ^IO, completion: ^Completion) {
 			return
 		}
 
-		if err != nil do win.closesocket(op.client)
+		if err != nil { win.closesocket(op.client) }
 
 		op.callback(completion.user_data, net.TCP_Socket(op.client), source, err)
 
@@ -185,7 +185,7 @@ handle_completion :: proc(io: ^IO, completion: ^Completion) {
 			return
 		}
 
-		if err != nil do win.closesocket(op.socket)
+		if err != nil { win.closesocket(op.socket) }
 
 		op.callback(completion.user_data, net.TCP_Socket(op.socket), err)
 
@@ -320,7 +320,7 @@ accept_callback :: proc(io: ^IO, comp: ^Completion, op: ^Op_Accept) -> (source: 
 		oclient: net.Any_Socket
 		oclient, err = open_socket(io, .IP4, .TCP)
 
-		if err != nil do return
+		if err != nil { return }
 
 		op.client = win.SOCKET(net.any_socket_to_socket(oclient))
 
@@ -365,20 +365,20 @@ connect_callback :: proc(io: ^IO, comp: ^Completion, op: ^Op_Connect) -> (err: n
 		osocket: net.Any_Socket
 		osocket, err = open_socket(io, .IP4, .TCP)
 
-		if err != nil do return
+		if err != nil { return }
 
 		op.socket = win.SOCKET(net.any_socket_to_socket(osocket))
 
 		sockaddr := endpoint_to_sockaddr({net.IP4_Any, 0})
 		res := win.bind(op.socket, &sockaddr, size_of(sockaddr))
-		if res < 0 do return net._bind_error()
+		if res < 0 { return net._bind_error() }
 
 		connect_ex: LPFN_CONNECTEX
 		load_socket_fn(op.socket, WSAID_CONNECTEX, &connect_ex)
 		// TODO: size_of(win.sockaddr_in6) when ip6.
 		ok = connect_ex(op.socket, &op.addr, size_of(win.sockaddr_in) + 16, nil, 0, &transferred, &comp.over)
 	}
-	if !ok do return net._dial_error()
+	if !ok { return net._dial_error() }
 
 	// enables getsockopt, setsockopt, getsockname, getpeername.
 	win.setsockopt(op.socket, win.SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, nil, 0)
@@ -416,12 +416,12 @@ read_callback :: proc(io: ^IO, comp: ^Completion, op: ^Op_Read) -> (read: win.DW
 		ok = win.ReadFile(win.HANDLE(op.fd), raw_data(op.buf), win.DWORD(len(op.buf)), &read, &comp.over)
 
 		// Not sure if this also happens with correctly set up handles some times.
-		if ok do log.info("non-blocking read returned immediately, is the handle set up correctly?")
+		if ok { log.info("non-blocking read returned immediately, is the handle set up correctly?") }
 
 		op.pending = true
 	}
 
-	if !ok do err = win.GetLastError()
+	if !ok { err = win.GetLastError() }
 
 	// Increment offset if this was not a call with an offset set.
 	if op.offset >= 0 {
@@ -441,12 +441,12 @@ write_callback :: proc(io: ^IO, comp: ^Completion, op: ^Op_Write) -> (written: w
 		ok = win.WriteFile(win.HANDLE(op.fd), raw_data(op.buf), win.DWORD(len(op.buf)), &written, &comp.over)
 
 		// Not sure if this also happens with correctly set up handles some times.
-		if ok do log.debug("non-blocking write returned immediately, is the handle set up correctly?")
+		if ok { log.debug("non-blocking write returned immediately, is the handle set up correctly?") }
 
 		op.pending = true
 	}
 
-	if !ok do err = win.GetLastError()
+	if !ok { err = win.GetLastError() }
 
 	// Increment offset if this was not a call with an offset set.
 	if op.offset >= 0 {
@@ -469,7 +469,7 @@ recv_callback :: proc(io: ^IO, comp: ^Completion, op: ^Op_Recv) -> (received: wi
 		op.pending = true
 	}
 
-	if !ok do err = net._tcp_recv_error()
+	if !ok { err = net._tcp_recv_error() }
 	return
 }
 
@@ -485,7 +485,7 @@ send_callback :: proc(io: ^IO, comp: ^Completion, op: ^Op_Send) -> (sent: win.DW
 		op.pending = true
 	}
 
-	if !ok do err = net._tcp_send_error()
+	if !ok { err = net._tcp_send_error() }
 	return
 }
 
