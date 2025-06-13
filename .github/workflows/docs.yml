@@ -26,7 +26,7 @@ jobs:
     steps:
       - uses: laytan/setup-odin@v2
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          release: nightly
       - name: Report
         run: odin report
       - name: Get commonmark

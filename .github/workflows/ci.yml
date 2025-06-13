@@ -19,9 +19,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: laytan/setup-odin@v2
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          release: false
-          llvm-version: 17
+          release: nightly
       - name: Report
         run: odin report
       - name: Non-blocking IO test
