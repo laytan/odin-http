@@ -4,13 +4,13 @@ import "core:container/queue"
 import "core:net"
 import "core:os"
 import "core:time"
-
-import kqueue "_kqueue"
+import "core:sys/kqueue"
+import "core:sys/posix"
 
 _init :: proc(io: ^IO, allocator := context.allocator) -> (err: os.Errno) {
-	qerr: kqueue.Queue_Error
+	qerr: posix.Errno
 	io.kq, qerr = kqueue.kqueue()
-	if qerr != .None do return kq_err_to_os_err(qerr)
+	if qerr != nil { return kq_err_to_os_err(qerr) }
 
 	pool_init(&io.completion_pool, allocator = allocator)
 
@@ -35,7 +35,7 @@ _destroy :: proc(io: ^IO) {
 
 	queue.destroy(&io.completed)
 
-	os.close(io.kq)
+	posix.close(io.kq)
 
 	pool_destroy(&io.completion_pool)
 }

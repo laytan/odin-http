@@ -5,6 +5,7 @@ import "core:log"
 import "core:mem"
 import "core:net"
 import "core:time"
+import "core:sys/kqueue"
 
 import http "../.."
 
