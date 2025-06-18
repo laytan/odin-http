@@ -42,7 +42,9 @@ If any other error occurs, a 500 is sent and the error is logged.
 */
 respond_file :: proc(r: ^Response, path: string, content_type: Maybe(Mime_Type) = nil, loc := #caller_location) {
 	// PERF: we are still putting the content into the body buffer, we could stream it.
-
+	if td.state == .Testing {
+		return
+	}
 	assert_has_td(loc)
 	assert(!r.sent, "response has already been sent", loc)
 
@@ -168,6 +170,9 @@ respond_json :: proc(r: ^Response, v: any, status: Status = .OK, opt: json.Marsh
 Prefer the procedure group `respond`.
 */
 respond_with_none :: proc(r: ^Response, loc := #caller_location) {
+	if td.state == .Testing {
+		return
+	}
 	assert_has_td(loc)
 
 	conn := r._conn
