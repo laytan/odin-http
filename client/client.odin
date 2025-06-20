@@ -198,7 +198,7 @@ Body_Plain :: string
 // And should be deleted by you.
 Body_Url_Encoded :: map[string]string
 
-Body_Type :: union {
+Body_Type :: union #no_nil {
 	Body_Plain,
 	Body_Url_Encoded,
 	Body_Error, // TODO: why is this here if we also return an error?
