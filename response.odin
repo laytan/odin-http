@@ -128,7 +128,7 @@ response_writer_init :: proc(rw: ^Response_Writer, r: ^Response, buffer: []byte)
 
 				bytes.buffer_grow(b, 16)
 				size_buf := _dynamic_unwritten(b.buf)
-				size := strconv.write_int(size_buf, plen, 16)
+				size := strconv.append_int(size_buf, plen, 16)
 				_dynamic_add_len(&b.buf, len(size))
 
 				ws(b, "\r\n")
