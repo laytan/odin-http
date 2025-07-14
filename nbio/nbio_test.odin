@@ -44,6 +44,7 @@ test_write_read_close :: proc(t: ^testing.T) {
 	track: mem.Tracking_Allocator
 	mem.tracking_allocator_init(&track, context.allocator)
 	context.allocator = mem.tracking_allocator(&track)
+	defer mem.tracking_allocator_destroy(&track)
 
 	defer {
 		for _, leak in track.allocation_map {
@@ -134,6 +135,7 @@ test_client_and_server_send_recv :: proc(t: ^testing.T) {
 	track: mem.Tracking_Allocator
 	mem.tracking_allocator_init(&track, context.allocator)
 	context.allocator = mem.tracking_allocator(&track)
+	defer mem.tracking_allocator_destroy(&track)
 
 	defer {
 		for _, leak in track.allocation_map {
@@ -185,7 +187,7 @@ test_client_and_server_send_recv :: proc(t: ^testing.T) {
 		connect(&io, tctx.ep, &tctx, connect_callback)
 
 		for !tctx.done {
-			terr := tick(&io)
+			terr = tick(&io)
 			expect(t, terr == os.ERROR_NONE, fmt.tprintf("tick error: %v", terr))
 		}
 
@@ -295,13 +297,14 @@ test_send_all :: proc(t: ^testing.T) {
 	connect(&io, tctx.ep, &tctx, connect_callback)
 
 	for !tctx.done {
-		terr := tick(&io)
+		terr = tick(&io)
 		expect(t, terr == os.ERROR_NONE, fmt.tprintf("tick error: %v", terr))
 	}
 
 	expect(t, slice.simple_equal(tctx.send_buf, tctx.recv_buf[:mem.Megabyte * 50]), "expected the sent bytes to be the same as the received")
 
 	expected := make([]byte, mem.Megabyte * 10)
+	defer delete(expected)
 	expect(t, slice.simple_equal(tctx.recv_buf[mem.Megabyte * 50:], expected), "expected the rest of the bytes to be 0")
 
 	connect_callback :: proc(ctx: rawptr, sock: net.TCP_Socket, err: net.Network_Error) {
