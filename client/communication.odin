@@ -168,6 +168,8 @@ parse_response :: proc(socket: Communication, allocator := context.allocator) ->
 		return
 	}
 
+	res.cookies.allocator = allocator
+
 	for {
 		if !bufio.scanner_scan(&scanner) {
 			err = bufio.scanner_error(&scanner)
@@ -187,7 +189,7 @@ parse_response :: proc(socket: Communication, allocator := context.allocator) ->
 		if key == "set-cookie" {
 			cookie_str := http.headers_get_unsafe(res.headers, "set-cookie")
 			http.headers_delete_unsafe(&res.headers, "set-cookie")
-			delete(key)
+			delete(key, allocator)
 
 			cookie, cok := http.cookie_parse(cookie_str, allocator)
 			if !cok {

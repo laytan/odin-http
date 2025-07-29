@@ -117,7 +117,7 @@ cookie_parse :: proc(value: string, allocator := context.allocator) -> (cookie: 
 		switch eq {
 		case -1:
 			key := strings.to_lower(part, allocator)
-			defer delete(key)
+			defer delete(key, allocator)
 
 			switch key {
 			case "httponly":
@@ -133,7 +133,7 @@ cookie_parse :: proc(value: string, allocator := context.allocator) -> (cookie: 
 			return
 		case:
 			key := strings.to_lower(part[:eq], allocator)
-			defer delete(key)
+			defer delete(key, allocator)
 
 			value := part[eq + 1:]
 
