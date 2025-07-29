@@ -381,9 +381,11 @@ response_needs_content_length :: proc(r: ^Response, conn: ^Connection) -> bool {
 		return false
 	}
 
-	line := conn.loop.req.line.?
-	if status_is_success(r.status) && line.method == .Connect {
-		return false
+	if status_is_success(r.status) {
+		line, _ := conn.loop.req.line.?
+		if line.method == .Connect {
+			return false
+		}
 	}
 
 	return true
