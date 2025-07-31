@@ -165,7 +165,7 @@ flush :: proc(io: ^IO) -> os.Errno {
 flush_io :: proc(io: ^IO, events: []kqueue.KEvent) -> int {
 	events := events
 	events_loop: for &event, i in events {
-		if len(io.io_pending) <= i do return i
+		if len(io.io_pending) <= i { return i }
 		completion := io.io_pending[i]
 
 		switch op in completion.operation {
@@ -230,13 +230,13 @@ flush_io :: proc(io: ^IO, events: []kqueue.KEvent) -> int {
 flush_timeouts :: proc(io: ^IO) -> (min_timeout: Maybe(i64)) {
 	now: time.Time
 	// PERF: is there a faster way to compare time? Or time since program start and compare that?
-	if len(io.timeouts) > 0 do now = time.now()
+	if len(io.timeouts) > 0 { now = time.now() }
 
 	for i := len(io.timeouts) - 1; i >= 0; i -= 1 {
 		completion := io.timeouts[i]
 
 		timeout, ok := &completion.operation.(Op_Timeout)
-		if !ok do panic("non-timeout operation found in the timeouts queue")
+		if !ok { panic("non-timeout operation found in the timeouts queue") }
 
 		unow := time.to_unix_nanoseconds(now)
 		expires := time.to_unix_nanoseconds(timeout.expires)
