@@ -171,7 +171,11 @@ flush_completions :: proc(io: ^IO, wait_nr: u32, timeouts: ^uint, etime: ^bool) 
 		completed, err := io_uring.copy_cqes(&io.ring, cqes[:], wait_remaining)
 		if err != .None { return ring_err_to_os_err(err) }
 
-		wait_remaining = max(0, wait_remaining - completed)
+		if wait_remaining < completed {
+			wait_remaining = 0
+		} else {
+			wait_remaining -= completed
+		}
 
 		if completed > 0 {
 			queue.reserve(&io.completed, int(completed))
