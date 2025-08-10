@@ -39,7 +39,7 @@ request_destroy :: proc(r: ^Request) {
 }
 
 with_json :: proc(r: ^Request, v: any, opt: json.Marshal_Options = {}) -> json.Marshal_Error {
-	if r.method == .Get do r.method = .Post
+	if r.method == .Get { r.method = .Post }
 	http.headers_set_content_type(&r.headers, http.mime_to_content_type(.Json))
 
 	stream := bytes.buffer_to_stream(&r.body)
@@ -209,7 +209,7 @@ Body_Type :: union #no_nil {
 body_destroy :: proc(body: Body_Type, was_allocation: bool) {
 	switch b in body {
 	case Body_Plain:
-		if was_allocation do delete(b)
+		if was_allocation { delete(b) }
 	case Body_Url_Encoded:
 		for k, v in b {
 			delete(k)
@@ -267,7 +267,7 @@ _parse_body :: proc(
 	// Automatically decode url encoded bodies.
 	if typ, ok := http.headers_get_unsafe(headers^, "content-type"); ok && typ == "application/x-www-form-urlencoded" {
 		plain := body.(Body_Plain)
-		defer if was_allocation do delete(plain)
+		defer if was_allocation { delete(plain) }
 
 		keyvalues := strings.split(plain, "&", allocator)
 		defer delete(keyvalues, allocator)
@@ -394,7 +394,7 @@ _response_body_chunked :: proc(
 	body_buff: bytes.Buffer
 
 	bytes.buffer_init_allocator(&body_buff, 0, 0, allocator)
-	defer if err != nil do bytes.buffer_destroy(&body_buff)
+	defer if err != nil { bytes.buffer_destroy(&body_buff) }
 
 	for {
 		if !bufio.scanner_scan(_body) {
@@ -414,7 +414,7 @@ _response_body_chunked :: proc(
 			err = .Invalid_Chunk_Size
 			return
 		}
-		if size == 0 do break
+		if size == 0 { break }
 
 		if max_length > -1 && bytes.buffer_length(&body_buff) + size > max_length {
 			return "", .Too_Long
