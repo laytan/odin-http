@@ -64,18 +64,18 @@ _tick :: proc(io: ^IO) -> os.Errno {
 
 			sqe, err = io_uring.timeout(&io.ring, 0, &t, 1, 0)
 		}
-		if err != nil do return ring_err_to_os_err(err)
+		if err != nil { return ring_err_to_os_err(err) }
 
 		timeouts += 1
 		io.ios_queued += 1
 
 		ferr := flush(io, 1, &timeouts, &etime)
-		if ferr != os.ERROR_NONE do return ferr
+		if ferr != os.ERROR_NONE { return ferr }
 	}
 
 	for timeouts > 0 {
 		fcerr := flush_completions(io, 0, &timeouts, &etime)
-		if fcerr != os.ERROR_NONE do return fcerr
+		if fcerr != os.ERROR_NONE { return fcerr }
 	}
 
 	return os.ERROR_NONE

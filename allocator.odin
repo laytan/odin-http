@@ -150,7 +150,7 @@ allocator_alloc_zerod :: proc(a: ^Allocator, size: int, alignment: int, loc := #
 }
 
 allocator_alloc_non_zerod :: proc(a: ^Allocator, size: int, alignment: int, loc := #caller_location) -> (bytes: []byte, err: mem.Allocator_Error) {
-	if size == 0 do return
+	if size == 0 { return }
 
 	block := a.curr
 	data := ([^]byte)(&block.data)

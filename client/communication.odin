@@ -85,7 +85,7 @@ format_request :: proc(target: http.URL, request: ^Request, allocator := context
 		// Escape newlines in headers, if we don't, an attacker can find an endpoint
 		// that returns a header with user input, and inject headers into the response.
 		esc_value, was_allocation := strings.replace_all(value, "\n", "\\n", allocator)
-		defer if was_allocation do delete(esc_value)
+		defer if was_allocation { delete(esc_value) }
 
 		bytes.buffer_write_string(&buf, esc_value)
 		bytes.buffer_write_string(&buf, "\r\n")
@@ -178,7 +178,7 @@ parse_response :: proc(socket: Communication, allocator := context.allocator) ->
 
 		line := bufio.scanner_text(&scanner)
 		// Empty line means end of headers.
-		if line == "" do break
+		if line == "" { break }
 
 		key, hok := http.header_parse(&res.headers, line, allocator)
 		if !hok {

@@ -7,10 +7,10 @@ import "core:os"
 
 _open :: proc(_: ^IO, path: string, mode, perm: int) -> (handle: os.Handle, errno: os.Errno) {
 	handle, errno = os.open(path, mode, perm)
-	if errno != os.ERROR_NONE do return
+	if errno != os.ERROR_NONE { return }
 
 	errno = _prepare_handle(handle)
-	if errno != os.ERROR_NONE do os.close(handle)
+	if errno != os.ERROR_NONE { os.close(handle) }
 	return
 }
 
@@ -36,10 +36,10 @@ _open_socket :: proc(
 	err: net.Network_Error,
 ) {
 	socket, err = net.create_socket(family, protocol)
-	if err != nil do return
+	if err != nil { return }
 
 	err = _prepare_socket(socket)
-	if err != nil do net.close(socket)
+	if err != nil { net.close(socket) }
 	return
 }
 
