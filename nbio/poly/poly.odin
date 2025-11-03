@@ -422,12 +422,12 @@ recv_all1 :: proc(io: ^nbio.IO, socket: net.Any_Socket, buf: []byte, p: $T, call
 
 recv_all2 :: proc(io: ^nbio.IO, socket: net.Any_Socket, buf: []byte, p: $T, p2: $T2, callback: $C/proc(p: T, p2: T2, received: int, udp_client: Maybe(net.Endpoint), err: net.Network_Error))
 	where size_of(T) + size_of(T2) <= nbio.MAX_USER_ARGUMENTS {
-	_recv_all2(io, socket, buf, false, p, p2, callback)
+	_recv2(io, socket, buf, true, p, p2, callback)
 }
 
 recv_all3 :: proc(io: ^nbio.IO, socket: net.Any_Socket, buf: []byte, p: $T, p2: $T2, p3: $T3, callback: $C/proc(p: T, p2: T2, p3: T3, received: int, udp_client: Maybe(net.Endpoint), err: net.Network_Error))
 	where size_of(T) + size_of(T2) + size_of(T3) <= nbio.MAX_USER_ARGUMENTS {
-	_recv_all2(io, socket, buf, false, p, p2, p3, callback)
+	_recv3(io, socket, buf, true, p, p2, p3, callback)
 }
 
 /// Send
