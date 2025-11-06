@@ -56,7 +56,7 @@ format_request :: proc(target: http.URL, request: ^Request, allocator := context
 
 			// Write the length into unwritten portion.
 			unwritten := http._dynamic_unwritten(buf.buf)
-			l := len(strconv.itoa(unwritten, buf_len))
+			l := len(strconv.write_int(unwritten, i64(buf_len), 10))
 			assert(l <= 20)
 			http._dynamic_add_len(&buf.buf, l)
 

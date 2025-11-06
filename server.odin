@@ -61,8 +61,9 @@ Default_Server_Opts := Server_Opts {
 }
 
 @(init, private)
-server_opts_init :: proc() {
+server_opts_init :: proc "contextless" () {
 	when ODIN_OS == .Linux || ODIN_OS == .Darwin {
+		context = runtime.default_context()
 		Default_Server_Opts.thread_count = os.processor_core_count()
 	} else {
 		Default_Server_Opts.thread_count = 1

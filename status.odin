@@ -1,5 +1,7 @@
 package http
 
+import "base:runtime"
+
 import "core:fmt"
 import "core:strings"
 
@@ -78,7 +80,8 @@ _status_strings: [max(Status) + Status(1)]string
 // Populates the status_strings like a map from status to their string representation.
 // Where an empty string means an invalid code.
 @(init, private)
-status_strings_init :: proc() {
+status_strings_init :: proc "contextless" () {
+	context = runtime.default_context()
 	for field in Status {
 		name, ok := fmt.enum_value_to_string(field)
 		assert(ok)

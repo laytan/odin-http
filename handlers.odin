@@ -100,9 +100,9 @@ rate_limit :: proc(data: ^Rate_Limit_Data, next: ^Handler, opts: ^Rate_Limit_Opt
 		if hits > data.opts.max {
 			res.status = .Too_Many_Requests
 
-			retry_dur := int(time.diff(time.now(), data.next_sweep) / time.Second)
+			retry_dur := i64(time.diff(time.now(), data.next_sweep) / time.Second)
 			buf := make([]byte, 32, context.temp_allocator)
-			retry_str := strconv.itoa(buf, retry_dur)
+			retry_str := strconv.write_int(buf, retry_dur, 10)
 			headers_set_unsafe(&res.headers, "retry-after", retry_str)
 
 			if on, ok := data.opts.on_limit.(Rate_Limit_On_Limit); ok {

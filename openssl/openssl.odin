@@ -45,9 +45,9 @@ Version :: bit_field u32 {
 VERSION: Version
 
 @(private, init)
-version_check :: proc() {
+version_check :: proc "contextless" () {
     VERSION = Version(OpenSSL_version_num())
-    assert(VERSION.major == 3, "invalid OpenSSL library version, expected 3.x")
+    assert_contextless(VERSION.major == 3, "invalid OpenSSL library version, expected 3.x")
 }
 
 SSL_METHOD :: struct {}
