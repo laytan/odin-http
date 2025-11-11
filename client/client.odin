@@ -145,7 +145,7 @@ Response :: struct {
 
 // Frees the response, closes the connection.
 // Optionally pass the response_body returned 'body' and 'was_allocation' to destroy it too.
-response_destroy :: proc(res: ^Response, body: Maybe(Body_Type) = nil, was_allocation := false) {
+response_destroy :: proc(res: ^Response, body: Maybe(Body_Type) = nil, was_allocation := false, body_allocator := context.allocator) {
 	// Header keys are allocated, values are slices into the body.
 	// NOTE: this is fine because we don't add any headers with `headers_set_unsafe()`.
 	// If we did, we wouldn't know if the key was allocated or a literal.
@@ -164,7 +164,7 @@ response_destroy :: proc(res: ^Response, body: Maybe(Body_Type) = nil, was_alloc
 	delete(res.cookies)
 
 	if body != nil {
-		body_destroy(body.(Body_Type), was_allocation)
+		body_destroy(body.(Body_Type), was_allocation, body_allocator)
 	}
 
 	// We close now and not at the time we got the response because reading the body,
@@ -206,14 +206,14 @@ Body_Type :: union #no_nil {
 
 // Frees the memory allocated by parsing the body.
 // was_allocation is returned by the body parsing procedure.
-body_destroy :: proc(body: Body_Type, was_allocation: bool) {
+body_destroy :: proc(body: Body_Type, was_allocation: bool, allocator := context.allocator) {
 	switch b in body {
 	case Body_Plain:
-		if was_allocation { delete(b) }
+		if was_allocation { delete(b, allocator) }
 	case Body_Url_Encoded:
 		for k, v in b {
-			delete(k)
-			delete(v)
+			delete(k, b.allocator)
+			delete(v, b.allocator)
 		}
 		delete(b)
 	case Body_Error:
@@ -267,7 +267,7 @@ _parse_body :: proc(
 	// Automatically decode url encoded bodies.
 	if typ, ok := http.headers_get_unsafe(headers^, "content-type"); ok && typ == "application/x-www-form-urlencoded" {
 		plain := body.(Body_Plain)
-		defer if was_allocation { delete(plain) }
+		defer if was_allocation { delete(plain, allocator) }
 
 		keyvalues := strings.split(plain, "&", allocator)
 		defer delete(keyvalues, allocator)
@@ -472,7 +472,7 @@ _response_body_chunked :: proc(
 		}
 	}
 
-	if http.headers_has(headers^, "trailer") {
+	if http.headers_has_unsafe(headers^, "trailer") {
 		http.headers_delete_unsafe(headers, "trailer")
 	}
 
