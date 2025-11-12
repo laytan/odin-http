@@ -79,6 +79,7 @@ Server_State :: enum {
 	Closing,
 	Cleaning,
 	Closed,
+	Testing,
 }
 
 Server :: struct {
