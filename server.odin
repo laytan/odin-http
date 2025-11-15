@@ -142,11 +142,15 @@ listen :: proc(
 	assert(errno == os.ERROR_NONE)
 
 	s.tcp_sock, err = nbio.open_and_listen_tcp(&td.io, endpoint)
-	if err != nil { server_shutdown(s) }
+	if err != nil {
+		nbio.destroy(&td.io)
+		server_shutdown(s)
+	}
 	return
 }
 
 serve :: proc(s: ^Server, h: Handler) -> (err: net.Network_Error) {
+	if atomic_load(&s.closing) { return }
 	s.handler = h
 
 	thread_count := max(0, s.opts.thread_count - 1)
@@ -166,6 +170,7 @@ serve :: proc(s: ^Server, h: Handler) -> (err: net.Network_Error) {
 
 	log.debug("server threads are done, shutting down")
 
+	net.shutdown(s.tcp_sock, .Both)
 	net.close(s.tcp_sock)
 	for t in s.threads { thread.destroy(t) }
 	delete(s.threads)
@@ -390,8 +395,6 @@ connection_close :: proc(c: ^Connection, loc := #caller_location) {
 	// to process the closing and receive any remaining data.
 	net.shutdown(c.socket, net.Shutdown_Manner.Send)
 
-	scanner_destroy(&c.scanner)
-
 	nbio.timeout(&td.io, Conn_Close_Delay, c, proc(c: rawptr) {
 		c := cast(^Connection)c
 		nbio.close(&td.io, c.socket, c, proc(c: rawptr, ok: bool) {
@@ -404,6 +407,7 @@ connection_close :: proc(c: ^Connection, loc := #caller_location) {
 			// allocator_destroy(&c.temp_allocator)
 			virtual.arena_destroy(&c.temp_allocator)
 
+			scanner_destroy(&c.scanner)
 			delete_key(&td.conns, c.socket)
 			free(c, c.server.conn_allocator)
 		})

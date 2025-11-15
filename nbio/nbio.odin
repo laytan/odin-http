@@ -142,12 +142,12 @@ open_and_listen_tcp :: proc(io: ^IO, ep: net.Endpoint) -> (socket: net.TCP_Socke
 	socket = sock.(net.TCP_Socket)
 
 	if err = net.bind(socket, ep); err != nil {
-		close(io, socket)
+		net.close(socket)
 		return
 	}
 
 	if err = listen(socket); err != nil {
-		close(io, socket)
+		net.close(socket)
 	}
 	return
 }
