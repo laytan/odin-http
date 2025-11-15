@@ -162,8 +162,12 @@ header_parse :: proc(headers: ^Headers, line: string, allocator := context.temp_
 	has_host   := headers_has_unsafe(headers^, "host")
 	cl, has_cl := headers_get_unsafe(headers^, "content-length")
 
-	value := strings.clone(strings.trim_space(line[colon + 1:]), allocator)
-	key = headers_set(headers, line[:colon], value)
+	value := strings.trim_space(line[colon + 1:])
+	key = sanitize_key(headers^, line[:colon])
+	defer if !ok {
+		delete(key, allocator)
+		key = ""
+	}
 
 	// RFC 7230 5.4: Server MUST respond with 400 to any request
 	// with multiple "Host" header fields.
@@ -178,6 +182,23 @@ header_parse :: proc(headers: ^Headers, line: string, allocator := context.temp_
 	// recipient MUST treat it as an unrecoverable error.
 	if key == "content-length" && has_cl && cl != value {
 		return
+	}
+
+	// RFC 9110 5.3: A recipient MAY combine multiple field lines within a field section
+	// that have the same field name into one field line, without changing
+	// the semantics of the message, by appending each subsequent field line
+	// value to the initial field line value in order, separated by a comma
+	// (",") and optional whitespace (OWS, defined in Section 5.6.3). For
+	// consistency, use comma SP.
+	key_ptr, value_ptr, just_inserted := headers_entry_unsafe(headers, key)
+	if just_inserted {
+		value_ptr^ = strings.clone(value, allocator)
+	} else {
+		delete(key, allocator)
+		key = key_ptr^
+		value = strings.concatenate({value_ptr^, ", ", value}, allocator)
+		delete(value_ptr^, allocator)
+		value_ptr^ = value
 	}
 
 	ok = true
