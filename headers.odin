@@ -48,6 +48,18 @@ headers_get_unsafe :: #force_inline proc(h: Headers, k: string) -> (string, bool
 	return h._kv[k]
 }
 
+headers_entry :: #force_inline proc(h: ^Headers, k: string, loc := #caller_location) -> (key_ptr: ^string, value_ptr: ^string, just_inserted: bool) {
+	assert(!h.readonly, "these headers are readonly, did you accidentally try to set a header on the request?", loc)
+	key_ptr, value_ptr, just_inserted, _ = map_entry(&h._kv, sanitize_key(h^, k))
+	return
+}
+
+headers_entry_unsafe :: #force_inline proc(h: ^Headers, k: string, loc := #caller_location) -> (key_ptr: ^string, value_ptr: ^string, just_inserted: bool) {
+	assert(!h.readonly, "these headers are readonly, did you accidentally try to set a header on the request?", loc)
+	key_ptr, value_ptr, just_inserted, _ = map_entry(&h._kv, k)
+	return
+}
+
 headers_has :: proc(h: Headers, k: string) -> bool {
 	return sanitize_key(h, k) in h._kv
 }
@@ -92,7 +104,7 @@ headers_set_close :: #force_inline proc(h: ^Headers) {
 /*
 Escapes any newlines and converts ASCII to lowercase.
 */
-@(private="file")
+@(private="package")
 sanitize_key :: proc(h: Headers, k: string) -> string {
 	allocator := h._kv.allocator if h._kv.allocator.procedure != nil else context.temp_allocator
 
