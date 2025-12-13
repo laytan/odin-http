@@ -48,7 +48,7 @@ headers_get_unsafe :: #force_inline proc(h: Headers, k: string) -> (string, bool
 	return h._kv[k]
 }
 
-headers_entry :: #force_inline proc(h: ^Headers, k: string, loc := #caller_location) -> (key_ptr: ^string, value_ptr: ^string, just_inserted: bool) {
+headers_entry :: proc(h: ^Headers, k: string, loc := #caller_location) -> (key_ptr: ^string, value_ptr: ^string, just_inserted: bool) {
 	assert(!h.readonly, "these headers are readonly, did you accidentally try to set a header on the request?", loc)
 	key_ptr, value_ptr, just_inserted, _ = map_entry(&h._kv, sanitize_key(h^, k))
 	return
