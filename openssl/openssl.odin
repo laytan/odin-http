@@ -46,8 +46,8 @@ VERSION: Version
 
 @(private, init)
 version_check :: proc "contextless" () {
-    VERSION = Version(OpenSSL_version_num())
-    assert_contextless(VERSION.major == 3, "invalid OpenSSL library version, expected 3.x")
+	VERSION = Version(OpenSSL_version_num())
+	assert_contextless(VERSION.major == 3, "invalid OpenSSL library version, expected 3.x")
 }
 
 SSL_METHOD :: struct {}

@@ -233,7 +233,7 @@ response_body :: proc(
 ) {
 	defer res._body_err = err
 	assert(res._body_err == nil)
-    body, was_allocation, err = _parse_body(&res.headers, &res._body, max_length, allocator)
+	body, was_allocation, err = _parse_body(&res.headers, &res._body, max_length, allocator)
 	return
 }
 
