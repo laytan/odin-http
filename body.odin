@@ -101,7 +101,8 @@ body_error_status :: proc(e: Body_Error) -> Status {
 			return .Bad_Request
 		case .Empty, .Short_Write, .Buffer_Full, .Short_Buffer,
 		     .Invalid_Write, .Negative_Read, .Invalid_Whence, .Invalid_Offset,
-			 .Invalid_Unread, .Negative_Write, .Negative_Count:
+		     .Invalid_Unread, .Negative_Write, .Negative_Count,
+		     .Permission_Denied, .No_Size, .Closed:
 			return .Internal_Server_Error
 		case .None:
 			return .OK
