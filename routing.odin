@@ -20,16 +20,18 @@ url_parse :: proc(raw: string) -> (url: URL) {
 	url.raw = raw
 	s := raw
 
-	i := strings.index(s, "://")
-	if i >= 0 {
-		url.scheme = s[:i]
-		s = s[i+3:]
-	}
-
-	i = strings.index(s, "?")
+	// Per RFC 3986 3.4 the query component can contain both ':' and '/' characters unescaped.
+	// Since the scheme may be absent in a HTTP request line, the query should be separated first.
+	i := strings.index(s, "?")
 	if i != -1 {
 		url.query = s[i+1:]
 		s = s[:i]
+	}
+
+	i = strings.index(s, "://")
+	if i >= 0 {
+		url.scheme = s[:i]
+		s = s[i+3:]
 	}
 
 	i = strings.index(s, "/")
@@ -52,25 +54,26 @@ query_iter :: proc(query: ^string) -> (entry: Query_Entry, ok: bool) {
 
 	ok = true
 
-	i := strings.index(query^, "=")
+	param: string
+	i := strings.index(query^, "&")
 	if i < 0 {
-		entry.key = query^
+		param = query^
 		query^ = ""
+	} else {
+		param = query[:i]
+		query^ = query[i+1:]
+	}
+
+	i = strings.index(param, "=")
+	if i < 0 {
+		entry.key = param
+		entry.value = ""
 		return
 	}
 
-	entry.key = query[:i]
-	query^ = query[i+1:]
+	entry.key = param[:i]
+	entry.value = param[i+1:]
 
-	i = strings.index(query^, "&")
-	if i < 0 {
-		entry.value = query^
-		query^ = ""
-		return
-	}
-
-	entry.value = query[:i]
-	query^ = query[i+1:]
 	return
 }
 
