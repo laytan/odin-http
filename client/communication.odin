@@ -187,15 +187,14 @@ parse_response :: proc(socket: Communication, allocator := context.allocator) ->
 		}
 
 		if key == "set-cookie" {
-			cookie_str := strings.trim_space(line[len(key)+1:])
-			value := http.headers_get_unsafe(res.headers, "set-cookie")
+			cookie_str := http.headers_get_unsafe(res.headers, "set-cookie")
 			http.headers_delete_unsafe(&res.headers, "set-cookie")
 			delete(key, allocator)
-			delete(value, allocator)
 
 			cookie, cok := http.cookie_parse(cookie_str, allocator)
 			if !cok {
 				err = Request_Error.Invalid_Response_Cookie
+				delete(cookie_str, allocator)
 				return
 			}
 

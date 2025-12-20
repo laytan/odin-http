@@ -163,15 +163,12 @@ header_parse :: proc(headers: ^Headers, line: string, allocator := context.temp_
 	cl, has_cl := headers_get_unsafe(headers^, "content-length")
 
 	value := strings.trim_space(line[colon + 1:])
-	key = sanitize_key(headers^, line[:colon])
-	defer if !ok {
-		delete(key, allocator)
-		key = ""
-	}
+	tmp_key := sanitize_key(headers^, line[:colon])
+	defer if !ok { delete(tmp_key, allocator) }
 
 	// RFC 7230 5.4: Server MUST respond with 400 to any request
 	// with multiple "Host" header fields.
-	if key == "host" && has_host {
+	if tmp_key == "host" && has_host {
 		return
 	}
 
@@ -180,7 +177,7 @@ header_parse :: proc(headers: ^Headers, line: string, allocator := context.temp_
 	// field-values or a single Content-Length header field having an
 	// invalid value, then the message framing is invalid and the
 	// recipient MUST treat it as an unrecoverable error.
-	if key == "content-length" && has_cl && cl != value {
+	if tmp_key == "content-length" && has_cl && cl != value {
 		return
 	}
 
@@ -190,16 +187,16 @@ header_parse :: proc(headers: ^Headers, line: string, allocator := context.temp_
 	// value to the initial field line value in order, separated by a comma
 	// (",") and optional whitespace (OWS, defined in Section 5.6.3). For
 	// consistency, use comma SP.
-	key_ptr, value_ptr, just_inserted := headers_entry_unsafe(headers, key)
+	key_ptr, value_ptr, just_inserted := headers_entry_unsafe(headers, tmp_key)
 	if just_inserted {
-		value_ptr^ = strings.clone(value, allocator)
+		value = strings.clone(value, allocator)
 	} else {
-		delete(key, allocator)
-		key = key_ptr^
 		value = strings.concatenate({value_ptr^, ", ", value}, allocator)
+		delete(tmp_key, allocator)
 		delete(value_ptr^, allocator)
-		value_ptr^ = value
 	}
+	key = key_ptr^
+	value_ptr^ = value
 
 	ok = true
 	return

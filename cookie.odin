@@ -13,6 +13,7 @@ Cookie_Same_Site :: enum {
 }
 
 Cookie :: struct {
+	_raw:         string,
 	name:         string,
 	value:        string,
 	domain:       Maybe(string),
@@ -96,6 +97,7 @@ cookie_parse :: proc(value: string, allocator := context.allocator) -> (cookie: 
 	eq := strings.index_byte(value, '=')
 	if eq < 1 { return }
 
+	cookie._raw = value
 	cookie.name = value[:eq]
 	value = value[eq + 1:]
 

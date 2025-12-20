@@ -159,8 +159,9 @@ response_destroy :: proc(res: ^Response, body: Maybe(Body_Type) = nil, was_alloc
 
 	bufio.scanner_destroy(&res._body)
 
-	// Cookies only contain slices to memory inside the scanner body.
-	// So just deleting the array will be enough.
+	for cookie in res.cookies {
+		delete(cookie._raw)
+	}
 	delete(res.cookies)
 
 	if body != nil {
@@ -233,7 +234,7 @@ response_body :: proc(
 ) {
 	defer res._body_err = err
 	assert(res._body_err == nil)
-    body, was_allocation, err = _parse_body(&res.headers, &res._body, max_length, allocator)
+	body, was_allocation, err = _parse_body(&res.headers, &res._body, max_length, allocator)
 	return
 }
 
