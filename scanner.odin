@@ -1,12 +1,12 @@
 #+private
 package http
 
+import "core:mem/virtual"
 import "base:intrinsics"
 
 import "core:bufio"
+import "core:nbio"
 import "core:net"
-
-import "nbio"
 
 Scan_Callback :: #type proc(user_data: rawptr, token: string, err: bufio.Scanner_Error)
 Split_Proc    :: #type proc(split_data: rawptr, data: []byte, at_eof: bool) -> (advance: int, token: []byte, err: bufio.Scanner_Error, final_token: bool)
@@ -202,23 +202,20 @@ scanner_scan :: proc(
 
 	assert_has_td()
 	// TODO: some kinda timeout on this.
-	nbio.recv(&td.io, s.connection.socket, s.buf[s.end:len(s.buf)], s, scanner_on_read)
+	nbio.recv_poly(s.connection.socket, {s.buf[s.end:len(s.buf)]}, s, scanner_on_read)
 }
 
-scanner_on_read :: proc(s: rawptr, n: int, _: Maybe(net.Endpoint), e: net.Network_Error) {
-	s := (^Scanner)(s)
+scanner_on_read :: proc(op: ^nbio.Operation, s: ^Scanner) {
+	context.temp_allocator = virtual.arena_allocator(&s.connection.temp_allocator)
 
 	defer scanner_scan(s, s.user_data, s.callback)
 
-	if e != nil {
-		#partial switch ee in e {
-		case net.TCP_Recv_Error:
-			#partial switch ee {
-			case .Connection_Closed, net.TCP_Recv_Error(9):
-				// 9 for EBADF (bad file descriptor) happens when OS closes socket.
-				s._err = .EOF
-				return
-			}
+	if op.recv.err != nil {
+		#partial switch op.recv.err.(net.TCP_Recv_Error) {
+		case .Connection_Closed, .Invalid_Argument:
+			// EBADF (bad file descriptor) happens when OS closes socket.
+			s._err = .EOF
+			return
 		}
 
 		s._err = .Unknown
@@ -226,18 +223,18 @@ scanner_on_read :: proc(s: rawptr, n: int, _: Maybe(net.Endpoint), e: net.Networ
 	}
 
 	// When n == 0, connection is closed or buffer is of length 0.
-	if n == 0 {
+	if op.recv.received == 0 {
 		s._err = .EOF
 		return
 	}
 
-	if n < 0 || len(s.buf) - s.end < n {
+	if op.recv.received < 0 || len(s.buf) - s.end < op.recv.received {
 		s._err = .Bad_Read_Count
 		return
 	}
 
-	s.end += n
-	if n > 0 {
+	s.end += op.recv.received
+	if op.recv.received > 0 {
 		s.successive_empty_token_count = 0
 		return
 	}

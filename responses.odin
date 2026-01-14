@@ -4,11 +4,10 @@ import "core:bytes"
 import "core:encoding/json"
 import "core:io"
 import "core:log"
+import "core:nbio"
 import "core:os"
 import "core:path/filepath"
 import "core:strings"
-
-import "nbio"
 
 // Sets the response to one that sends the given HTML.
 respond_html :: proc(r: ^Response, html: string, status: Status = .OK, loc := #caller_location) {
@@ -46,57 +45,54 @@ respond_file :: proc(r: ^Response, path: string, content_type: Maybe(Mime_Type) 
 	assert_has_td(loc)
 	assert(!r.sent, "response has already been sent", loc)
 
-	io := &td.io
-	handle, errno := nbio.open(io, path)
-	if errno != os.ERROR_NONE {
-		if errno == ENOENT {
-			log.debugf("respond_file, open %q, no such file or directory", path)
-		} else {
-			log.warnf("respond_file, open %q error: %i", path, errno)
-		}
-
-		respond(r, Status.Not_Found)
-		return
-	}
-
-	size, err := nbio.seek(io, handle, 0, .End)
-	if err != os.ERROR_NONE {
-		log.errorf("Could not seek the file size of file at %q, error number: %i", path, err)
-		respond(r, Status.Internal_Server_Error)
-		nbio.close(io, handle)
-		return
-	}
-
 	mime := mime_from_extension(path)
 	content_type := mime_to_content_type(mime)
 	headers_set_content_type(&r.headers, content_type)
 
-	_response_write_heading(r, size)
+	nbio.open_poly(path, r, on_open)
 
-	bytes.buffer_grow(&r._buf, size)
-	buf := _dynamic_unwritten(r._buf.buf)[:size]
-
-	on_read :: proc(user: rawptr, read: int, err: os.Errno) {
-		r      := cast(^Response)user
-		handle := os.Handle(uintptr(context.user_ptr))
-
-		_dynamic_add_len(&r._buf.buf, read)
-
-		if err != os.ERROR_NONE {
-			log.errorf("Reading file from respond_file failed, error number: %i", err)
-			respond(r, Status.Internal_Server_Error)
-			nbio.close(&td.io, handle)
-			return
+	on_open :: proc(op: ^nbio.Operation, r: ^Response) {
+		#partial switch op.open.err {
+		case .Not_Found:
+			log.debugf("respond_file, open %q, no such file or directory", op.open.path)
+			respond_with_status(r, .Not_Found)
+		case:
+			log.warnf("respond_file, open %q error: %i", op.open.path, op.open.err)
+			respond_with_status(r, .Not_Found)
+		case nil:
+			nbio.stat_poly2(op.open.handle, op.open.path, r, on_stat)
 		}
-
-		respond(r, Status.OK)
-		nbio.close(&td.io, handle)
 	}
 
-	// Using the context.user_ptr to point to the file handle.
-	context.user_ptr = rawptr(uintptr(handle))
+	on_stat :: proc(op: ^nbio.Operation, path: string, r: ^Response) {
+		#partial switch op.stat.err {
+		case:
+			log.errorf("respond_file, could not stat %q: %v", path, op.stat.err)
+			nbio.close(op.stat.handle)
+			respond_with_status(r, .Not_Found)
+		case nil:
+			assert(op.stat.size < i64(max(int)))
 
-	nbio.read_at_all(io, handle, 0, buf, r, on_read)
+			_response_write_heading(r, int(op.stat.size))
+
+			bytes.buffer_grow(&r._buf, int(op.stat.size))
+			buf := _dynamic_unwritten(r._buf.buf)[:op.stat.size]
+
+			nbio.read_poly2(op.stat.handle, 0, buf, path, r, on_read, all=true)
+		}
+	}
+
+	on_read :: proc(op: ^nbio.Operation, path: string, r: ^Response) {
+		nbio.close(op.read.handle)
+		#partial switch op.read.err {
+		case:
+			log.errorf("respond_file, could not read %q: %v", path, op.read.err)
+			respond_with_status(r, .Internal_Server_Error)
+		case nil:
+			_dynamic_add_len(&r._buf.buf, op.read.read)
+			respond_with_status(r, .OK)
+		}
+	}
 }
 
 /*
