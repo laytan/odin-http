@@ -22,9 +22,6 @@ jobs:
           release: nightly
       - name: Report
         run: odin report
-      - name: Non-blocking IO test
-        run: odin test nbio
-        timeout-minutes: 1
       - name: Run client example
         run: odin run examples/client
         timeout-minutes: 1

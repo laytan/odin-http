@@ -3,11 +3,10 @@ package http
 import "core:bytes"
 import "core:io"
 import "core:log"
-import "core:net"
+import "core:mem/virtual"
+import "core:nbio"
 import "core:slice"
 import "core:strconv"
-
-import "nbio"
 
 Response :: struct {
 	// Add your headers and cookies here directly.
@@ -335,16 +334,14 @@ response_send_got_body :: proc(r: ^Response, will_close: bool) {
 	}
 
 	buf := bytes.buffer_to_bytes(&r._buf)
-	nbio.send_all(&td.io, conn.socket, buf, conn, on_response_sent)
+	nbio.send_poly(conn.socket, {buf}, conn, on_response_sent)
 }
 
 
 @(private)
-on_response_sent :: proc(conn_: rawptr, sent: int, err: net.Network_Error) {
-	conn := cast(^Connection)conn_
-
-	if err != nil {
-		log.errorf("could not send response: %v", err)
+on_response_sent :: proc(op: ^nbio.Operation, conn: ^Connection) {
+	if op.send.err != nil {
+		log.errorf("could not send response: %v", op.send.err)
 		if !connection_set_state(conn, .Will_Close) { return }
 	}
 
@@ -354,13 +351,18 @@ on_response_sent :: proc(conn_: rawptr, sent: int, err: net.Network_Error) {
 // Response has been sent, clean up and close/handle next.
 @(private)
 clean_request_loop :: proc(conn: ^Connection, close: Maybe(bool) = nil) {
+	context.temp_allocator = virtual.arena_allocator(&conn.temp_allocator)
+
 	// blocks, size, used := allocator_free_all(&conn.temp_allocator)
 	// log.debugf("temp_allocator had %d blocks of a total size of %m of which %m was used", blocks, size, used)
 	free_all(context.temp_allocator)
 
 	scanner_reset(&conn.scanner)
 
+	client := conn.loop.req.client
 	conn.loop.req = {}
+	conn.loop.req.client = client
+
 	conn.loop.res = {}
 
 	if c, ok := close.?; (ok && c) || conn.state == .Will_Close {
