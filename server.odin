@@ -144,7 +144,7 @@ serve :: proc(s: ^Server, h: Handler) -> (err: net.Network_Error) {
 	s.handler = h
 
 	if s.opts.thread_count == 0 {
-		s.opts.thread_count = os.processor_core_count()
+		s.opts.thread_count = os.get_processor_core_count()
 	}
 
 	thread_count := max(1, s.opts.thread_count)

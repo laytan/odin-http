@@ -5,7 +5,6 @@ import "core:encoding/json"
 import "core:io"
 import "core:log"
 import "core:nbio"
-import "core:os"
 import "core:path/filepath"
 import "core:strings"
 
@@ -24,9 +23,6 @@ respond_plain :: proc(r: ^Response, text: string, status: Status = .OK, loc := #
 	body_set(r, text, loc)
 	respond(r, loc)
 }
-
-@(private)
-ENOENT :: os.ERROR_FILE_NOT_FOUND when ODIN_OS == .Windows else os.ENOENT
 
 /*
 Sends the content of the file at the given path as the response.
@@ -126,14 +122,14 @@ respond_dir :: proc(r: ^Response, base, target, request: string, loc := #caller_
 	}
 
 	// Detect path traversal attacks.
-	req_clean := filepath.clean(request, context.temp_allocator)
-	base_clean := filepath.clean(base, context.temp_allocator)
-	if !strings.has_prefix(req_clean, base_clean) {
+	req_clean, err_req   := filepath.clean(request, context.temp_allocator)
+	base_clean, err_base := filepath.clean(base, context.temp_allocator)
+	if err_req != nil || err_base != nil || !strings.has_prefix(req_clean, base_clean) {
 		respond(r, Status.Not_Found)
 		return
 	}
 
-	file_path := filepath.join([]string{"./", target, strings.trim_prefix(req_clean, base_clean)}, context.temp_allocator)
+	file_path, _ := filepath.join([]string{"./", target, strings.trim_prefix(req_clean, base_clean)}, context.temp_allocator)
 	respond_file(r, file_path, loc = loc)
 }
 
