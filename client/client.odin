@@ -160,7 +160,7 @@ response_destroy :: proc(res: ^Response, body: Maybe(Body_Type) = nil, was_alloc
 	bufio.scanner_destroy(&res._body)
 
 	for cookie in res.cookies {
-		delete(cookie._raw)
+		delete(cookie._raw, res.cookies.allocator)
 	}
 	delete(res.cookies)
 
