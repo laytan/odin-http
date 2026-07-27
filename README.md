@@ -6,6 +6,10 @@ See generated package documentation at [odin-http.laytan.dev](https://odin-http.
 
 See below examples or the examples directory.
 
+## Disclaimer
+
+This is not intended for production use and serves as a proof of concept for the implementation that will be going into Odin's core collection.
+
 ## Compatibility
 
 This is beta software, confirmed to work in my own use cases but can certainly contain edge cases and bugs that I did not catch.
