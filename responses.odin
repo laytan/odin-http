@@ -41,7 +41,7 @@ respond_file :: proc(r: ^Response, path: string, content_type: Maybe(Mime_Type) 
 	assert_has_td(loc)
 	assert(!r.sent, "response has already been sent", loc)
 
-	mime := mime_from_extension(path)
+	mime := content_type.? or_else mime_from_extension(path)
 	content_type := mime_to_content_type(mime)
 	headers_set_content_type(&r.headers, content_type)
 
