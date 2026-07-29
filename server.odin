@@ -183,6 +183,7 @@ listen_and_serve :: proc(
 
 _server_thread_init :: proc(s: ^Server, ttd: ^Server_Thread) {
 	td = ttd
+	thread_temp_allocator := context.temp_allocator
 
 	td.conns = make(map[net.TCP_Socket]^Connection)
 	// td.free_temp_blocks = make(map[int]queue.Queue(^Block))
@@ -216,7 +217,8 @@ _server_thread_init :: proc(s: ^Server, ttd: ^Server_Thread) {
 	log.debug("event loop end")
 
 	if td != &s.threads[0] {
-		runtime.default_temp_allocator_destroy(auto_cast context.temp_allocator.data)
+		context.temp_allocator = thread_temp_allocator
+		runtime.default_temp_allocator_destroy(auto_cast thread_temp_allocator.data)
 	}
 	sync.wait_group_done(&s.threads_closed)
 }
@@ -225,6 +227,8 @@ _server_thread_init :: proc(s: ^Server, ttd: ^Server_Thread) {
 // The time between checks and closes of connections in a graceful shutdown.
 @(private)
 SHUTDOWN_INTERVAL :: time.Millisecond * 100
+@(private)
+ACTIVE_CONN_SHUTDOWN_GRACE :: time.Second * 2
 
 // Starts a graceful shutdown.
 //
@@ -245,6 +249,7 @@ server_shutdown :: proc(s: ^Server) {
 
 _server_thread_shutdown :: proc(s: ^Server, loc := #caller_location) {
 	assert_has_td(loc)
+	shutdown_force_close_at := time.time_add(time.now(), ACTIVE_CONN_SHUTDOWN_GRACE)
 
 	td.state = .Closing
 	defer delete(td.conns)
@@ -262,10 +267,16 @@ _server_thread_shutdown :: proc(s: ^Server, loc := #caller_location) {
 	// }
 
 	for {
+		force_close_active := time.diff(time.now(), shutdown_force_close_at) <= 0
 		for sock, conn in td.conns {
 			#partial switch conn.state {
 			case .Active:
-				log.infof("shutdown: connection %i still active", sock)
+				if force_close_active {
+					log.warnf("shutdown: force closing active connection %i", sock)
+					connection_close(conn)
+				} else {
+					log.infof("shutdown: connection %i still active", sock)
+				}
 			case .New, .Idle, .Pending:
 				log.infof("shutdown: closing connection %i", sock)
 				connection_close(conn)
@@ -280,6 +291,7 @@ _server_thread_shutdown :: proc(s: ^Server, loc := #caller_location) {
 			break
 		}
 
+		nbio.timeout_poly(SHUTDOWN_INTERVAL, s, proc(_: ^nbio.Operation, _: ^Server) {})
 		err := nbio.tick()
 		fmt.assertf(err == nil, "IO tick error during shutdown: %v")
 	}
@@ -314,7 +326,7 @@ server_shutdown_on_interrupt :: proc(s: ^Server) {
 			context = on_interrupt_context
 
 			// Force close on second signal.
-			if td.state == .Closing {
+			if atomic_load(&on_interrupt_server.closing) {
 				os.exit(1)
 			}
 
@@ -365,6 +377,7 @@ Connection :: struct {
 	state:          Connection_State,
 	scanner:        Scanner,
 	temp_allocator: virtual.Arena,
+	prev_temp_allocator: mem.Allocator,
 	loop:           Loop,
 }
 
@@ -403,6 +416,7 @@ connection_close :: proc(c: ^Connection, loc := #caller_location) {
 
 			// allocator_destroy(&c.temp_allocator)
 			virtual.arena_destroy(&c.temp_allocator)
+			context.temp_allocator = c.prev_temp_allocator
 
 			scanner_destroy(&c.scanner)
 			delete_key(&td.conns, c.socket)
@@ -435,6 +449,7 @@ on_accept :: proc(op: ^nbio.Operation, server: ^Server) {
 	c.state = .New
 	c.server = server
 	c.socket = op.accept.client
+	c.prev_temp_allocator = context.temp_allocator
 	c.loop.req.client = op.accept.client_endpoint
 
 	td.conns[c.socket] = c
