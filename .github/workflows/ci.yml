@@ -29,3 +29,61 @@ jobs:
         if: success() || failure()
         run: odin check examples/complete -vet --strict-style && odin check examples/client -vet --strict-style
         timeout-minutes: 1
+
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        opt: [none, minimal, size, speed, aggressive]
+        pkg:
+          - .
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: laytan/setup-odin@v2
+        with:
+          release: nightly
+
+      - name: Build ${{ matrix.pkg }}
+        shell: bash
+        run: |
+          if [ "${{ matrix.opt }}" = "none" ]; then
+            odin build ./${{ matrix.pkg }}/ -build-mode:lib -vet -strict-style -o:none -debug
+          else
+            odin build ./${{ matrix.pkg }}/ -build-mode:lib -vet -strict-style -o:${{ matrix.opt }}
+          fi
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        opt: [none, minimal, size, speed, aggressive]
+        pkg:
+          - internal/mpsc
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: laytan/setup-odin@v2
+        with:
+          release: nightly
+
+      - name: Test ${{ matrix.pkg }}
+        shell: bash
+        run: |
+          # On Windows, limit test threads to 1 if the package uses concurrent operations.
+          # Currently internal/mpsc tests are single-threaded; flag kept for future test additions.
+          THREAD_FLAGS=""
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            THREAD_FLAGS="-define:ODIN_TEST_THREADS=1"
+          fi
+          if [ "${{ matrix.opt }}" = "none" ]; then
+            odin test ./${{ matrix.pkg }}/ -vet -strict-style -disallow-do -o:none -debug $THREAD_FLAGS -define:ODIN_TEST_FANCY=false
+          else
+            odin test ./${{ matrix.pkg }}/ -vet -strict-style -disallow-do -o:${{ matrix.opt }} $THREAD_FLAGS -define:ODIN_TEST_FANCY=false
+          fi
