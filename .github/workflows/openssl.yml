@@ -31,19 +31,33 @@ jobs:
         id: latest-release
         with:
           script: |
-            const latestRelease = await github.rest.repos.getLatestRelease({
+            const releases = await github.rest.repos.listReleases({
               owner: 'openssl',
               repo: 'openssl',
+              per_page: 50
             });
-            core.setOutput('version', latestRelease.data.tag_name);
 
-            const asset = latestRelease.data.assets.find(asset => asset.name.endsWith('.tar.gz'));
+            // Find the most recent release that matches the 3.x tag format,
+            // ignoring pre-releases (alphas/betas) and drafts.
+            const latest3x = releases.data.find(release =>
+              !release.draft &&
+              !release.prerelease &&
+              release.tag_name.startsWith('openssl-3.')
+            );
+
+            if (!latest3x) {
+              core.setFailed('Could not find a valid OpenSSL 3.x release.');
+              return;
+            }
+
+            core.setOutput('version', latest3x.tag_name);
+
+            const asset = latest3x.assets.find(asset => asset.name.endsWith('.tar.gz'));
             if (asset) {
               core.setOutput('url', asset.browser_download_url);
-              core.setOutput('version', latestRelease.data.tag_name);
-              core.info('latest version is ' + latestRelease.data.tag_name);
+              core.info('latest 3.x version is ' + latest3x.tag_name);
             } else {
-              core.setFailed('No .tar.gz asset found in the latest release.');
+              core.setFailed('No .tar.gz asset found in the latest 3.x release.');
             }
 
       - name: update .version
