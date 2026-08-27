@@ -147,6 +147,7 @@ scanner_scan :: proc(
 			s.consecutive_empty_reads = 0
 			s.callback = nil
 			s.user_data = nil
+			
 			callback(user_data, string(token), s._err)
 			return
 		}
