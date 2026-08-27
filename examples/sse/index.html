@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>SSE</title>
+		<meta charset="UTF-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+	</head>
+	<body>
+		<h1>Hello, SSE!</h1>
+		<p>Time from the server: <span id="time"></span></p>
+		<p>Other events: <span id="other"></span></p>
+		<script>
+			const evtSource = new EventSource("http://localhost:8080");
+
+			const time  = document.getElementById("time");
+			const other = document.getElementById("other");
+
+			evtSource.onmessage = (event) => {
+				console.log(event);
+				other.innerHTML = event.data;
+			};
+
+			evtSource.onerror = (event) => {
+				console.warn(event);
+				other.innerHTML = "error";
+			};
+
+			evtSource.addEventListener("tick", (event) => {
+				console.log(event);
+				time.innerHTML = event.data;
+			});
+
+		</script>
+	</body>
+</html>
