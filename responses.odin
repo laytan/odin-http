@@ -148,7 +148,7 @@ respond_json :: proc(r: ^Response, v: any, status: Status = .OK, opt: json.Marsh
 	// Ends the body and sends the response.
 	defer io.close(rw.w)
 
-	if err = json.marshal_to_writer(rw.w, v, &opt); err != nil {
+	if err = json.marshal_to_writer(rw.w, v, opt); err != nil {
 		headers_set_close(&r.headers)
 		response_status(r, .Internal_Server_Error)
 	}
