@@ -71,6 +71,29 @@ SSL_Error :: enum {
 	SSL_Write_Failed,
 }
 
+@(private)
+Request_Transport :: struct {
+	socket: Maybe(net.TCP_Socket),
+	ssl:    ^openssl.SSL,
+	ctx:    ^openssl.SSL_CTX,
+}
+
+@(private)
+request_transport_destroy :: proc(transport: ^Request_Transport) {
+	if transport.ssl != nil {
+		openssl.SSL_free(transport.ssl)
+		transport.ssl = nil
+	}
+	if transport.ctx != nil {
+		openssl.SSL_CTX_free(transport.ctx)
+		transport.ctx = nil
+	}
+	if socket, ok := transport.socket.?; ok {
+		net.close(socket)
+		transport.socket = nil
+	}
+}
+
 Error :: union #shared_nil {
 	net.Dial_Error,
 	net.Parse_Endpoint_Error,
@@ -91,19 +114,38 @@ request :: proc(request: ^Request, target: string, allocator := context.allocato
 	defer bytes.buffer_destroy(&req_buf)
 
 	socket := net.dial_tcp(endpoint) or_return
+	transport := Request_Transport{socket = socket}
+	transport_cleanup_delegated := false
+	defer if !transport_cleanup_delegated {
+		request_transport_destroy(&transport)
+	}
 
 	// HTTPS using openssl.
 	if url.scheme == "https" {
-		ctx := openssl.SSL_CTX_new(openssl.TLS_client_method())
-		ssl := openssl.SSL_new(ctx)
-		openssl.SSL_set_fd(ssl, c.int(socket))
+		transport.ctx = openssl.SSL_CTX_new(openssl.TLS_client_method())
+		if transport.ctx == nil {
+			err = SSL_Error.Fatal_Shutdown
+			return
+		}
+		transport.ssl = openssl.SSL_new(transport.ctx)
+		if transport.ssl == nil {
+			err = SSL_Error.Fatal_Shutdown
+			return
+		}
+		if openssl.SSL_set_fd(transport.ssl, c.int(socket)) != 1 {
+			err = SSL_Error.Fatal_Shutdown
+			return
+		}
 
 		// For servers using SNI for SSL certs (like cloudflare), this needs to be set.
 		chostname := strings.clone_to_cstring(url.host, allocator)
 		defer delete(chostname, allocator)
-		openssl.SSL_set_tlsext_host_name(ssl, chostname)
+		if openssl.SSL_set_tlsext_host_name(transport.ssl, chostname) != 1 {
+			err = SSL_Error.Fatal_Shutdown
+			return
+		}
 
-		switch openssl.SSL_connect(ssl) {
+		switch openssl.SSL_connect(transport.ssl) {
 		case 2:
 			err = SSL_Error.Controlled_Shutdown
 			return
@@ -116,7 +158,7 @@ request :: proc(request: ^Request, target: string, allocator := context.allocato
 		buf := bytes.buffer_to_bytes(&req_buf)
 		to_write := len(buf)
 		for to_write > 0 {
-			ret := openssl.SSL_write(ssl, raw_data(buf), c.int(to_write))
+			ret := openssl.SSL_write(transport.ssl, raw_data(buf), c.int(to_write))
 			if ret <= 0 {
 				err = SSL_Error.SSL_Write_Failed
 				return
@@ -125,12 +167,26 @@ request :: proc(request: ^Request, target: string, allocator := context.allocato
 			to_write -= int(ret)
 		}
 
-		return parse_response(SSL_Communication{ssl = ssl, ctx = ctx, socket = socket}, allocator)
+		res, err = parse_response(SSL_Communication{ssl = transport.ssl, ctx = transport.ctx, socket = socket}, allocator)
+		if err != nil {
+			transport_cleanup_delegated = true
+			response_destroy(&res)
+			return
+		}
+		transport_cleanup_delegated = true
+		return
 	}
 
 	// HTTP, just send the request.
 	net.send_tcp(socket, bytes.buffer_to_bytes(&req_buf)) or_return
-	return parse_response(socket, allocator)
+	res, err = parse_response(socket, allocator)
+	if err != nil {
+		transport_cleanup_delegated = true
+		response_destroy(&res)
+		return
+	}
+	transport_cleanup_delegated = true
+	return
 }
 
 Response :: struct {
