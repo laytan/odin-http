@@ -148,9 +148,22 @@ respond_json :: proc(r: ^Response, v: any, status: Status = .OK, opt: json.Marsh
 	// Ends the body and sends the response.
 	defer io.close(rw.w)
 
-	if err = json.marshal_to_writer(rw.w, v, &opt); err != nil {
+	// PATCHED (odinllm): `json.marshal_to_writer` took its options by pointer up
+	// to Odin dev-2026-10 and takes them by value from dev-2026-11 on, so calling
+	// it directly cannot compile against both. `json.marshal` has taken them by
+	// value in every version this tree supports, which keeps the patch portable
+	// until every machine builds with dev-2026-11 (upstream PR #124 does the
+	// one-character form). It materialises the body first instead of streaming
+	// it, and lets the error be reported before anything is written.
+	body, marshal_err := json.marshal(v, opt)
+	defer delete(body)
+	if err = marshal_err; err != nil {
 		headers_set_close(&r.headers)
 		response_status(r, .Internal_Server_Error)
+		return
+	}
+	if len(body) > 0 {
+		_, _ = io.write(rw.w, body)
 	}
 
 	return
