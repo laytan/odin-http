@@ -30,7 +30,9 @@ Sends the content of the file at the given path as the response.
 This procedure uses non blocking IO and only allocates the size of the file in the body's buffer,
 no other allocations or temporary buffers, this is to make it as fast as possible.
 
-The content type is taken from the path, optionally overwritten using the parameter.
+If a content_type parameter is passed, the Content-Type response header is set
+to match. If none is passed and that header is not already present in the
+response, the Content-Type header is guessed from the file's extension.
 
 If the file doesn't exist, a 404 response is sent.
 If any other error occurs, a 500 is sent and the error is logged.
@@ -41,9 +43,11 @@ respond_file :: proc(r: ^Response, path: string, content_type: Maybe(Mime_Type) 
 	assert_has_td(loc)
 	assert(!r.sent, "response has already been sent", loc)
 
-	mime := content_type.? or_else mime_from_extension(path)
-	content_type := mime_to_content_type(mime)
-	headers_set_content_type(&r.headers, content_type)
+	if (!headers_has(r.headers, "content-type") || content_type != nil) {
+		mime := content_type.? or_else mime_from_extension(path)
+		content_type := mime_to_content_type(mime)
+		headers_set_content_type(&r.headers, content_type)
+	}
 
 	nbio.open_poly(path, r, on_open)
 
