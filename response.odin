@@ -25,6 +25,19 @@ Response :: struct {
 	// connection (maybe a small buffer in this struct).
 	_buf:             bytes.Buffer,
 	_heading_written: bool,
+
+	// Streaming state, only used by `response_writer_init`.
+	//
+	// _streamed is set once any byte of this response has been handed to the socket. It
+	// makes `response_status` stop rewriting the status line in `_buf`, which is no longer
+	// in `_buf` by then.
+	_streamed: bool,
+	// A send operation is in flight. At most one at a time, so that chunks keep their order
+	// and so that the buffer a send reads from outlives the operation.
+	_send_in_flight: bool,
+	// The writer has been closed while a send was in flight; `_on_stream_chunk_sent` sends
+	// the terminator and finishes the response once that send completes.
+	_close_after_send: bool,
 }
 
 response_init :: proc(r: ^Response, allocator := context.allocator) {
@@ -75,7 +88,10 @@ response_status :: proc(r: ^Response, status: Status) {
 	// If we have already written the heading, we can address the bytes directly to overwrite,
 	// this is because of the fact that every status code is of length 3, and because we omit
 	// the "optional" reason phrase out of the response.
-	if bytes.buffer_length(&r._buf) > 0 {
+	//
+	// Once a streamed response has been flushed the heading is on the wire and cannot be
+	// rewritten, so there is nothing left to patch.
+	if bytes.buffer_length(&r._buf) > 0 && !r._streamed {
 		OFFSET :: len("HTTP/1.1 ")
 
 		status_int_str := status_string(r.status)
@@ -144,6 +160,12 @@ response_writer_init :: proc(rw: ^Response_Writer, r: ^Response, buffer: []byte)
 
 				write_chunk(b, rw.buf[:])
 				clear(&rw.buf)
+
+				// Send what has accumulated. Without this the bytes wait in `_buf` until the
+				// handler returns, and a streaming endpoint is indistinguishable from a
+				// buffered one, however often it flushes.
+				_stream_send(rw.r)
+
 				return 0, nil
 
 			case .Destroy:
@@ -166,6 +188,13 @@ response_writer_init :: proc(rw: ^Response_Writer, r: ^Response, buffer: []byte)
 					// Signals the end of the body.
 					ws(b, "0\r\n\r\n")
 					rw.ended = true
+				}
+
+				// The terminator must go out after the chunk that is already on its way; the
+				// callback sends the rest of the response in order.
+				if rw.r._send_in_flight {
+					rw.r._close_after_send = true
+					return 0, nil
 				}
 
 				// Send the response.
@@ -201,6 +230,53 @@ response_writer_init :: proc(rw: ^Response_Writer, r: ^Response, buffer: []byte)
 		data = rw,
 	}
 	return rw.w
+}
+
+/*
+Sends whatever the writer has accumulated so far, without ending the response.
+
+At most one send is in flight per response: the bytes written while it runs stay in `_buf`
+and the in-flight send's callback picks them up, so chunks cannot overtake each other.
+*/
+@(private)
+_stream_send :: proc(r: ^Response) {
+	if r._send_in_flight { return }
+	if bytes.buffer_length(&r._buf) == 0 { return }
+
+	// The send outlives this call, and `_buf` keeps growing (and may reallocate) while it is
+	// in flight, so send from a copy owned by the connection's request arena. It is freed
+	// when the response completes, after every send has fired.
+	arena := virtual.arena_allocator(&r._conn.temp_allocator)
+	src   := bytes.buffer_to_bytes(&r._buf)
+	data  := make([]byte, len(src), arena)
+	copy(data, src)
+	clear(&r._buf.buf)
+
+	r._send_in_flight = true
+	r._streamed       = true
+
+	nbio.send_poly(r._conn.socket, {data}, r, _on_stream_chunk_sent)
+}
+
+@(private)
+_on_stream_chunk_sent :: proc(op: ^nbio.Operation, r: ^Response) {
+	r._send_in_flight = false
+
+	if op.send.err != nil {
+		log.errorf("could not send streamed response chunk: %v", op.send.err)
+		if !connection_set_state(r._conn, .Will_Close) { return }
+		clean_request_loop(r._conn, close = true)
+		return
+	}
+
+	// The handler closed the writer while this chunk was in flight.
+	if r._close_after_send {
+		respond(r)
+		return
+	}
+
+	// More was written while this chunk was in flight.
+	_stream_send(r)
 }
 
 /*
