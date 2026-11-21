@@ -10,3 +10,7 @@ minimal
 complete
 readme
 routing
+
+# Local build scripts (not part of the submodule).
+build_and_test_debug.sh
+build_and_test.sh
