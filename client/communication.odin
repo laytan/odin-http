@@ -139,6 +139,7 @@ parse_response :: proc(socket: Communication, allocator := context.allocator) ->
 	stream_reader := io.to_reader(stream)
 	scanner: bufio.Scanner
 	bufio.scanner_init(&scanner, stream_reader, allocator)
+	defer res._body = scanner
 
 	http.headers_init(&res.headers, allocator)
 
@@ -209,7 +210,6 @@ parse_response :: proc(socket: Communication, allocator := context.allocator) ->
 
 	res.headers.readonly = true
 
-	res._body = scanner
 	return res, nil
 }
 
