@@ -11,7 +11,26 @@ Body :: string
 
 Body_Callback :: #type proc(user_data: rawptr, body: Body, err: Body_Error)
 
-Body_Error :: bufio.Scanner_Error
+// How the request declares its body length.
+Body_Framing :: enum {
+	Content_Length,
+	Chunked,
+}
+
+// A body whose next declared payload would exceed max_length, before that payload is read.
+// All lengths count payload bytes, excluding chunk headers, delimiters, and trailers.
+Body_Size_Error :: struct {
+	max_length:      int,
+	consumed_length: int,
+	next_length:     int,
+	framing:         Body_Framing,
+}
+
+Body_Error :: union {
+	io.Error,
+	bufio.Scanner_Extra_Error,
+	Body_Size_Error,
+}
 
 /*
 Retrieves the request's body.
@@ -86,6 +105,8 @@ body_url_encoded :: proc(plain: Body, allocator := context.temp_allocator) -> (r
 // Returns an appropriate status code for the given body error.
 body_error_status :: proc(e: Body_Error) -> Status {
 	switch t in e {
+	case Body_Size_Error:
+		return .Payload_Too_Large
 	case bufio.Scanner_Extra_Error:
 		switch t {
 		case .Too_Long:                            return .Payload_Too_Large
@@ -113,6 +134,19 @@ body_error_status :: proc(e: Body_Error) -> Status {
 	}
 }
 
+@(private, require_results)
+_body_error_from_scanner :: proc(err: bufio.Scanner_Error) -> Body_Error {
+	switch t in err {
+	case io.Error:
+		return t
+	case bufio.Scanner_Extra_Error:
+		return t
+	case nil:
+		return nil
+	}
+	unreachable()
+}
+
 
 // "Decodes" a request body based on the content length header.
 // Meant for internal usage, you should use `http.request_body`.
@@ -126,13 +160,18 @@ _body_length :: proc(req: ^Request, max_length: int = -1, user_data: rawptr, cb:
 	}
 
 	ilen, lenok := strconv.parse_int(len, 10)
-	if !lenok {
+	if !lenok || ilen < 0 {
 		cb(user_data, "", .Bad_Read_Count)
 		return
 	}
 
 	if max_length > -1 && ilen > max_length {
-		cb(user_data, "", .Too_Long)
+		cb(user_data, "", Body_Size_Error{
+			max_length      = max_length,
+			consumed_length = 0,
+			next_length     = ilen,
+			framing         = .Content_Length,
+		})
 		return
 	}
 
@@ -148,7 +187,15 @@ _body_length :: proc(req: ^Request, max_length: int = -1, user_data: rawptr, cb:
 	req._scanner.split_data     = rawptr(uintptr(ilen))
 
 	req._body_ok = true
-	scanner_scan(req._scanner, user_data, cb)
+	Length_State :: struct {
+		user_data: rawptr,
+		cb:        Body_Callback,
+	}
+	s := new_clone(Length_State{user_data = user_data, cb = cb}, context.temp_allocator)
+	scanner_scan(req._scanner, s, proc(s: rawptr, token: string, err: bufio.Scanner_Error) {
+		s := cast(^Length_State)s
+		s.cb(s.user_data, token, _body_error_from_scanner(err))
+	})
 }
 
 /*
@@ -188,7 +235,7 @@ _body_chunked :: proc(req: ^Request, max_length: int = -1, user_data: rawptr, cb
 		size_line := size_line
 
 		if err != nil {
-			s.cb(s.user_data, "", err)
+			s.cb(s.user_data, "", _body_error_from_scanner(err))
 			return
 		}
 
@@ -213,8 +260,18 @@ _body_chunked :: proc(req: ^Request, max_length: int = -1, user_data: rawptr, cb
 			return
 		}
 
-		if size < 0 || (s.max_length > -1 && size > s.max_length - strings.builder_len(s.buf)) {
-			s.cb(s.user_data, "", .Too_Long)
+		if size < 0 {
+			s.cb(s.user_data, "", .Bad_Read_Count)
+			return
+		}
+
+		if s.max_length > -1 && size > s.max_length - strings.builder_len(s.buf) {
+			s.cb(s.user_data, "", Body_Size_Error{
+				max_length      = s.max_length,
+				consumed_length = strings.builder_len(s.buf),
+				next_length     = size,
+				framing         = .Chunked,
+			})
 			return
 		}
 
@@ -232,7 +289,7 @@ _body_chunked :: proc(req: ^Request, max_length: int = -1, user_data: rawptr, cb
 		s := cast(^Chunked_State)s
 
 		if err != nil {
-			s.cb(s.user_data, "", err)
+			s.cb(s.user_data, "", _body_error_from_scanner(err))
 			return
 		}
 
@@ -245,7 +302,7 @@ _body_chunked :: proc(req: ^Request, max_length: int = -1, user_data: rawptr, cb
 			s := cast(^Chunked_State)s
 
 			if err != nil {
-				s.cb(s.user_data, "", err)
+				s.cb(s.user_data, "", _body_error_from_scanner(err))
 				return
 			}
 			assert(len(token) == 0)
