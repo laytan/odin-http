@@ -43,8 +43,7 @@ with_json :: proc(r: ^Request, v: any, opt: json.Marshal_Options = {}) -> json.M
 	http.headers_set_content_type(&r.headers, http.mime_to_content_type(.Json))
 
 	stream := bytes.buffer_to_stream(&r.body)
-	opt := opt
-	json.marshal_to_writer(io.to_writer(stream), v, &opt) or_return
+	json.marshal_to_writer(io.to_writer(stream), v, opt) or_return
 	return nil
 }
 
