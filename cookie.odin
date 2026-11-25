@@ -3,6 +3,7 @@ package http
 import "core:io"
 import "core:strconv"
 import "core:strings"
+import "core:unicode"
 import "core:time"
 
 Cookie_Same_Site :: enum {
@@ -88,10 +89,8 @@ cookie_string :: proc(c: Cookie, allocator := context.allocator) -> string {
 }
 
 // TODO: check specific whitespace requirements in RFC.
-//
-// Allocations are done to check case-insensitive attributes but they are deleted right after.
-// So, all the returned strings (inside cookie) are slices into the given value string.
-cookie_parse :: proc(value: string, allocator := context.allocator) -> (cookie: Cookie, ok: bool) {
+// all the returned strings (inside cookie) are slices into the given value string.
+cookie_parse :: proc(value: string) -> (cookie: Cookie, ok: bool) {
 	value := value
 
 	eq := strings.index_byte(value, '=')
@@ -114,12 +113,40 @@ cookie_parse :: proc(value: string, allocator := context.allocator) -> (cookie: 
 		value = value[semi + 1:]
 	}
 
-	parse_part :: proc(cookie: ^Cookie, part: string, allocator := context.temp_allocator) -> (ok: bool) {
+	parse_part :: proc(cookie: ^Cookie, part: string) -> (ok: bool) {
+
+		to_lower :: proc(buf: []byte, part: string) -> (s: string, ok: bool) {
+			l := 0
+			for r in part {
+				if l >= len(buf) {
+					return
+				}
+
+				if r > unicode.MAX_ASCII {
+					return
+				}
+
+				ch := byte(r)
+				if ch-'A' < 26 {
+					ch += 'a'-'A'
+				}
+
+				#no_bounds_check buf[l] = ch
+
+				l += 1
+			}
+			s = transmute(string)buf[:l]
+			ok = true
+			return
+		}
+
+		// buffer size = longest key string in bytes
+		s_buf: [len("partitioned")]byte
+
 		eq := strings.index_byte(part, '=')
 		switch eq {
 		case -1:
-			key := strings.to_lower(part, allocator)
-			defer delete(key, allocator)
+			key := to_lower(s_buf[:], part) or_return
 
 			switch key {
 			case "httponly":
@@ -134,8 +161,7 @@ cookie_parse :: proc(value: string, allocator := context.allocator) -> (cookie: 
 		case 0:
 			return
 		case:
-			key := strings.to_lower(part[:eq], allocator)
-			defer delete(key, allocator)
+			key := to_lower(s_buf[:], part[:eq]) or_return
 
 			value := part[eq + 1:]
 
@@ -169,7 +195,7 @@ cookie_parse :: proc(value: string, allocator := context.allocator) -> (cookie: 
 	for semi = strings.index_byte(value, ';'); semi != -1; semi = strings.index_byte(value, ';') {
 		part := strings.trim_left_space(value[:semi])
 		value = value[semi + 1:]
-		parse_part(&cookie, part, allocator) or_return
+		parse_part(&cookie, part) or_return
 	}
 
 	part := strings.trim_left_space(value)
@@ -178,7 +204,7 @@ cookie_parse :: proc(value: string, allocator := context.allocator) -> (cookie: 
 		return
 	}
 
-	parse_part(&cookie, part, allocator) or_return
+	parse_part(&cookie, part) or_return
 	ok = true
 	return
 }
